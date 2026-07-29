@@ -169,6 +169,182 @@
             </article>
 
             <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Immutable history</p>
+                  <h2 class="mt-1 text-xl font-semibold tracking-normal">Compare revisions</h2>
+                </div>
+                <span class="rounded-md bg-[#f2f5f3] px-3 py-2 text-sm text-[#4f5b54] dark:bg-[#171b18] dark:text-[#c5cec8]">
+                  {{ revisions.length }} loaded
+                </span>
+              </div>
+
+              <ol class="mt-5 grid gap-3 sm:grid-cols-2" aria-label="Article revision history">
+                <li
+                  v-for="revision in revisions"
+                  :key="revision.id"
+                  class="rounded-lg border border-[#d7ded8] p-4 dark:border-[#3f4843]"
+                >
+                  <div class="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p class="font-medium">Revision #{{ revision.revisionNumber }}</p>
+                      <p class="mt-1 text-xs text-[#667169] dark:text-[#aeb8b0]">{{ formatDate(revision.createdAt) }}</p>
+                    </div>
+                    <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="editorialClass(revision.editorialState)">
+                      {{ labelize(revision.editorialState) }}
+                    </span>
+                  </div>
+                  <p class="mt-3 line-clamp-2 text-sm text-[#4f5b54] dark:text-[#c5cec8]">{{ revision.title }}</p>
+                  <p v-if="revision.publishedLocales.length" class="mt-2 text-xs font-medium text-[#165a4a] dark:text-[#aee4d0]">
+                    Published: {{ revision.publishedLocales.join(', ') }}
+                  </p>
+                  <div class="mt-3 flex flex-wrap gap-2">
+                    <button
+                      class="rounded-md border border-[#c9d4cc] px-2.5 py-1.5 text-xs font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]"
+                      :class="{ 'bg-[#e6f2ec] text-[#165a4a] dark:bg-[#17352c] dark:text-[#aee4d0]': comparisonForm.beforeRevisionId === revision.id }"
+                      type="button"
+                      :aria-label="`Use revision ${revision.revisionNumber} as comparison A`"
+                      :aria-pressed="comparisonForm.beforeRevisionId === revision.id"
+                      :disabled="comparisonPending"
+                      @click="selectRevisionForComparison('before', revision.id)"
+                    >
+                      Compare from
+                    </button>
+                    <button
+                      class="rounded-md border border-[#c9d4cc] px-2.5 py-1.5 text-xs font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]"
+                      :class="{ 'bg-[#e6f2ec] text-[#165a4a] dark:bg-[#17352c] dark:text-[#aee4d0]': comparisonForm.afterRevisionId === revision.id }"
+                      type="button"
+                      :aria-label="`Use revision ${revision.revisionNumber} as comparison B`"
+                      :aria-pressed="comparisonForm.afterRevisionId === revision.id"
+                      :disabled="comparisonPending"
+                      @click="selectRevisionForComparison('after', revision.id)"
+                    >
+                      Compare to
+                    </button>
+                  </div>
+                </li>
+              </ol>
+
+              <button
+                v-if="nextRevisionCursor"
+                class="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
+                type="button"
+                :disabled="loadingMoreRevisions"
+                @click="loadMoreRevisions"
+              >
+                <LoaderCircle v-if="loadingMoreRevisions" class="h-4 w-4 animate-spin" />
+                <RefreshCw v-else class="h-4 w-4" />
+                Load older revisions
+              </button>
+
+              <form class="mt-5 grid items-end gap-3 rounded-lg bg-[#f5f7f5] p-4 dark:bg-[#171b18] md:grid-cols-[1fr_1fr_auto]" @submit.prevent="compareRevisions">
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">Revision A</span>
+                  <select v-model="comparisonForm.beforeRevisionId" class="h-10 w-full rounded-md border border-[#bfcac3] bg-white px-3 text-sm dark:border-[#4b5650] dark:bg-[#202522]" :disabled="comparisonPending">
+                    <option v-for="revision in revisions" :key="revision.id" :value="revision.id">
+                      #{{ revision.revisionNumber }} · {{ revision.title }}
+                    </option>
+                  </select>
+                </label>
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">Revision B</span>
+                  <select v-model="comparisonForm.afterRevisionId" class="h-10 w-full rounded-md border border-[#bfcac3] bg-white px-3 text-sm dark:border-[#4b5650] dark:bg-[#202522]" :disabled="comparisonPending">
+                    <option v-for="revision in revisions" :key="revision.id" :value="revision.id">
+                      #{{ revision.revisionNumber }} · {{ revision.title }}
+                    </option>
+                  </select>
+                </label>
+                <button
+                  class="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
+                  type="submit"
+                  :disabled="comparisonPending || !canCompareRevisions"
+                >
+                  <LoaderCircle v-if="comparisonPending" class="h-4 w-4 animate-spin" />
+                  <GitCompareArrows v-else class="h-4 w-4" />
+                  Compare
+                </button>
+              </form>
+
+              <p
+                v-if="comparisonBefore && comparisonAfter"
+                class="mt-5 rounded-md border border-[#c9d4cc] bg-[#f2f5f3] px-4 py-3 text-sm text-[#4f5b54] dark:border-[#414a45] dark:bg-[#171b18] dark:text-[#c5cec8]"
+                role="status"
+                aria-live="polite"
+              >
+                {{ comparisonSummary }}
+              </p>
+
+              <div v-if="comparisonBefore && comparisonAfter" class="mt-4 space-y-4">
+                <div class="grid gap-3 text-sm sm:grid-cols-2">
+                  <div class="rounded-md border border-[#d7ded8] p-3 dark:border-[#3f4843]">
+                    <p class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Earlier</p>
+                    <p class="mt-1 font-medium">Revision #{{ comparisonBefore.revisionNumber }}</p>
+                    <p class="mt-1 text-xs">{{ formatDate(comparisonBefore.createdAt) }}</p>
+                  </div>
+                  <div class="rounded-md border border-[#d7ded8] p-3 dark:border-[#3f4843]">
+                    <p class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Later</p>
+                    <p class="mt-1 font-medium">Revision #{{ comparisonAfter.revisionNumber }}</p>
+                    <p class="mt-1 text-xs">{{ formatDate(comparisonAfter.createdAt) }}</p>
+                  </div>
+                </div>
+
+                <article
+                  v-for="field in comparisonFields"
+                  :key="field.key"
+                  class="rounded-lg border p-4"
+                  :class="field.changed
+                    ? 'border-[#d6bd7a] bg-[#fffaf0] dark:border-[#6b572e] dark:bg-[#2b2415]'
+                    : 'border-[#d7ded8] dark:border-[#3f4843]'"
+                >
+                  <div class="flex items-center justify-between gap-3">
+                    <h3 class="text-sm font-semibold">{{ field.label }}</h3>
+                    <span v-if="field.changed" class="rounded-full bg-[#fff0ce] px-2 py-1 text-xs font-medium text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]">Changed</span>
+                    <span v-else class="text-xs text-[#667169] dark:text-[#aeb8b0]">Unchanged</span>
+                  </div>
+                  <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <p class="mb-1 text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Earlier</p>
+                      <pre
+                        class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white p-3 text-sm dark:bg-[#171b18]"
+                        :class="{ 'font-mono text-xs': field.monospace }"
+                        :aria-label="`${field.label} in revision ${comparisonBefore.revisionNumber}`"
+                        tabindex="0"
+                      >{{ field.before || '—' }}</pre>
+                    </div>
+                    <div>
+                      <p class="mb-1 text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Later</p>
+                      <pre
+                        class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white p-3 text-sm dark:bg-[#171b18]"
+                        :class="{ 'font-mono text-xs': field.monospace }"
+                        :aria-label="`${field.label} in revision ${comparisonAfter.revisionNumber}`"
+                        tabindex="0"
+                      >{{ field.after || '—' }}</pre>
+                    </div>
+                  </div>
+                  <details v-if="field.changed && field.diffLines?.length" class="mt-3 rounded-md border border-[#d6bd7a] bg-white dark:border-[#6b572e] dark:bg-[#171b18]">
+                    <summary class="cursor-pointer px-3 py-2 text-sm font-medium">Show inline changes</summary>
+                    <ol
+                      class="max-h-96 overflow-auto border-t border-[#ead9ad] font-mono text-xs dark:border-[#574927]"
+                      :aria-label="`${field.label} inline changes from revision ${comparisonBefore.revisionNumber} to revision ${comparisonAfter.revisionNumber}`"
+                      tabindex="0"
+                    >
+                      <li
+                        v-for="(line, index) in field.diffLines"
+                        :key="`${field.key}-${index}`"
+                        class="grid grid-cols-[2rem_1fr] gap-2 px-3 py-1"
+                        :class="diffLineClass(line.kind)"
+                      >
+                        <span aria-hidden="true">{{ diffLineMarker(line.kind) }}</span>
+                        <span class="sr-only">{{ diffLineLabel(line.kind) }}: </span>
+                        <code class="whitespace-pre-wrap break-words">{{ line.text || ' ' }}</code>
+                      </li>
+                    </ol>
+                  </details>
+                </article>
+              </div>
+            </section>
+
+            <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Review thread</p>
@@ -387,13 +563,19 @@
                 </div>
               </div>
               <label class="block space-y-2">
-                <span class="text-sm font-medium">Approved revision ID</span>
-                <input v-model.trim="rollbackForm.revisionId" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 font-mono text-sm dark:border-[#4b5650] dark:bg-[#171b18]" required />
+                <span class="text-sm font-medium">Approved revision</span>
+                <select v-model="rollbackForm.revisionId" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" required>
+                  <option value="">Select a revision</option>
+                  <option v-for="revision in approvedRevisions" :key="revision.id" :value="revision.id" :disabled="isCurrentPublication(revision)">
+                    #{{ revision.revisionNumber }} · {{ revision.title }}{{ isCurrentPublication(revision) ? ' (current)' : '' }}
+                  </option>
+                </select>
               </label>
+              <p v-if="article.publicationState !== 'published'" class="text-xs text-[#667169] dark:text-[#aeb8b0]">Rollback is available while this locale is published.</p>
               <button
                 class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
                 type="submit"
-                :disabled="actionPending === 'rollback' || !rollbackForm.revisionId"
+                :disabled="actionPending === 'rollback' || !canRollback"
               >
                 <History class="h-4 w-4" />
                 Rollback
@@ -412,6 +594,7 @@ import {
   CalendarClock,
   CheckCircle2,
   FilePenLine,
+  GitCompareArrows,
   Hash,
   History,
   LoaderCircle,
@@ -461,6 +644,48 @@ type AdminRevision = {
   editorialState: string
   contentHash: string
   createdAt: string
+}
+
+type AdminRevisionSummary = AdminRevision & {
+  baseRevisionId?: string
+  publishedLocales: string[]
+}
+
+type AdminRevisionDetail = AdminRevisionSummary & {
+  alternateTitle?: string
+  bodyDocument: unknown
+  tableOfContents: unknown
+  authorSnapshot: unknown
+  contributorSnapshot: unknown
+  taxonomySnapshot: unknown
+  sourceSnapshot: unknown
+  claimSnapshot: unknown
+  seoSnapshot: unknown
+  socialSnapshot: unknown
+  mediaSnapshot: unknown
+  disclosureSnapshot: unknown
+  correctionSummary: unknown
+  sanitizedHtml: string
+  plainText: string
+  markdownExport: string
+  wordCount: number
+  readingTimeSeconds: number
+  changeSummary?: string
+}
+
+type ComparisonField = {
+  key: string
+  label: string
+  before: string
+  after: string
+  changed: boolean
+  monospace?: boolean
+  diffLines?: ComparisonDiffLine[]
+}
+
+type ComparisonDiffLine = {
+  kind: 'equal' | 'added' | 'removed' | 'omitted'
+  text: string
 }
 
 type AdminArticle = {
@@ -517,15 +742,22 @@ const project = ref<AdminProject | null>(null)
 const article = ref<AdminArticle | null>(null)
 const categories = ref<TaxonomyTerm[]>([])
 const comments = ref<ReviewComment[]>([])
+const revisions = ref<AdminRevisionSummary[]>([])
+const comparisonBefore = ref<AdminRevisionDetail | null>(null)
+const comparisonAfter = ref<AdminRevisionDetail | null>(null)
 const pending = ref(true)
 const creatingRevision = ref(false)
 const creatingComment = ref(false)
 const loadingMoreComments = ref(false)
+const loadingMoreRevisions = ref(false)
+const comparisonPending = ref(false)
 const nextCommentCursor = ref('')
+const nextRevisionCursor = ref('')
 const actionPending = ref('')
 const errorMessage = ref('')
 const successMessage = ref('')
 const commentPending = reactive<Record<string, string>>({})
+let comparisonRequestVersion = 0
 
 const revisionForm = reactive({
   title: '',
@@ -545,6 +777,11 @@ const rollbackForm = reactive({
   revisionId: ''
 })
 
+const comparisonForm = reactive({
+  beforeRevisionId: '',
+  afterRevisionId: ''
+})
+
 const commentForm = reactive({
   revisionId: '',
   blockId: '',
@@ -554,6 +791,68 @@ const commentForm = reactive({
 const scheduleDraft = ref('')
 const canCreateRevision = computed(() => Boolean(revisionForm.title.trim()))
 const openCommentCount = computed(() => comments.value.filter(comment => comment.status !== 'resolved').length)
+const approvedRevisions = computed(() => revisions.value.filter(revision => revision.editorialState === 'approved'))
+const canCompareRevisions = computed(() => Boolean(
+  comparisonForm.beforeRevisionId
+  && comparisonForm.afterRevisionId
+  && comparisonForm.beforeRevisionId !== comparisonForm.afterRevisionId
+))
+const canRollback = computed(() => {
+  const selected = revisions.value.find(revision => revision.id === rollbackForm.revisionId)
+  return Boolean(
+    selected
+    && selected.editorialState === 'approved'
+    && article.value?.publicationState === 'published'
+    && !isCurrentPublication(selected)
+  )
+})
+const comparisonFields = computed<ComparisonField[]>(() => {
+  if (!comparisonBefore.value || !comparisonAfter.value) return []
+  const before = comparisonBefore.value
+  const after = comparisonAfter.value
+  return [
+    comparisonField('title', 'Title', before.title, after.title),
+    comparisonField('alternateTitle', 'Alternate title', before.alternateTitle || '', after.alternateTitle || ''),
+    comparisonField('deck', 'Deck', before.deck || '', after.deck || ''),
+    comparisonField('excerpt', 'Excerpt', before.excerpt || '', after.excerpt || ''),
+    comparisonField('shortAnswer', 'Short answer', before.shortAnswer || '', after.shortAnswer || ''),
+    comparisonField('locale', 'Locale', before.locale, after.locale),
+    comparisonField('bodyText', 'Body text', before.plainText, after.plainText, false, true),
+    comparisonField('bodyDocument', 'Structured body', prettyJSON(before.bodyDocument), prettyJSON(after.bodyDocument), true, true),
+    comparisonField('sanitizedHtml', 'Sanitized HTML', before.sanitizedHtml, after.sanitizedHtml, true, true),
+    comparisonField('markdown', 'Markdown export', before.markdownExport, after.markdownExport, true, true),
+    comparisonField('tableOfContents', 'Table of contents', prettyJSON(before.tableOfContents), prettyJSON(after.tableOfContents), true, true),
+    comparisonField('authors', 'Authors', prettyJSON(before.authorSnapshot), prettyJSON(after.authorSnapshot), true, true),
+    comparisonField('contributors', 'Contributors', prettyJSON(before.contributorSnapshot), prettyJSON(after.contributorSnapshot), true, true),
+    comparisonField('taxonomy', 'Taxonomy snapshot', prettyJSON(before.taxonomySnapshot), prettyJSON(after.taxonomySnapshot), true, true),
+    comparisonField('sources', 'Sources', prettyJSON(before.sourceSnapshot), prettyJSON(after.sourceSnapshot), true, true),
+    comparisonField('claims', 'Claims', prettyJSON(before.claimSnapshot), prettyJSON(after.claimSnapshot), true, true),
+    comparisonField('seo', 'SEO snapshot', prettyJSON(before.seoSnapshot), prettyJSON(after.seoSnapshot), true, true),
+    comparisonField('social', 'Social snapshot', prettyJSON(before.socialSnapshot), prettyJSON(after.socialSnapshot), true, true),
+    comparisonField('media', 'Media snapshot', prettyJSON(before.mediaSnapshot), prettyJSON(after.mediaSnapshot), true, true),
+    comparisonField('disclosures', 'Disclosures', prettyJSON(before.disclosureSnapshot), prettyJSON(after.disclosureSnapshot), true, true),
+    comparisonField('corrections', 'Corrections', prettyJSON(before.correctionSummary), prettyJSON(after.correctionSummary), true, true),
+    comparisonField('wordCount', 'Word count', String(before.wordCount), String(after.wordCount)),
+    comparisonField('readingTime', 'Reading time (seconds)', String(before.readingTimeSeconds), String(after.readingTimeSeconds)),
+    comparisonField('changeSummary', 'Change summary', before.changeSummary || '', after.changeSummary || '')
+  ]
+})
+const comparisonSummary = computed(() => {
+  if (!comparisonBefore.value || !comparisonAfter.value) return ''
+  const revisionSummary = `Revision ${comparisonBefore.value.revisionNumber} compared with revision ${comparisonAfter.value.revisionNumber}.`
+  const changed = comparisonFields.value.filter(field => field.changed)
+  if (changed.length === 0) {
+    return `${revisionSummary} No public fields changed across ${comparisonFields.value.length} compared fields.`
+  }
+  const shownLabels = changed.slice(0, 6).map(field => field.label)
+  const remaining = changed.length - shownLabels.length
+  return `${revisionSummary} ${changed.length} of ${comparisonFields.value.length} fields changed: ${shownLabels.join(', ')}${remaining > 0 ? `, and ${remaining} more` : ''}.`
+})
+
+watch(
+  () => [comparisonForm.beforeRevisionId, comparisonForm.afterRevisionId],
+  () => invalidateComparison()
+)
 
 onMounted(refresh)
 
@@ -561,7 +860,7 @@ async function refresh() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, categoryResponse, articleResponse, commentResponse] = await Promise.all([
+    const [projectResponse, categoryResponse, articleResponse, commentResponse, revisionResponse] = await Promise.all([
       $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
       $fetch<APIListEnvelope<TaxonomyTerm>>(`/api/v1/projects/${projectID.value}/categories`, {
         credentials: 'include',
@@ -571,6 +870,10 @@ async function refresh() {
       $fetch<APIListEnvelope<ReviewComment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/comments`, {
         credentials: 'include',
         query: { limit: 50 }
+      }),
+      $fetch<APIListEnvelope<AdminRevisionSummary>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/revisions`, {
+        credentials: 'include',
+        query: { limit: 50 }
       })
     ])
     project.value = projectResponse.data
@@ -578,6 +881,7 @@ async function refresh() {
     setArticle(articleResponse.data)
     comments.value = commentResponse.data
     nextCommentCursor.value = commentResponse.meta?.nextCursor || ''
+    setRevisions(revisionResponse.data, revisionResponse.meta?.nextCursor || '')
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load article. Sign in again if your session has expired.')
   } finally {
@@ -596,6 +900,7 @@ async function createRevision() {
       credentials: 'include',
       headers: { 'X-CSRF-Token': csrfToken },
       body: {
+        baseRevisionId: latestRevisionID(),
         title: revisionForm.title,
         primaryCategoryId: revisionForm.primaryCategoryId,
         deck: revisionForm.deck,
@@ -696,7 +1001,9 @@ async function unpublishArticle() {
 }
 
 async function rollbackArticle() {
-  if (!window.confirm('Rollback to this approved revision?')) return
+  const selected = revisions.value.find(revision => revision.id === rollbackForm.revisionId)
+  if (!selected || !canRollback.value) return
+  if (!window.confirm(`Rollback this locale to revision #${selected.revisionNumber}?`)) return
   await mutateArticle('rollback', async (csrfToken) => {
     await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/rollback`, {
       method: 'POST',
@@ -799,11 +1106,89 @@ async function loadMoreComments() {
   }
 }
 
+async function loadMoreRevisions() {
+  if (!nextRevisionCursor.value || loadingMoreRevisions.value) return
+  loadingMoreRevisions.value = true
+  clearMessages()
+  try {
+    const response = await $fetch<APIListEnvelope<AdminRevisionSummary>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/revisions`, {
+      credentials: 'include',
+      query: {
+        cursor: nextRevisionCursor.value,
+        limit: 50
+      }
+    })
+    const merged = new Map(revisions.value.map(revision => [revision.id, revision]))
+    for (const revision of response.data) merged.set(revision.id, revision)
+    setRevisions([...merged.values()].sort((left, right) => right.revisionNumber - left.revisionNumber), response.meta?.nextCursor || '')
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, 'Could not load older revisions.')
+  } finally {
+    loadingMoreRevisions.value = false
+  }
+}
+
+function selectRevisionForComparison(side: 'before' | 'after', revisionId: string) {
+  if (comparisonPending.value) return
+  if (side === 'before') {
+    comparisonForm.beforeRevisionId = revisionId
+  } else {
+    comparisonForm.afterRevisionId = revisionId
+  }
+}
+
+async function compareRevisions() {
+  if (!canCompareRevisions.value) return
+  const requestedBeforeID = comparisonForm.beforeRevisionId
+  const requestedAfterID = comparisonForm.afterRevisionId
+  const requestVersion = ++comparisonRequestVersion
+  comparisonPending.value = true
+  comparisonBefore.value = null
+  comparisonAfter.value = null
+  clearMessages()
+  try {
+    const [beforeResponse, afterResponse] = await Promise.all([
+      fetchRevisionDetail(requestedBeforeID),
+      fetchRevisionDetail(requestedAfterID)
+    ])
+    if (requestVersion !== comparisonRequestVersion) return
+    if (beforeResponse.revisionNumber <= afterResponse.revisionNumber) {
+      comparisonBefore.value = beforeResponse
+      comparisonAfter.value = afterResponse
+    } else {
+      comparisonBefore.value = afterResponse
+      comparisonAfter.value = beforeResponse
+    }
+  } catch (error) {
+    if (requestVersion !== comparisonRequestVersion) return
+    errorMessage.value = normalizeAPIError(error, 'Could not compare revisions.')
+  } finally {
+    if (requestVersion === comparisonRequestVersion) {
+      comparisonPending.value = false
+    }
+  }
+}
+
+async function fetchRevisionDetail(revisionId: string) {
+  const response = await $fetch<APIEnvelope<AdminRevisionDetail>>(
+    `/api/v1/projects/${projectID.value}/articles/${articleID.value}/revisions/${revisionId}`,
+    { credentials: 'include' }
+  )
+  return response.data
+}
+
 async function fetchArticle() {
-  const response = await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}`, {
-    credentials: 'include'
-  })
-  setArticle(response.data)
+  const [articleResponse, revisionResponse] = await Promise.all([
+    $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}`, {
+      credentials: 'include'
+    }),
+    $fetch<APIListEnvelope<AdminRevisionSummary>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/revisions`, {
+      credentials: 'include',
+      query: { limit: 50 }
+    })
+  ])
+  setArticle(articleResponse.data)
+  setRevisions(revisionResponse.data, revisionResponse.meta?.nextCursor || '')
 }
 
 function setArticle(value: AdminArticle) {
@@ -818,6 +1203,28 @@ function setArticle(value: AdminArticle) {
   }
 }
 
+function setRevisions(values: AdminRevisionSummary[], nextCursor: string) {
+  revisions.value = values
+  nextRevisionCursor.value = nextCursor
+
+  const latest = values[0]
+  if (!latest) {
+    comparisonForm.beforeRevisionId = ''
+    comparisonForm.afterRevisionId = ''
+    return
+  }
+  if (!values.some(revision => revision.id === comparisonForm.afterRevisionId)) {
+    comparisonForm.afterRevisionId = latest.id
+  }
+  if (!values.some(revision => revision.id === comparisonForm.beforeRevisionId)) {
+    comparisonForm.beforeRevisionId = latest.baseRevisionId || values[1]?.id || ''
+  }
+  const rollbackRevision = values.find(revision => revision.id === rollbackForm.revisionId)
+  if (!rollbackRevision || isCurrentPublication(rollbackRevision)) {
+    rollbackForm.revisionId = ''
+  }
+}
+
 function publicationBody(revisionId: string) {
   return {
     revisionId,
@@ -829,6 +1236,205 @@ function publicationBody(revisionId: string) {
 
 function latestRevisionID() {
   return article.value?.latestRevision?.id || ''
+}
+
+function isCurrentPublication(revision: AdminRevisionSummary) {
+  const locale = article.value?.locale || project.value?.defaultLocale || 'en'
+  return revision.publishedLocales.includes(locale)
+}
+
+function invalidateComparison() {
+  comparisonRequestVersion += 1
+  comparisonPending.value = false
+  comparisonBefore.value = null
+  comparisonAfter.value = null
+}
+
+function comparisonField(key: string, label: string, before: string, after: string, monospace = false, diffable = false): ComparisonField {
+  const changed = before !== after
+  return {
+    key,
+    label,
+    before,
+    after,
+    changed,
+    monospace,
+    diffLines: changed && diffable ? buildLineDiff(before, after) : undefined
+  }
+}
+
+function prettyJSON(value: unknown) {
+  try {
+    return JSON.stringify(value ?? {}, null, 2)
+  } catch {
+    return String(value ?? '')
+  }
+}
+
+function buildLineDiff(before: string, after: string): ComparisonDiffLine[] {
+  const beforeLines = normalizedDiffLines(before)
+  const afterLines = normalizedDiffLines(after)
+  let sharedPrefixLength = 0
+  while (
+    sharedPrefixLength < beforeLines.length
+    && sharedPrefixLength < afterLines.length
+    && beforeLines[sharedPrefixLength] === afterLines[sharedPrefixLength]
+  ) {
+    sharedPrefixLength += 1
+  }
+
+  let sharedSuffixLength = 0
+  while (
+    sharedSuffixLength < beforeLines.length - sharedPrefixLength
+    && sharedSuffixLength < afterLines.length - sharedPrefixLength
+    && beforeLines[beforeLines.length - sharedSuffixLength - 1] === afterLines[afterLines.length - sharedSuffixLength - 1]
+  ) {
+    sharedSuffixLength += 1
+  }
+  if (
+    sharedPrefixLength === beforeLines.length
+    && sharedPrefixLength === afterLines.length
+    && before !== after
+  ) {
+    return [
+      { kind: 'removed', text: 'The earlier value uses different line-ending characters.' },
+      { kind: 'added', text: 'The later value uses different line-ending characters.' }
+    ]
+  }
+
+  const beforeMiddle = beforeLines.slice(sharedPrefixLength, beforeLines.length - sharedSuffixLength)
+  const afterMiddle = afterLines.slice(sharedPrefixLength, afterLines.length - sharedSuffixLength)
+  const linesPerBlock = Math.max(1, Math.ceil(Math.max(beforeMiddle.length, afterMiddle.length) / 240))
+  const beforeBlocks = groupDiffLines(beforeMiddle, linesPerBlock)
+  const afterBlocks = groupDiffLines(afterMiddle, linesPerBlock)
+  const table = Array.from(
+    { length: beforeBlocks.length + 1 },
+    () => new Uint16Array(afterBlocks.length + 1)
+  )
+
+  for (let beforeIndex = beforeBlocks.length - 1; beforeIndex >= 0; beforeIndex -= 1) {
+    for (let afterIndex = afterBlocks.length - 1; afterIndex >= 0; afterIndex -= 1) {
+      table[beforeIndex]![afterIndex] = beforeBlocks[beforeIndex] === afterBlocks[afterIndex]
+        ? (table[beforeIndex + 1]![afterIndex + 1] || 0) + 1
+        : Math.max(table[beforeIndex + 1]![afterIndex] || 0, table[beforeIndex]![afterIndex + 1] || 0)
+    }
+  }
+
+  const diff: ComparisonDiffLine[] = []
+  let beforeIndex = 0
+  let afterIndex = 0
+  while (beforeIndex < beforeBlocks.length && afterIndex < afterBlocks.length) {
+    if (beforeBlocks[beforeIndex] === afterBlocks[afterIndex]) {
+      diff.push({ kind: 'equal', text: beforeBlocks[beforeIndex] || '' })
+      beforeIndex += 1
+      afterIndex += 1
+    } else if ((table[beforeIndex + 1]![afterIndex] || 0) >= (table[beforeIndex]![afterIndex + 1] || 0)) {
+      diff.push({ kind: 'removed', text: beforeBlocks[beforeIndex] || '' })
+      beforeIndex += 1
+    } else {
+      diff.push({ kind: 'added', text: afterBlocks[afterIndex] || '' })
+      afterIndex += 1
+    }
+  }
+  while (beforeIndex < beforeBlocks.length) {
+    diff.push({ kind: 'removed', text: beforeBlocks[beforeIndex] || '' })
+    beforeIndex += 1
+  }
+  while (afterIndex < afterBlocks.length) {
+    diff.push({ kind: 'added', text: afterBlocks[afterIndex] || '' })
+    afterIndex += 1
+  }
+
+  const result: ComparisonDiffLine[] = []
+  const contextLines = 2
+  const visiblePrefixStart = Math.max(0, sharedPrefixLength - contextLines)
+  if (visiblePrefixStart > 0) {
+    result.push({ kind: 'omitted', text: `${visiblePrefixStart} unchanged line${visiblePrefixStart === 1 ? '' : 's'} omitted` })
+  }
+  for (let index = visiblePrefixStart; index < sharedPrefixLength; index += 1) {
+    result.push({ kind: 'equal', text: beforeLines[index] || '' })
+  }
+  result.push(...compactDiffContext(diff))
+
+  const visibleSuffixLength = Math.min(contextLines, sharedSuffixLength)
+  const suffixStart = beforeLines.length - sharedSuffixLength
+  for (let index = 0; index < visibleSuffixLength; index += 1) {
+    result.push({ kind: 'equal', text: beforeLines[suffixStart + index] || '' })
+  }
+  const omittedSuffixLength = sharedSuffixLength - visibleSuffixLength
+  if (omittedSuffixLength > 0) {
+    result.push({ kind: 'omitted', text: `${omittedSuffixLength} unchanged line${omittedSuffixLength === 1 ? '' : 's'} omitted` })
+  }
+  return result
+}
+
+function normalizedDiffLines(value: string) {
+  return value.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n')
+}
+
+function groupDiffLines(lines: string[], linesPerBlock: number) {
+  if (linesPerBlock === 1) return lines
+  const blocks: string[] = []
+  for (let index = 0; index < lines.length; index += linesPerBlock) {
+    blocks.push(lines.slice(index, index + linesPerBlock).join('\n'))
+  }
+  return blocks
+}
+
+function compactDiffContext(lines: ComparisonDiffLine[]) {
+  const context = 2
+  const keep = new Set<number>()
+  lines.forEach((line, index) => {
+    if (line.kind === 'equal') return
+    for (let candidate = Math.max(0, index - context); candidate <= Math.min(lines.length - 1, index + context); candidate += 1) {
+      keep.add(candidate)
+    }
+  })
+
+  const compacted: ComparisonDiffLine[] = []
+  let omitted = 0
+  lines.forEach((line, index) => {
+    if (!keep.has(index)) {
+      omitted += 1
+      return
+    }
+    if (omitted > 0) {
+      compacted.push({ kind: 'omitted', text: `${omitted} unchanged diff section${omitted === 1 ? '' : 's'} omitted` })
+      omitted = 0
+    }
+    compacted.push(line)
+  })
+  if (omitted > 0) {
+    compacted.push({ kind: 'omitted', text: `${omitted} unchanged diff section${omitted === 1 ? '' : 's'} omitted` })
+  }
+  return compacted
+}
+
+function diffLineClass(kind: ComparisonDiffLine['kind']) {
+  switch (kind) {
+    case 'added':
+      return 'bg-[#edf9f1] text-[#165a4a] dark:bg-[#13261e] dark:text-[#aee4d0]'
+    case 'removed':
+      return 'bg-[#fff4f2] text-[#9b2d23] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]'
+    case 'omitted':
+      return 'bg-[#f2f5f3] italic text-[#667169] dark:bg-[#202522] dark:text-[#aeb8b0]'
+    default:
+      return 'text-[#4f5b54] dark:text-[#c5cec8]'
+  }
+}
+
+function diffLineMarker(kind: ComparisonDiffLine['kind']) {
+  if (kind === 'added') return '+'
+  if (kind === 'removed') return '−'
+  if (kind === 'omitted') return '⋯'
+  return ' '
+}
+
+function diffLineLabel(kind: ComparisonDiffLine['kind']) {
+  if (kind === 'added') return 'Added'
+  if (kind === 'removed') return 'Removed'
+  if (kind === 'omitted') return 'Unchanged context omitted'
+  return 'Unchanged'
 }
 
 function upsertComment(comment: ReviewComment) {

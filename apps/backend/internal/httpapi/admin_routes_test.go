@@ -1923,6 +1923,270 @@ func TestArticleRollbackRestoresApprovedRevision(t *testing.T) {
 	}
 }
 
+func TestArticleRevisionHistoryAndDetailAreProjectScoped(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	otherLogin := seedAndLogin(t, server, db, "other@example.test", "another correct horse battery staple")
+
+	project := createTestProject(t, server, login, `{"slug":"revision-history","name":"Revision History","primaryDomain":"example.test"}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"guides","name":"Guides"}`)
+	article := createTestArticle(t, server, login, project.ID, `{
+		"articleType":"guide",
+		"title":"Original Guide",
+		"slug":"revision-history",
+		"primaryCategoryId":"`+category.ID+`",
+		"deck":"Original deck",
+		"bodyDocument":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Original body"}]}]},
+		"html":"<p>Original body</p>"
+	}`)
+	firstRevisionID := article.LatestRevision.ID
+	approveTestRevision(t, server, login, project.ID, firstRevisionID)
+	publishTestArticle(t, server, login, project.ID, article.ID, firstRevisionID, "revision-history")
+
+	secondRevision := createTestRevision(t, server, login, project.ID, article.ID, `{
+		"title":"Updated Guide",
+		"deck":"Updated deck",
+		"excerpt":"Updated excerpt",
+		"bodyDocument":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Updated body"}]}]},
+		"html":"<p>Updated body</p>"
+	}`)
+
+	historyRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions?limit=1",
+		nil,
+	)
+	addCookies(historyRequest, login.cookies)
+	historyResponse := mustTest(t, server, historyRequest)
+	if historyResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected revision history 200, got %d: %s", historyResponse.StatusCode, readBody(t, historyResponse))
+	}
+	var history ListEnvelope[store.AdminRevisionSummary]
+	decodeJSONResponse(t, historyResponse, &history)
+	if len(history.Data) != 1 || history.Data[0].ID != secondRevision.ID {
+		t.Fatalf("expected latest revision first, got %#v", history.Data)
+	}
+	if history.Data[0].BaseRevisionID != firstRevisionID {
+		t.Fatalf("expected base revision %q, got %q", firstRevisionID, history.Data[0].BaseRevisionID)
+	}
+	if history.Data[0].PublishedLocales == nil || len(history.Data[0].PublishedLocales) != 0 {
+		t.Fatalf("expected a non-nil empty locale list for the draft revision, got %#v", history.Data[0].PublishedLocales)
+	}
+	if history.Meta.NextCursor == "" {
+		t.Fatal("expected paginated revision history cursor")
+	}
+
+	nextRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions?limit=1&cursor="+history.Meta.NextCursor,
+		nil,
+	)
+	addCookies(nextRequest, login.cookies)
+	nextResponse := mustTest(t, server, nextRequest)
+	if nextResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected next revision page 200, got %d: %s", nextResponse.StatusCode, readBody(t, nextResponse))
+	}
+	var nextPage ListEnvelope[store.AdminRevisionSummary]
+	decodeJSONResponse(t, nextResponse, &nextPage)
+	if len(nextPage.Data) != 1 || nextPage.Data[0].ID != firstRevisionID {
+		t.Fatalf("expected original revision on second page, got %#v", nextPage.Data)
+	}
+	if nextPage.Data[0].BaseRevisionID != "" {
+		t.Fatalf("expected the first revision to have no base, got %q", nextPage.Data[0].BaseRevisionID)
+	}
+	if !reflect.DeepEqual(nextPage.Data[0].PublishedLocales, []string{"en"}) {
+		t.Fatalf("expected current publication locale, got %#v", nextPage.Data[0].PublishedLocales)
+	}
+
+	detailRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions/"+secondRevision.ID,
+		nil,
+	)
+	addCookies(detailRequest, login.cookies)
+	detailResponse := mustTest(t, server, detailRequest)
+	if detailResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected revision detail 200, got %d: %s", detailResponse.StatusCode, readBody(t, detailResponse))
+	}
+	var detail Envelope[store.AdminRevisionDetail]
+	decodeJSONResponse(t, detailResponse, &detail)
+	if detail.Data.Title != "Updated Guide" || detail.Data.PlainText != "Updated body" {
+		t.Fatalf("unexpected revision detail %#v", detail.Data)
+	}
+	document, ok := detail.Data.BodyDocument.(map[string]any)
+	if !ok || document["type"] != "doc" {
+		t.Fatalf("expected structured body document, got %#v", detail.Data.BodyDocument)
+	}
+
+	malformedCursorRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions?cursor=not-base64",
+		nil,
+	)
+	addCookies(malformedCursorRequest, login.cookies)
+	malformedCursorResponse := mustTest(t, server, malformedCursorRequest)
+	if malformedCursorResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected malformed cursor 400, got %d", malformedCursorResponse.StatusCode)
+	}
+
+	unknownCursorRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions?cursor="+encodeCursor(idCursor{ID: "unknown-revision"}),
+		nil,
+	)
+	addCookies(unknownCursorRequest, login.cookies)
+	unknownCursorResponse := mustTest(t, server, unknownCursorRequest)
+	if unknownCursorResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected unknown cursor 400, got %d", unknownCursorResponse.StatusCode)
+	}
+
+	unauthenticatedRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions",
+		nil,
+	)
+	unauthenticatedResponse := mustTest(t, server, unauthenticatedRequest)
+	if unauthenticatedResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected unauthenticated history lookup 401, got %d", unauthenticatedResponse.StatusCode)
+	}
+	if contentType := unauthenticatedResponse.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/problem+json") {
+		t.Fatalf("expected problem JSON content type, got %q", contentType)
+	}
+
+	otherHistoryRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions",
+		nil,
+	)
+	addCookies(otherHistoryRequest, otherLogin.cookies)
+	otherHistoryResponse := mustTest(t, server, otherHistoryRequest)
+	if otherHistoryResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected non-member history lookup to return 404, got %d", otherHistoryResponse.StatusCode)
+	}
+
+	crossArticleRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles/not-the-article/revisions/"+secondRevision.ID,
+		nil,
+	)
+	addCookies(crossArticleRequest, login.cookies)
+	crossArticleResponse := mustTest(t, server, crossArticleRequest)
+	if crossArticleResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected mismatched article detail lookup to return 404, got %d", crossArticleResponse.StatusCode)
+	}
+
+	secondProject := createTestProject(t, server, login, `{"slug":"revision-history-two","name":"Revision History Two"}`)
+	secondCategory := createTestCategory(t, server, login, secondProject.ID, `{"slug":"guides-two","name":"Guides Two"}`)
+	secondArticle := createTestArticle(t, server, login, secondProject.ID, `{
+		"title":"Second Project Article",
+		"slug":"second-project-article",
+		"primaryCategoryId":"`+secondCategory.ID+`",
+		"html":"<p>Second project body</p>"
+	}`)
+	crossProjectHistoryRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+secondProject.ID+"/articles/"+article.ID+"/revisions",
+		nil,
+	)
+	addCookies(crossProjectHistoryRequest, login.cookies)
+	crossProjectHistoryResponse := mustTest(t, server, crossProjectHistoryRequest)
+	if crossProjectHistoryResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project article history lookup 404, got %d", crossProjectHistoryResponse.StatusCode)
+	}
+	crossProjectDetailRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+secondProject.ID+"/articles/"+secondArticle.ID+"/revisions/"+secondRevision.ID,
+		nil,
+	)
+	addCookies(crossProjectDetailRequest, login.cookies)
+	crossProjectDetailResponse := mustTest(t, server, crossProjectDetailRequest)
+	if crossProjectDetailResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project revision detail lookup 404, got %d", crossProjectDetailResponse.StatusCode)
+	}
+
+	if _, err := db.Exec(`UPDATE content_items SET archived_at = CURRENT_TIMESTAMP WHERE project_id = ? AND id = ?`, project.ID, article.ID); err != nil {
+		t.Fatal(err)
+	}
+	archivedHistoryRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions",
+		nil,
+	)
+	addCookies(archivedHistoryRequest, login.cookies)
+	archivedHistoryResponse := mustTest(t, server, archivedHistoryRequest)
+	if archivedHistoryResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected archived article history lookup 404, got %d", archivedHistoryResponse.StatusCode)
+	}
+}
+
+func TestCreateRevisionRejectsMissingAndStaleBase(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"revision-conflict","name":"Revision Conflict"}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"conflicts","name":"Conflicts"}`)
+	article := createTestArticle(t, server, login, project.ID, `{
+		"title":"Revision One",
+		"slug":"revision-conflict",
+		"primaryCategoryId":"`+category.ID+`",
+		"html":"<p>Revision one</p>"
+	}`)
+	firstRevisionID := article.LatestRevision.ID
+
+	missingBaseRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions",
+		`{"title":"Missing base","html":"<p>Missing base</p>"}`,
+		login,
+	)
+	missingBaseResponse := mustTest(t, server, missingBaseRequest)
+	if missingBaseResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected missing base 400, got %d: %s", missingBaseResponse.StatusCode, readBody(t, missingBaseResponse))
+	}
+
+	secondRevision := createTestRevision(t, server, login, project.ID, article.ID, `{
+		"baseRevisionId":"`+firstRevisionID+`",
+		"title":"Revision Two",
+		"html":"<p>Revision two</p>"
+	}`)
+	staleBaseRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions",
+		`{"baseRevisionId":"`+firstRevisionID+`","title":"Stale Revision Three","html":"<p>Stale</p>"}`,
+		login,
+	)
+	staleBaseResponse := mustTest(t, server, staleBaseRequest)
+	if staleBaseResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected stale base 409, got %d: %s", staleBaseResponse.StatusCode, readBody(t, staleBaseResponse))
+	}
+
+	thirdRevision := createTestRevision(t, server, login, project.ID, article.ID, `{
+		"baseRevisionId":"`+secondRevision.ID+`",
+		"title":"Revision Three",
+		"html":"<p>Revision three</p>"
+	}`)
+	historyRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions?limit=3",
+		nil,
+	)
+	addCookies(historyRequest, login.cookies)
+	historyResponse := mustTest(t, server, historyRequest)
+	if historyResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected history 200, got %d: %s", historyResponse.StatusCode, readBody(t, historyResponse))
+	}
+	var history ListEnvelope[store.AdminRevisionSummary]
+	decodeJSONResponse(t, historyResponse, &history)
+	if len(history.Data) != 3 {
+		t.Fatalf("expected three revisions after rejecting stale write, got %d", len(history.Data))
+	}
+	if history.Data[0].ID != thirdRevision.ID || history.Data[0].BaseRevisionID != secondRevision.ID {
+		t.Fatalf("unexpected third revision lineage %#v", history.Data[0])
+	}
+	if history.Data[1].ID != secondRevision.ID || history.Data[1].BaseRevisionID != firstRevisionID {
+		t.Fatalf("unexpected second revision lineage %#v", history.Data[1])
+	}
+}
+
 func TestArticleRollbackTargetsPublicationLocale(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
@@ -2470,6 +2734,29 @@ func createTestArticle(t *testing.T, server *Server, login adminLoginResult, pro
 
 func createTestRevision(t *testing.T, server *Server, login adminLoginResult, projectID, articleID, body string) store.AdminRevision {
 	t.Helper()
+	var requestBody map[string]any
+	if err := json.Unmarshal([]byte(body), &requestBody); err != nil {
+		t.Fatal(err)
+	}
+	if _, provided := requestBody["baseRevisionId"]; !provided {
+		articleRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projectID+"/articles/"+articleID, nil)
+		addCookies(articleRequest, login.cookies)
+		articleResponse := mustTest(t, server, articleRequest)
+		if articleResponse.StatusCode != http.StatusOK {
+			t.Fatalf("expected article lookup 200 before revision create, got %d: %s", articleResponse.StatusCode, readBody(t, articleResponse))
+		}
+		var articlePayload Envelope[store.AdminArticle]
+		decodeJSONResponse(t, articleResponse, &articlePayload)
+		if articlePayload.Data.LatestRevision == nil {
+			t.Fatal("expected base revision")
+		}
+		requestBody["baseRevisionId"] = articlePayload.Data.LatestRevision.ID
+		encoded, err := json.Marshal(requestBody)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = string(encoded)
+	}
 	request := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/articles/"+articleID+"/revisions", body, login)
 	response := mustTest(t, server, request)
 	if response.StatusCode != http.StatusCreated {

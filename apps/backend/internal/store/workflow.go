@@ -35,6 +35,35 @@ type AdminRevision struct {
 	CreatedAt      string `json:"createdAt"`
 }
 
+type AdminRevisionSummary struct {
+	AdminRevision
+	BaseRevisionID   string   `json:"baseRevisionId,omitempty"`
+	PublishedLocales []string `json:"publishedLocales" nullable:"false"`
+}
+
+type AdminRevisionDetail struct {
+	AdminRevisionSummary
+	AlternateTitle      string `json:"alternateTitle,omitempty"`
+	BodyDocument        any    `json:"bodyDocument"`
+	TableOfContents     any    `json:"tableOfContents"`
+	AuthorSnapshot      any    `json:"authorSnapshot"`
+	ContributorSnapshot any    `json:"contributorSnapshot"`
+	TaxonomySnapshot    any    `json:"taxonomySnapshot"`
+	SourceSnapshot      any    `json:"sourceSnapshot"`
+	ClaimSnapshot       any    `json:"claimSnapshot"`
+	SEOSnapshot         any    `json:"seoSnapshot"`
+	SocialSnapshot      any    `json:"socialSnapshot"`
+	MediaSnapshot       any    `json:"mediaSnapshot"`
+	DisclosureSnapshot  any    `json:"disclosureSnapshot"`
+	CorrectionSummary   any    `json:"correctionSummary"`
+	SanitizedHTML       string `json:"sanitizedHtml"`
+	PlainText           string `json:"plainText"`
+	MarkdownExport      string `json:"markdownExport"`
+	WordCount           int64  `json:"wordCount"`
+	ReadingTimeSeconds  int64  `json:"readingTimeSeconds"`
+	ChangeSummary       string `json:"changeSummary,omitempty"`
+}
+
 type AdminArticle struct {
 	ID               string         `json:"id"`
 	ProjectID        string         `json:"projectId"`
@@ -65,6 +94,7 @@ type ArticleInput struct {
 }
 
 type RevisionInput struct {
+	BaseRevisionID    string
 	Title             string
 	PrimaryCategoryID string
 	Deck              string
@@ -289,7 +319,11 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	if err := s.requireContentWrite(ctx, actorUserID, projectID); err != nil {
 		return AdminRevision{}, err
 	}
+	input.BaseRevisionID = strings.TrimSpace(input.BaseRevisionID)
 	input.Title = strings.TrimSpace(input.Title)
+	if input.BaseRevisionID == "" {
+		return AdminRevision{}, fmt.Errorf("%w: baseRevisionId is required", ErrValidation)
+	}
 	if input.Title == "" {
 		return AdminRevision{}, fmt.Errorf("%w: title is required", ErrValidation)
 	}
@@ -323,6 +357,13 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	if err != nil {
 		return AdminRevision{}, err
 	}
+	baseRevisionID, err := latestRevisionID(ctx, tx, projectID, articleID)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	if input.BaseRevisionID != baseRevisionID {
+		return AdminRevision{}, fmt.Errorf("%w: base revision is stale; refresh the article before saving", ErrInvalidWorkflow)
+	}
 	revisionID, err := securityRandomID("rev")
 	if err != nil {
 		return AdminRevision{}, err
@@ -345,14 +386,14 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO content_revisions(
-		  id, project_id, content_id, revision_number, created_by_type, created_by_user_id,
+		  id, project_id, content_id, revision_number, base_revision_id, created_by_type, created_by_user_id,
 		  title, deck, excerpt, short_answer, body_document_json, sanitized_html, plain_text,
 		  table_of_contents_json, word_count, reading_time_seconds, locale, taxonomy_snapshot_json,
 		  seo_snapshot_json, content_hash, editorial_state
-		) VALUES (?, ?, ?, ?, 'human', ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, COALESCE((
+		) VALUES (?, ?, ?, ?, ?, 'human', ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, COALESCE((
 		  SELECT locale FROM project_publications WHERE project_id = ? AND content_id = ? LIMIT 1
 		), 'en'), ?, ?, ?, 'draft')
-	`, revisionID, projectID, articleID, nextNumber, actorUserID, input.Title, nullIfEmpty(input.Deck),
+	`, revisionID, projectID, articleID, nextNumber, input.BaseRevisionID, actorUserID, input.Title, nullIfEmpty(input.Deck),
 		nullIfEmpty(input.Excerpt), nullIfEmpty(input.ShortAnswer), bodyJSON, html, plainText,
 		wordCount(plainText), readingTimeSeconds(plainText), projectID, articleID, taxonomyJSON, seoJSON, contentHash); err != nil {
 		return AdminRevision{}, err
@@ -577,6 +618,121 @@ func (s *Store) GetRevisionForUser(ctx context.Context, userID, projectID, revis
 		WHERE project_id = ? AND id = ?
 	`, projectID, revisionID)
 	return scanAdminRevision(row)
+}
+
+func (s *Store) ListRevisionHistoryForUser(ctx context.Context, userID, projectID, articleID, cursorID string, limit int) ([]AdminRevisionSummary, error) {
+	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT 1
+		FROM content_items
+		WHERE project_id = ? AND id = ? AND archived_at IS NULL
+	`, projectID, articleID).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("%w: revision history limit must be positive", ErrValidation)
+	}
+
+	var cursorRevisionNumber int64
+	if cursorID != "" {
+		err := s.db.QueryRowContext(ctx, `
+			SELECT revision_number
+			FROM content_revisions
+			WHERE project_id = ? AND content_id = ? AND id = ?
+		`, projectID, articleID, cursorID).Scan(&cursorRevisionNumber)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: revision history cursor is not valid for this article", ErrValidation)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	query := `
+		SELECT revision.id, revision.project_id, revision.content_id, revision.revision_number,
+		       revision.title, COALESCE(revision.deck, ''), COALESCE(revision.excerpt, ''),
+		       COALESCE(revision.short_answer, ''), revision.locale, revision.editorial_state,
+		       revision.content_hash, revision.created_at, COALESCE(revision.base_revision_id, ''),
+		       COALESCE((
+		         SELECT json_group_array(current_publication.locale)
+		         FROM (
+		           SELECT publication.locale
+		           FROM project_publications publication
+		           WHERE publication.project_id = revision.project_id
+		             AND publication.content_id = revision.content_id
+		             AND publication.published_revision_id = revision.id
+		             AND publication.publication_state = 'published'
+		           ORDER BY publication.locale
+		         ) current_publication
+		       ), '[]')
+		FROM content_revisions revision
+		WHERE revision.project_id = ? AND revision.content_id = ?
+	`
+	queryArguments := []any{projectID, articleID}
+	if cursorID != "" {
+		query += ` AND revision.revision_number < ?`
+		queryArguments = append(queryArguments, cursorRevisionNumber)
+	}
+	query += ` ORDER BY revision.revision_number DESC LIMIT ?`
+	queryArguments = append(queryArguments, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, queryArguments...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	revisions := []AdminRevisionSummary{}
+	for rows.Next() {
+		revision, err := scanAdminRevisionSummary(rows)
+		if err != nil {
+			return nil, err
+		}
+		revisions = append(revisions, revision)
+	}
+	return revisions, rows.Err()
+}
+
+func (s *Store) GetRevisionDetailForUser(ctx context.Context, userID, projectID, articleID, revisionID string) (AdminRevisionDetail, error) {
+	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
+		return AdminRevisionDetail{}, err
+	}
+	row := s.db.QueryRowContext(ctx, `
+		SELECT revision.id, revision.project_id, revision.content_id, revision.revision_number,
+		       revision.title, COALESCE(revision.deck, ''), COALESCE(revision.excerpt, ''),
+		       COALESCE(revision.short_answer, ''), revision.locale, revision.editorial_state,
+		       revision.content_hash, revision.created_at, COALESCE(revision.base_revision_id, ''),
+		       COALESCE((
+		         SELECT json_group_array(current_publication.locale)
+		         FROM (
+		           SELECT publication.locale
+		           FROM project_publications publication
+		           WHERE publication.project_id = revision.project_id
+		             AND publication.content_id = revision.content_id
+		             AND publication.published_revision_id = revision.id
+		             AND publication.publication_state = 'published'
+		           ORDER BY publication.locale
+		         ) current_publication
+		       ), '[]'),
+		       COALESCE(revision.alternate_title, ''), revision.body_document_json,
+		       revision.sanitized_html, revision.plain_text, revision.markdown_export,
+		       revision.table_of_contents_json, revision.word_count, revision.reading_time_seconds,
+		       revision.author_snapshot_json, revision.contributor_snapshot_json,
+		       revision.taxonomy_snapshot_json, revision.source_snapshot_json,
+		       revision.claim_snapshot_json, revision.seo_snapshot_json,
+		       revision.social_snapshot_json, revision.media_snapshot_json,
+		       revision.disclosure_snapshot_json, revision.correction_summary_json,
+		       COALESCE(revision.change_summary, '')
+		FROM content_revisions revision
+		JOIN content_items item
+		  ON item.project_id = revision.project_id AND item.id = revision.content_id
+		WHERE revision.project_id = ? AND revision.content_id = ? AND revision.id = ?
+		  AND item.archived_at IS NULL
+	`, projectID, articleID, revisionID)
+	return scanAdminRevisionDetail(row)
 }
 
 func (s *Store) ListAdminTerms(ctx context.Context, userID, projectID, termType string) ([]TaxonomyTerm, error) {
@@ -1081,6 +1237,94 @@ func scanAdminRevision(row rowScanner) (AdminRevision, error) {
 	return revision, err
 }
 
+func scanAdminRevisionSummary(row rowScanner) (AdminRevisionSummary, error) {
+	var revision AdminRevisionSummary
+	var publishedLocalesJSON string
+	err := row.Scan(
+		&revision.ID,
+		&revision.ProjectID,
+		&revision.ArticleID,
+		&revision.RevisionNumber,
+		&revision.Title,
+		&revision.Deck,
+		&revision.Excerpt,
+		&revision.ShortAnswer,
+		&revision.Locale,
+		&revision.EditorialState,
+		&revision.ContentHash,
+		&revision.CreatedAt,
+		&revision.BaseRevisionID,
+		&publishedLocalesJSON,
+	)
+	if err != nil {
+		return AdminRevisionSummary{}, err
+	}
+	revision.PublishedLocales = []string{}
+	decodeInto(publishedLocalesJSON, &revision.PublishedLocales)
+	return revision, nil
+}
+
+func scanAdminRevisionDetail(row rowScanner) (AdminRevisionDetail, error) {
+	var revision AdminRevisionDetail
+	var publishedLocalesJSON string
+	var bodyDocumentJSON, tableOfContentsJSON string
+	var authorJSON, contributorJSON, taxonomyJSON, sourceJSON, claimJSON string
+	var seoJSON, socialJSON, mediaJSON, disclosureJSON, correctionJSON string
+	err := row.Scan(
+		&revision.ID,
+		&revision.ProjectID,
+		&revision.ArticleID,
+		&revision.RevisionNumber,
+		&revision.Title,
+		&revision.Deck,
+		&revision.Excerpt,
+		&revision.ShortAnswer,
+		&revision.Locale,
+		&revision.EditorialState,
+		&revision.ContentHash,
+		&revision.CreatedAt,
+		&revision.BaseRevisionID,
+		&publishedLocalesJSON,
+		&revision.AlternateTitle,
+		&bodyDocumentJSON,
+		&revision.SanitizedHTML,
+		&revision.PlainText,
+		&revision.MarkdownExport,
+		&tableOfContentsJSON,
+		&revision.WordCount,
+		&revision.ReadingTimeSeconds,
+		&authorJSON,
+		&contributorJSON,
+		&taxonomyJSON,
+		&sourceJSON,
+		&claimJSON,
+		&seoJSON,
+		&socialJSON,
+		&mediaJSON,
+		&disclosureJSON,
+		&correctionJSON,
+		&revision.ChangeSummary,
+	)
+	if err != nil {
+		return AdminRevisionDetail{}, err
+	}
+	revision.PublishedLocales = []string{}
+	decodeInto(publishedLocalesJSON, &revision.PublishedLocales)
+	revision.BodyDocument = decodeJSON(bodyDocumentJSON, map[string]any{})
+	revision.TableOfContents = decodeJSON(tableOfContentsJSON, []any{})
+	revision.AuthorSnapshot = decodeJSON(authorJSON, []any{})
+	revision.ContributorSnapshot = decodeJSON(contributorJSON, []any{})
+	revision.TaxonomySnapshot = decodeJSON(taxonomyJSON, map[string]any{})
+	revision.SourceSnapshot = decodeJSON(sourceJSON, []any{})
+	revision.ClaimSnapshot = decodeJSON(claimJSON, []any{})
+	revision.SEOSnapshot = decodeJSON(seoJSON, map[string]any{})
+	revision.SocialSnapshot = decodeJSON(socialJSON, map[string]any{})
+	revision.MediaSnapshot = decodeJSON(mediaJSON, map[string]any{})
+	revision.DisclosureSnapshot = decodeJSON(disclosureJSON, []any{})
+	revision.CorrectionSummary = decodeJSON(correctionJSON, []any{})
+	return revision, nil
+}
+
 type publicationRecord struct {
 	ID                  string
 	PublishedRevisionID string
@@ -1205,6 +1449,18 @@ func nextRevisionNumber(ctx context.Context, tx *sql.Tx, projectID, articleID st
 		WHERE project_id = ? AND content_id = ?
 	`, projectID, articleID).Scan(&current)
 	return current + 1, err
+}
+
+func latestRevisionID(ctx context.Context, tx *sql.Tx, projectID, articleID string) (string, error) {
+	var revisionID string
+	err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM content_revisions
+		WHERE project_id = ? AND content_id = ?
+		ORDER BY revision_number DESC
+		LIMIT 1
+	`, projectID, articleID).Scan(&revisionID)
+	return revisionID, err
 }
 
 func ensurePublishableTaxonomy(ctx context.Context, tx *sql.Tx, projectID, articleID string) error {

@@ -64,7 +64,9 @@ func (s *Server) registerAdminRoutes() {
 	api.Get("/projects/:projectID/articles", s.requireAdminSession, s.listArticles)
 	api.Post("/projects/:projectID/articles", s.requireAdminSession, s.requireAdminCSRF, s.createArticle)
 	api.Get("/projects/:projectID/articles/:articleID", s.requireAdminSession, s.getArticle)
+	api.Get("/projects/:projectID/articles/:articleID/revisions", s.requireAdminSession, s.listRevisionHistory)
 	api.Post("/projects/:projectID/articles/:articleID/revisions", s.requireAdminSession, s.requireAdminCSRF, s.createRevision)
+	api.Get("/projects/:projectID/articles/:articleID/revisions/:revisionID", s.requireAdminSession, s.getRevisionDetail)
 	api.Post("/projects/:projectID/revisions/:revisionID/submit", s.requireAdminSession, s.requireAdminCSRF, s.submitRevision)
 	api.Post("/projects/:projectID/revisions/:revisionID/request-changes", s.requireAdminSession, s.requireAdminCSRF, s.requestRevisionChanges)
 	api.Post("/projects/:projectID/revisions/:revisionID/approve", s.requireAdminSession, s.requireAdminCSRF, s.approveRevision)
@@ -214,6 +216,7 @@ type articleRequest struct {
 }
 
 type revisionRequest struct {
+	BaseRevisionID    string `json:"baseRevisionId"`
 	Title             string `json:"title"`
 	PrimaryCategoryID string `json:"primaryCategoryId"`
 	Deck              string `json:"deck"`
@@ -763,6 +766,63 @@ func (s *Server) getArticle(c *fiber.Ctx) error {
 		return s.adminReadError(c, err, "Article not found", "Could not load article")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
+}
+
+func (s *Server) listRevisionHistory(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	cursor, err := decodeCursor[idCursor](c.Query("cursor"))
+	if err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid cursor", err.Error())
+	}
+	limit := boundedLimit(c.Query("limit", "25"), 100)
+	revisions, err := s.store.ListRevisionHistoryForUser(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("articleID"),
+		cursor.ID,
+		limit+1,
+	)
+	if err != nil {
+		if errors.Is(err, store.ErrValidation) {
+			return problem(c, fiber.StatusBadRequest, "Invalid cursor", err.Error())
+		}
+		return s.adminReadError(c, err, "Article not found", "Could not load revision history")
+	}
+	nextCursor := ""
+	if len(revisions) > limit {
+		revisions = revisions[:limit]
+		nextCursor = encodeCursor(idCursor{ID: revisions[len(revisions)-1].ID})
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.AdminRevisionSummary]{
+		Data: revisions,
+		Meta: PageMeta{
+			ProjectID:  c.Params("projectID"),
+			NextCursor: nextCursor,
+			Limit:      limit,
+		},
+	})
+}
+
+func (s *Server) getRevisionDetail(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	revision, err := s.store.GetRevisionDetailForUser(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("articleID"),
+		c.Params("revisionID"),
+	)
+	if err != nil {
+		return s.adminReadError(c, err, "Revision not found", "Could not load revision")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminRevisionDetail]{Data: revision})
 }
 
 func (s *Server) createRevision(c *fiber.Ctx) error {
@@ -1370,6 +1430,7 @@ func (input articleRequest) toStoreInput() store.ArticleInput {
 
 func (input revisionRequest) toStoreInput() store.RevisionInput {
 	return store.RevisionInput{
+		BaseRevisionID:    input.BaseRevisionID,
 		Title:             input.Title,
 		PrimaryCategoryID: input.PrimaryCategoryID,
 		Deck:              input.Deck,

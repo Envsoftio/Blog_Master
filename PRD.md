@@ -2722,6 +2722,8 @@ Creating or rotating a key returns its raw secret once. Later list/get responses
 GET    /api/v1/projects/{projectID}/articles
 POST   /api/v1/projects/{projectID}/articles
 GET    /api/v1/projects/{projectID}/articles/{articleID}
+GET    /api/v1/projects/{projectID}/articles/{articleID}/revisions
+GET    /api/v1/projects/{projectID}/articles/{articleID}/revisions/{revisionID}
 POST   /api/v1/projects/{projectID}/articles/{articleID}/revisions
 POST   /api/v1/projects/{projectID}/revisions/{revisionID}/submit
 POST   /api/v1/projects/{projectID}/revisions/{revisionID}/request-changes
@@ -2734,6 +2736,8 @@ POST   /api/v1/projects/{projectID}/articles/{articleID}/copy-to-project
 ```
 
 Every handler resolves the membership/permission for `{projectID}` first and calls a project-scoped service/repository method. If `{articleID}` exists under another project, the response is the same not-found result as a nonexistent ID; it shall not reveal the other project’s existence. `copy-to-project` requires source-read permission, destination-create permission and returns a new destination Article ID.
+
+Revision creation includes the exact `baseRevisionId` loaded by the editor. If a newer revision has already been committed, the API returns a conflict instead of recording false lineage or silently overwriting concurrent work.
 
 ### 17.4 AI jobs
 
@@ -2874,9 +2878,9 @@ The product shall be implemented and accepted as one complete delivery. The work
 
 ### Current implementation checkpoint
 
-As of PRD v1.9, the checked-in foundation includes root Taskfile orchestration, Docker Compose services for Nginx, Nuxt, Go API, Go worker, Redis and Mailpit, an `admincli` for migrations/bootstrap/OpenAPI generation, embedded SQLite migrations, a Nuxt admin shell with project-scoped pages, invite/session/member/API-key/audit flows, article/category/author/series workflow slices, scheduled publication worker behavior, article rollback through the admin API, protected Content API routes and a server-only TypeScript content client. This checkpoint is implementation evidence, not a scope reduction.
+As of PRD v1.9, the checked-in foundation includes root Taskfile orchestration, Docker Compose services for Nginx, Nuxt, Go API, Go worker, Redis and Mailpit, an `admincli` for migrations/bootstrap/OpenAPI generation, embedded SQLite migrations, a Nuxt admin shell with project-scoped pages, invite/session/member/API-key/audit flows, article/category/author/series workflow slices, scheduled publication worker behavior, project-scoped revision history and comparison, article rollback through the admin API and admin UI, protected Content API routes and a server-only TypeScript content client. This checkpoint is implementation evidence, not a scope reduction.
 
-Still-required committed scope includes richer structured editing, autosave conflict handling, revision diff and rollback UI completion, media/B2 processing, source/claim/disclosure/correction workflows, AI evidence/jobs/provenance, preview tokens, webhook delivery/replay, Redis cache-aside behavior, full SEO/discovery polish, production release automation, backup/restore automation, observability and the Fiber v3 alignment gate unless an approved architecture decision changes it.
+Still-required committed scope includes richer structured editing, autosave conflict handling, media/B2 processing, source/claim/disclosure/correction workflows, AI evidence/jobs/provenance, preview tokens, webhook delivery/replay, Redis cache-aside behavior, full SEO/discovery polish, production release automation, backup/restore automation, observability and the Fiber v3 alignment gate unless an approved architecture decision changes it.
 
 ### Foundation workstream
 

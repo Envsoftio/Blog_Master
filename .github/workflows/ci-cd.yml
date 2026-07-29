@@ -90,6 +90,12 @@ jobs:
         working-directory: apps/backend
         run: go test ./...
 
+      - name: Verify generated OpenAPI contract
+        working-directory: apps/backend
+        run: |
+          go run ./cmd/admincli openapi
+          git diff --exit-code -- ../../contracts/openapi/openapi.yaml
+
       - name: Build content client
         run: pnpm --filter @seoblog/content-client build
 

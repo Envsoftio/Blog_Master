@@ -110,6 +110,134 @@ func TestProjectScopedOperationalForeignKeys(t *testing.T) {
 	`, "foreign key")
 }
 
+func TestRevisionBaseMustBeEarlierAndBelongToSameProjectArticle(t *testing.T) {
+	db := testDatabase(t)
+	seedProjects(t, db)
+	if _, err := db.Exec(`
+		INSERT INTO content_items(id, project_id, article_type, created_by)
+		VALUES
+		  ('article-a', 'project-a', 'standard', 'user'),
+		  ('article-a-other', 'project-a', 'standard', 'user'),
+		  ('article-b', 'project-b', 'standard', 'user');
+		INSERT INTO content_revisions(
+		  id, project_id, content_id, revision_number, created_by_type, title, content_hash
+		) VALUES
+		  ('revision-a-1', 'project-a', 'article-a', 1, 'human', 'A1', 'hash-a-1'),
+		  ('revision-a-other-1', 'project-a', 'article-a-other', 1, 'human', 'Other A1', 'hash-a-other-1'),
+		  ('revision-b-1', 'project-b', 'article-b', 1, 'human', 'B1', 'hash-b-1');
+		INSERT INTO content_revisions(
+		  id, project_id, content_id, revision_number, base_revision_id,
+		  created_by_type, title, content_hash
+		) VALUES (
+		  'revision-a-2', 'project-a', 'article-a', 2, 'revision-a-1',
+		  'human', 'A2', 'hash-a-2'
+		);
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	assertSQLFails(t, db, `
+		INSERT INTO content_revisions(
+		  id, project_id, content_id, revision_number, base_revision_id,
+		  created_by_type, title, content_hash
+		) VALUES (
+		  'revision-a-cross-project', 'project-a', 'article-a', 3, 'revision-b-1',
+		  'human', 'Cross project', 'hash-cross-project'
+		)
+	`, "same project article")
+	assertSQLFails(t, db, `
+		INSERT INTO content_revisions(
+		  id, project_id, content_id, revision_number, base_revision_id,
+		  created_by_type, title, content_hash
+		) VALUES (
+		  'revision-a-cross-article', 'project-a', 'article-a', 3, 'revision-a-other-1',
+		  'human', 'Cross article', 'hash-cross-article'
+		)
+	`, "same project article")
+	assertSQLFails(t, db, `
+		UPDATE content_revisions
+		SET base_revision_id = 'revision-a-2'
+		WHERE id = 'revision-a-2'
+	`, "revision")
+	assertSQLFails(t, db, `
+		UPDATE content_revisions
+		SET revision_number = 3
+		WHERE id = 'revision-a-1'
+	`, "immutable")
+	assertSQLFails(t, db, `
+		DELETE FROM content_revisions
+		WHERE id = 'revision-a-1'
+	`, "immutable")
+	if _, err := db.Exec(`
+		DELETE FROM content_items
+		WHERE project_id = 'project-a' AND id = 'article-a'
+	`); err != nil {
+		t.Fatalf("expected whole-article deletion to cascade its revision history: %v", err)
+	}
+	var remainingArticleRevisions int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM content_revisions
+		WHERE project_id = 'project-a' AND content_id = 'article-a'
+	`).Scan(&remainingArticleRevisions); err != nil {
+		t.Fatal(err)
+	}
+	if remainingArticleRevisions != 0 {
+		t.Fatalf("expected article revision cascade to remove all history, got %d rows", remainingArticleRevisions)
+	}
+}
+
+func TestRevisionBaseMigrationRejectsInvalidExistingLineage(t *testing.T) {
+	db, err := OpenSQLite(filepath.Join(t.TempDir(), "legacy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`
+		CREATE TABLE schema_migrations(
+		  version TEXT PRIMARY KEY,
+		  applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []migration{
+		{version: "0001_initial", statements: initialMigration},
+		{version: "0002_session_reauthentication", statements: sessionReauthenticationMigration},
+		{version: "0003_invitation_revocation", statements: invitationRevocationMigration},
+		{version: "0004_audit_event_ids", statements: auditEventIDsMigration},
+		{version: "0005_author_photo_asset_guard", statements: authorPhotoAssetGuardMigration},
+		{version: "0006_review_comments_index", statements: reviewCommentsIndexMigration},
+	} {
+		if err := applyMigration(db, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedProjects(t, db)
+	if _, err := db.Exec(`
+		INSERT INTO content_items(id, project_id, article_type, created_by)
+		VALUES
+		  ('article-a', 'project-a', 'standard', 'user'),
+		  ('article-b', 'project-b', 'standard', 'user');
+		INSERT INTO content_revisions(
+		  id, project_id, content_id, revision_number, base_revision_id,
+		  created_by_type, title, content_hash
+		) VALUES
+		  ('revision-b-1', 'project-b', 'article-b', 1, NULL, 'human', 'B1', 'hash-b-1'),
+		  ('revision-a-1', 'project-a', 'article-a', 1, 'revision-b-1', 'human', 'A1', 'hash-a-1');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	err = applyMigration(db, migration{version: "0007_revision_base_guard", statements: revisionBaseGuardMigration})
+	if err == nil {
+		t.Fatal("expected migration to reject invalid existing base lineage")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "same project article") {
+		t.Fatalf("expected lineage validation error, got %q", err)
+	}
+}
+
 func TestAuthorPhotoAssetMustBelongToProject(t *testing.T) {
 	db := testDatabase(t)
 	seedProjects(t, db)
