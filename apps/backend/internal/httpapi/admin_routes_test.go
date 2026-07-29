@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -985,6 +986,400 @@ func TestWriterCannotManageProjectAPIKeys(t *testing.T) {
 	}
 }
 
+func TestAdminCategoryUpdateLifecycleAndHierarchy(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerALogin := seedAndLogin(t, server, db, "owner-a@example.test", "owner a correct password")
+	ownerBLogin := seedAndLogin(t, server, db, "owner-b@example.test", "owner b correct password")
+	writerLogin := seedAndLogin(t, server, db, "writer@example.test", "writer correct password")
+	projectA := createTestProject(t, server, ownerALogin, `{"slug":"taxonomy-a","name":"Taxonomy A"}`)
+	projectB := createTestProject(t, server, ownerBLogin, `{"slug":"taxonomy-b","name":"Taxonomy B"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, projectA.ID, writerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	root := createTestCategory(t, server, ownerALogin, projectA.ID, `{"slug":"root","name":"Root"}`)
+	child := createTestCategory(t, server, ownerALogin, projectA.ID, `{"slug":"child","name":"Child","parentId":"`+root.ID+`"}`)
+	crossProjectParent := createTestCategory(t, server, ownerBLogin, projectB.ID, `{"slug":"elsewhere","name":"Elsewhere"}`)
+
+	writerPatch := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+projectA.ID+"/categories/"+child.ID,
+		`{"name":"Writer Edited"}`,
+		writerLogin,
+	)
+	writerPatchResponse := mustTest(t, server, writerPatch)
+	if writerPatchResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer category update denial, got %d: %s", writerPatchResponse.StatusCode, readBody(t, writerPatchResponse))
+	}
+
+	update := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+projectA.ID+"/categories/"+child.ID,
+		`{"name":"Technical Guides","slug":"Technical Guides","description":"Evergreen technical work","indexable":false}`,
+		ownerALogin,
+	)
+	updateResponse := mustTest(t, server, update)
+	if updateResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected category update 200, got %d: %s", updateResponse.StatusCode, readBody(t, updateResponse))
+	}
+	var updated Envelope[store.TaxonomyTerm]
+	decodeJSONResponse(t, updateResponse, &updated)
+	if updated.Data.Slug != "technical-guides" || updated.Data.ParentID != root.ID || updated.Data.Indexable {
+		t.Fatalf("unexpected updated category %#v", updated.Data)
+	}
+	if len(updated.Data.Ancestors) != 1 || updated.Data.Ancestors[0].ID != root.ID {
+		t.Fatalf("expected category update response to include its ancestor path, got %#v", updated.Data.Ancestors)
+	}
+
+	oldSlugRequest := httptest.NewRequest(http.MethodGet, "/content/v1/categories/child", nil)
+	oldSlugRequest.Header.Set("X-Dev-Project-ID", projectA.ID)
+	oldSlugResponse := mustTest(t, server, oldSlugRequest)
+	if oldSlugResponse.StatusCode != http.StatusMovedPermanently {
+		t.Fatalf("expected old category slug to redirect with 301, got %d: %s", oldSlugResponse.StatusCode, readBody(t, oldSlugResponse))
+	}
+	if location := oldSlugResponse.Header.Get("Location"); location != "/content/v1/categories/technical-guides" {
+		t.Fatalf("expected old category slug redirect location, got %q", location)
+	}
+
+	crossProjectMove := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+projectA.ID+"/categories/"+child.ID,
+		`{"parentId":"`+crossProjectParent.ID+`"}`,
+		ownerALogin,
+	)
+	crossProjectMoveResponse := mustTest(t, server, crossProjectMove)
+	if crossProjectMoveResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected cross-project parent to fail with 400, got %d: %s", crossProjectMoveResponse.StatusCode, readBody(t, crossProjectMoveResponse))
+	}
+
+	grandchild := createTestCategory(t, server, ownerALogin, projectA.ID, `{"slug":"grandchild","name":"Grandchild","parentId":"`+child.ID+`"}`)
+	fourthLevel := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectA.ID+"/categories",
+		`{"slug":"fourth","name":"Fourth","parentId":"`+grandchild.ID+`"}`,
+		ownerALogin,
+	)
+	fourthLevelResponse := mustTest(t, server, fourthLevel)
+	if fourthLevelResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected fourth hierarchy level to fail with 400, got %d: %s", fourthLevelResponse.StatusCode, readBody(t, fourthLevelResponse))
+	}
+
+	updateRoot := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+projectA.ID+"/categories/"+root.ID,
+		`{"description":"Top-level category"}`,
+		ownerALogin,
+	)
+	updateRootResponse := mustTest(t, server, updateRoot)
+	if updateRootResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected root category update 200, got %d: %s", updateRootResponse.StatusCode, readBody(t, updateRootResponse))
+	}
+	var updatedRoot Envelope[store.TaxonomyTerm]
+	decodeJSONResponse(t, updateRootResponse, &updatedRoot)
+	if len(updatedRoot.Data.Children) != 1 || updatedRoot.Data.Children[0].ID != child.ID {
+		t.Fatalf("expected category update response to include direct children, got %#v", updatedRoot.Data.Children)
+	}
+
+	cycleMove := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+projectA.ID+"/categories/"+root.ID,
+		`{"parentId":"`+grandchild.ID+`"}`,
+		ownerALogin,
+	)
+	cycleMoveResponse := mustTest(t, server, cycleMove)
+	if cycleMoveResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected category cycle to fail with 400, got %d: %s", cycleMoveResponse.StatusCode, readBody(t, cycleMoveResponse))
+	}
+
+	duplicateSlug := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+projectA.ID+"/categories/"+root.ID,
+		`{"slug":"technical-guides"}`,
+		ownerALogin,
+	)
+	duplicateSlugResponse := mustTest(t, server, duplicateSlug)
+	if duplicateSlugResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected duplicate category slug to fail with 400, got %d: %s", duplicateSlugResponse.StatusCode, readBody(t, duplicateSlugResponse))
+	}
+
+	reuseHistoricalSlug := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+projectA.ID+"/categories/"+root.ID,
+		`{"slug":"child"}`,
+		ownerALogin,
+	)
+	reuseHistoricalSlugResponse := mustTest(t, server, reuseHistoricalSlug)
+	if reuseHistoricalSlugResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected historical category slug reuse to fail with 400, got %d: %s", reuseHistoricalSlugResponse.StatusCode, readBody(t, reuseHistoricalSlugResponse))
+	}
+
+	createWithHistoricalSlug := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectA.ID+"/categories",
+		`{"slug":"child","name":"Reused Child"}`,
+		ownerALogin,
+	)
+	createWithHistoricalSlugResponse := mustTest(t, server, createWithHistoricalSlug)
+	if createWithHistoricalSlugResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected category creation with a historical slug to fail with 400, got %d: %s", createWithHistoricalSlugResponse.StatusCode, readBody(t, createWithHistoricalSlugResponse))
+	}
+
+	publishedCategories := httptest.NewRequest(http.MethodGet, "/content/v1/categories", nil)
+	publishedCategories.Header.Set("X-Dev-Project-ID", projectA.ID)
+	publishedCategoriesResponse := mustTest(t, server, publishedCategories)
+	if publishedCategoriesResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected content category list 200, got %d: %s", publishedCategoriesResponse.StatusCode, readBody(t, publishedCategoriesResponse))
+	}
+	var categoryList ListEnvelope[store.TaxonomyTerm]
+	decodeJSONResponse(t, publishedCategoriesResponse, &categoryList)
+	listed := findTaxonomyTerm(categoryList.Data, child.ID)
+	if listed.Slug != "technical-guides" || listed.ParentID != root.ID || listed.Indexable {
+		t.Fatalf("expected updated category in content API, got %#v", listed)
+	}
+
+	redirectsRequest := httptest.NewRequest(http.MethodGet, "/content/v1/redirects", nil)
+	redirectsRequest.Header.Set("X-Dev-Project-ID", projectA.ID)
+	redirectsResponse := mustTest(t, server, redirectsRequest)
+	if redirectsResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected redirect list 200, got %d: %s", redirectsResponse.StatusCode, readBody(t, redirectsResponse))
+	}
+	var redirects ListEnvelope[store.RedirectRecord]
+	decodeJSONResponse(t, redirectsResponse, &redirects)
+	foundCategoryRedirect := false
+	for _, redirect := range redirects.Data {
+		if redirect.SourcePath == "/categories/child" && redirect.TargetPath == "/categories/technical-guides" && redirect.StatusCode == http.StatusMovedPermanently {
+			foundCategoryRedirect = true
+			break
+		}
+	}
+	if !foundCategoryRedirect {
+		t.Fatalf("expected category slug redirect in redirect manifest, got %#v", redirects.Data)
+	}
+
+	changesRequest := httptest.NewRequest(http.MethodGet, "/content/v1/changes", nil)
+	changesRequest.Header.Set("X-Dev-Project-ID", projectA.ID)
+	changesResponse := mustTest(t, server, changesRequest)
+	if changesResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected changes list 200, got %d: %s", changesResponse.StatusCode, readBody(t, changesResponse))
+	}
+	var changes ListEnvelope[store.ChangeRecord]
+	decodeJSONResponse(t, changesResponse, &changes)
+	changeTypes := map[string]bool{}
+	for _, change := range changes.Data {
+		if change.AggregateID == child.ID {
+			changeTypes[change.Type] = true
+		}
+	}
+	if !changeTypes["taxonomy.created"] || !changeTypes["taxonomy.updated"] {
+		t.Fatalf("expected taxonomy create and update change events for child, got %#v", changes.Data)
+	}
+
+	var contentGeneration int64
+	if err := db.QueryRow(`SELECT content_generation FROM projects WHERE id = ?`, projectA.ID).Scan(&contentGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if contentGeneration != 6 {
+		t.Fatalf("expected successful taxonomy writes to advance content generation to 6, got %d", contentGeneration)
+	}
+
+	var auditCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ?
+		  AND target_id = ?
+		  AND action IN ('taxonomy.create', 'taxonomy.update')
+	`, projectA.ID, child.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 2 {
+		t.Fatalf("expected category create and update audit events, got %d", auditCount)
+	}
+}
+
+func TestCategorySlugRedirectsRemainOneHop(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct password")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"redirects","name":"Redirects"}`)
+	category := createTestCategory(t, server, ownerLogin, project.ID, `{"slug":"original","name":"Original"}`)
+
+	for _, slug := range []string{"second", "final"} {
+		request := newMemberMutationRequest(
+			http.MethodPatch,
+			"/api/v1/projects/"+project.ID+"/categories/"+category.ID,
+			`{"slug":"`+slug+`"}`,
+			ownerLogin,
+		)
+		response := mustTest(t, server, request)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("expected category rename to %q to return 200, got %d: %s", slug, response.StatusCode, readBody(t, response))
+		}
+	}
+
+	rows, err := db.Query(`
+		SELECT source_path, target_path
+		FROM slug_redirects
+		WHERE project_id = ?
+		ORDER BY source_path
+	`, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	redirects := map[string]string{}
+	for rows.Next() {
+		var sourcePath, targetPath string
+		if err := rows.Scan(&sourcePath, &targetPath); err != nil {
+			t.Fatal(err)
+		}
+		redirects[sourcePath] = targetPath
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]string{
+		"/categories/original": "/categories/final",
+		"/categories/second":   "/categories/final",
+	}
+	if !reflect.DeepEqual(redirects, expected) {
+		t.Fatalf("expected one-hop category redirects %#v, got %#v", expected, redirects)
+	}
+
+	for _, slug := range []string{"original", "second"} {
+		request := httptest.NewRequest(http.MethodGet, "/content/v1/categories/"+slug, nil)
+		request.Header.Set("X-Dev-Project-ID", project.ID)
+		response := mustTest(t, server, request)
+		if response.StatusCode != http.StatusMovedPermanently {
+			t.Fatalf("expected historical slug %q to redirect with 301, got %d: %s", slug, response.StatusCode, readBody(t, response))
+		}
+		if location := response.Header.Get("Location"); location != "/content/v1/categories/final" {
+			t.Fatalf("expected historical slug %q to redirect directly to final slug, got %q", slug, location)
+		}
+	}
+}
+
+func TestAdminSeriesCreateAndPublishedVisibility(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct password")
+	writerLogin := seedAndLogin(t, server, db, "writer@example.test", "writer correct password")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"series","name":"Series Project"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, writerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	writerList := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/series", nil)
+	addCookies(writerList, writerLogin.cookies)
+	writerListResponse := mustTest(t, server, writerList)
+	if writerListResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected writer series list 200, got %d: %s", writerListResponse.StatusCode, readBody(t, writerListResponse))
+	}
+
+	writerCreate := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/series",
+		`{"name":"Writer Series"}`,
+		writerLogin,
+	)
+	writerCreateResponse := mustTest(t, server, writerCreate)
+	if writerCreateResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer series creation denial, got %d: %s", writerCreateResponse.StatusCode, readBody(t, writerCreateResponse))
+	}
+
+	created := createTestSeries(t, server, ownerLogin, project.ID, `{"name":"Getting Started","slug":"Getting Started","description":"Core sequence","indexable":false}`)
+	if created.Slug != "getting-started" || created.Description != "Core sequence" || created.Indexable {
+		t.Fatalf("unexpected created series %#v", created)
+	}
+
+	duplicateCreate := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/series",
+		`{"name":"Duplicate","slug":"getting-started"}`,
+		ownerLogin,
+	)
+	duplicateCreateResponse := mustTest(t, server, duplicateCreate)
+	if duplicateCreateResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected duplicate series slug to fail with 400, got %d: %s", duplicateCreateResponse.StatusCode, readBody(t, duplicateCreateResponse))
+	}
+
+	adminList := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/series", nil)
+	addCookies(adminList, ownerLogin.cookies)
+	adminListResponse := mustTest(t, server, adminList)
+	if adminListResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected admin series list 200, got %d: %s", adminListResponse.StatusCode, readBody(t, adminListResponse))
+	}
+	var adminSeries ListEnvelope[store.Series]
+	decodeJSONResponse(t, adminListResponse, &adminSeries)
+	if findSeries(adminSeries.Data, created.ID).ID == "" {
+		t.Fatalf("expected admin list to include created series, got %#v", adminSeries.Data)
+	}
+
+	publishedSeries := httptest.NewRequest(http.MethodGet, "/content/v1/series", nil)
+	publishedSeries.Header.Set("X-Dev-Project-ID", project.ID)
+	publishedSeriesResponse := mustTest(t, server, publishedSeries)
+	if publishedSeriesResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected content series list 200, got %d: %s", publishedSeriesResponse.StatusCode, readBody(t, publishedSeriesResponse))
+	}
+	var contentSeries ListEnvelope[store.Series]
+	decodeJSONResponse(t, publishedSeriesResponse, &contentSeries)
+	listed := findSeries(contentSeries.Data, created.ID)
+	if listed.Slug != "getting-started" || listed.Indexable {
+		t.Fatalf("expected created series in content API, got %#v", listed)
+	}
+
+	publishedSeriesDetail := httptest.NewRequest(http.MethodGet, "/content/v1/series/getting-started", nil)
+	publishedSeriesDetail.Header.Set("X-Dev-Project-ID", project.ID)
+	publishedSeriesDetailResponse := mustTest(t, server, publishedSeriesDetail)
+	if publishedSeriesDetailResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected content series detail 200, got %d: %s", publishedSeriesDetailResponse.StatusCode, readBody(t, publishedSeriesDetailResponse))
+	}
+
+	changesRequest := httptest.NewRequest(http.MethodGet, "/content/v1/changes", nil)
+	changesRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	changesResponse := mustTest(t, server, changesRequest)
+	if changesResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected changes list 200, got %d: %s", changesResponse.StatusCode, readBody(t, changesResponse))
+	}
+	var changes ListEnvelope[store.ChangeRecord]
+	decodeJSONResponse(t, changesResponse, &changes)
+	changeTypes := map[string]bool{}
+	for _, change := range changes.Data {
+		if change.AggregateID == created.ID {
+			changeTypes[change.Type] = true
+		}
+	}
+	if !changeTypes["series.created"] {
+		t.Fatalf("expected series create change event, got %#v", changes.Data)
+	}
+
+	var contentGeneration int64
+	if err := db.QueryRow(`SELECT content_generation FROM projects WHERE id = ?`, project.ID).Scan(&contentGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if contentGeneration != 2 {
+		t.Fatalf("expected series creation to advance content generation to 2, got %d", contentGeneration)
+	}
+
+	var auditCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ?
+		  AND target_id = ?
+		  AND action = 'series.create'
+	`, project.ID, created.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("expected one series create audit event, got %d", auditCount)
+	}
+}
+
 func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
@@ -1518,6 +1913,36 @@ func createTestAuthor(t *testing.T, server *Server, login adminLoginResult, proj
 	var payload Envelope[store.Author]
 	decodeJSONResponse(t, response, &payload)
 	return payload.Data
+}
+
+func findTaxonomyTerm(terms []store.TaxonomyTerm, termID string) store.TaxonomyTerm {
+	for _, term := range terms {
+		if term.ID == termID {
+			return term
+		}
+	}
+	return store.TaxonomyTerm{}
+}
+
+func createTestSeries(t *testing.T, server *Server, login adminLoginResult, projectID, body string) store.Series {
+	t.Helper()
+	request := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/series", body, login)
+	response := mustTest(t, server, request)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("expected create series 201, got %d: %s", response.StatusCode, readBody(t, response))
+	}
+	var payload Envelope[store.Series]
+	decodeJSONResponse(t, response, &payload)
+	return payload.Data
+}
+
+func findSeries(items []store.Series, seriesID string) store.Series {
+	for _, item := range items {
+		if item.ID == seriesID {
+			return item
+		}
+	}
+	return store.Series{}
 }
 
 func createTestArticle(t *testing.T, server *Server, login adminLoginResult, projectID, body string) store.AdminArticle {

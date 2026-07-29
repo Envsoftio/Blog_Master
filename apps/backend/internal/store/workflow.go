@@ -90,6 +90,21 @@ type TermInput struct {
 	Indexable   bool
 }
 
+type TermPatch struct {
+	Slug        *string
+	Name        *string
+	Description *string
+	ParentID    *string
+	Indexable   *bool
+}
+
+type SeriesInput struct {
+	Slug        string
+	Name        string
+	Description string
+	Indexable   bool
+}
+
 type workflowProject struct {
 	ID            string
 	Status        string
@@ -476,19 +491,9 @@ func (s *Store) CreateTerm(ctx context.Context, actorUserID, projectID, termType
 	if err := s.requireTaxonomyManage(ctx, actorUserID, projectID); err != nil {
 		return TaxonomyTerm{}, err
 	}
-	input.Slug = slugify(input.Slug)
-	input.Name = strings.TrimSpace(input.Name)
-	if input.Slug == "" {
-		return TaxonomyTerm{}, fmt.Errorf("%w: taxonomy slug is required", ErrValidation)
-	}
-	if input.Name == "" {
-		return TaxonomyTerm{}, fmt.Errorf("%w: taxonomy name is required", ErrValidation)
-	}
-	if termType != "category" && termType != "tag" {
-		return TaxonomyTerm{}, fmt.Errorf("%w: unsupported taxonomy type", ErrValidation)
-	}
-	if termType != "category" && input.ParentID != "" {
-		return TaxonomyTerm{}, fmt.Errorf("%w: tags cannot have parents", ErrValidation)
+	input = applyTermDefaults(input)
+	if err := validateTermInput(termType, input); err != nil {
+		return TaxonomyTerm{}, err
 	}
 	termID, err := securityRandomID("term")
 	if err != nil {
@@ -498,14 +503,232 @@ func (s *Store) CreateTerm(ctx context.Context, actorUserID, projectID, termType
 	if input.Indexable {
 		indexability = "index"
 	}
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO taxonomy_terms(id, project_id, type, parent_id, slug, name, description, indexability)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, termID, projectID, termType, nullIfEmpty(input.ParentID), input.Slug, input.Name, nullIfEmpty(input.Description), indexability)
+
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TaxonomyTerm{}, err
 	}
+	defer tx.Rollback()
+
+	status, err := projectStatus(ctx, tx, projectID)
+	if err != nil {
+		return TaxonomyTerm{}, err
+	}
+	if status != "active" {
+		return TaxonomyTerm{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	if err := ensureTaxonomySlugNotReserved(ctx, tx, projectID, termType, input.Slug); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	if err := validateTermParent(ctx, tx, projectID, "", termType, input.ParentID); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO taxonomy_terms(id, project_id, type, parent_id, slug, name, description, indexability)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, termID, projectID, termType, nullIfEmpty(input.ParentID), input.Slug, input.Name, nullIfEmpty(input.Description), indexability); err != nil {
+		return TaxonomyTerm{}, taxonomyConstraintError(err)
+	}
+	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	if err := insertTermOutbox(ctx, tx, projectID, termID, "taxonomy.created", termType, input); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "taxonomy.create", "taxonomy_term", termID, "success", map[string]string{
+		"type": termType,
+		"slug": input.Slug,
+	}); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return TaxonomyTerm{}, err
+	}
 	return s.GetTerm(ctx, projectID, termType, input.Slug)
+}
+
+func (s *Store) UpdateTerm(ctx context.Context, actorUserID, projectID, termID, termType string, patch TermPatch) (TaxonomyTerm, error) {
+	if err := s.requireTaxonomyManage(ctx, actorUserID, projectID); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return TaxonomyTerm{}, err
+	}
+	defer tx.Rollback()
+
+	status, err := projectStatus(ctx, tx, projectID)
+	if err != nil {
+		return TaxonomyTerm{}, err
+	}
+	if status != "active" {
+		return TaxonomyTerm{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	current, err := queryTermByID(ctx, tx, projectID, termID, termType)
+	if err != nil {
+		return TaxonomyTerm{}, err
+	}
+	next := termInputFromTerm(current)
+	if patch.Slug != nil {
+		next.Slug = *patch.Slug
+	}
+	if patch.Name != nil {
+		next.Name = *patch.Name
+	}
+	if patch.Description != nil {
+		next.Description = *patch.Description
+	}
+	if patch.ParentID != nil {
+		next.ParentID = *patch.ParentID
+	}
+	if patch.Indexable != nil {
+		next.Indexable = *patch.Indexable
+	}
+	next = applyTermDefaults(next)
+	if err := validateTermInput(termType, next); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	if err := validateTermParent(ctx, tx, projectID, termID, termType, next.ParentID); err != nil {
+		return TaxonomyTerm{}, err
+	}
+
+	assignments := make([]string, 0, 5)
+	args := make([]any, 0, 8)
+	if patch.ParentID != nil && next.ParentID != current.ParentID {
+		assignments = append(assignments, "parent_id = ?")
+		args = append(args, nullIfEmpty(next.ParentID))
+	}
+	if patch.Slug != nil && next.Slug != current.Slug {
+		if err := ensureTaxonomySlugNotReserved(ctx, tx, projectID, termType, next.Slug); err != nil {
+			return TaxonomyTerm{}, err
+		}
+		assignments = append(assignments, "slug = ?")
+		args = append(args, next.Slug)
+	}
+	if patch.Name != nil && next.Name != current.Name {
+		assignments = append(assignments, "name = ?")
+		args = append(args, next.Name)
+	}
+	if patch.Description != nil && next.Description != current.Description {
+		assignments = append(assignments, "description = ?")
+		args = append(args, nullIfEmpty(next.Description))
+	}
+	if patch.Indexable != nil && next.Indexable != current.Indexable {
+		indexability := "noindex"
+		if next.Indexable {
+			indexability = "index"
+		}
+		assignments = append(assignments, "indexability = ?")
+		args = append(args, indexability)
+	}
+	if len(assignments) == 0 {
+		if err := tx.Commit(); err != nil {
+			return TaxonomyTerm{}, err
+		}
+		return s.getHydratedTermByID(ctx, projectID, termID, termType)
+	}
+
+	args = append(args, projectID, termID, termType)
+	result, err := tx.ExecContext(ctx, `
+		UPDATE taxonomy_terms
+		SET `+strings.Join(assignments, ", ")+`,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND id = ? AND type = ? AND status = 'active'
+	`, args...)
+	if err != nil {
+		return TaxonomyTerm{}, taxonomyConstraintError(err)
+	}
+	if changed, err := result.RowsAffected(); err != nil {
+		return TaxonomyTerm{}, err
+	} else if changed != 1 {
+		return TaxonomyTerm{}, sql.ErrNoRows
+	}
+	stored, err := queryTermByID(ctx, tx, projectID, termID, termType)
+	if err != nil {
+		return TaxonomyTerm{}, err
+	}
+	storedInput := termInputFromTerm(stored)
+	if current.Slug != stored.Slug {
+		if err := insertTaxonomySlugRedirect(ctx, tx, projectID, termType, current.Slug, stored.Slug); err != nil {
+			return TaxonomyTerm{}, err
+		}
+	}
+	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	if err := insertTermOutbox(ctx, tx, projectID, termID, "taxonomy.updated", termType, storedInput); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "taxonomy.update", "taxonomy_term", termID, "success", map[string]string{
+		"type": termType,
+		"slug": stored.Slug,
+	}); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	return s.getHydratedTermByID(ctx, projectID, termID, termType)
+}
+
+func (s *Store) ListAdminSeries(ctx context.Context, userID, projectID string) ([]Series, error) {
+	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	return s.ListSeries(ctx, projectID)
+}
+
+func (s *Store) CreateSeries(ctx context.Context, actorUserID, projectID string, input SeriesInput) (Series, error) {
+	if err := s.requireTaxonomyManage(ctx, actorUserID, projectID); err != nil {
+		return Series{}, err
+	}
+	input = applySeriesDefaults(input)
+	if err := validateSeriesInput(input); err != nil {
+		return Series{}, err
+	}
+	seriesID, err := securityRandomID("ser")
+	if err != nil {
+		return Series{}, err
+	}
+	indexability := "noindex"
+	if input.Indexable {
+		indexability = "index"
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Series{}, err
+	}
+	defer tx.Rollback()
+
+	status, err := projectStatus(ctx, tx, projectID)
+	if err != nil {
+		return Series{}, err
+	}
+	if status != "active" {
+		return Series{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO series(id, project_id, slug, name, description, indexability)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, seriesID, projectID, input.Slug, input.Name, nullIfEmpty(input.Description), indexability); err != nil {
+		return Series{}, seriesConstraintError(err)
+	}
+	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+		return Series{}, err
+	}
+	if err := insertSeriesOutbox(ctx, tx, projectID, seriesID, "series.created", input); err != nil {
+		return Series{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "series.create", "series", seriesID, "success", map[string]string{
+		"slug": input.Slug,
+	}); err != nil {
+		return Series{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Series{}, err
+	}
+	return s.getSeriesByID(ctx, projectID, seriesID)
 }
 
 func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectID, articleID string, input PublicationInput, state string) (AdminArticle, error) {
@@ -648,6 +871,45 @@ func (s *Store) requireTaxonomyManage(ctx context.Context, userID, projectID str
 		return nil
 	}
 	return ErrForbidden
+}
+
+func (s *Store) getTermByID(ctx context.Context, projectID, termID, termType string) (TaxonomyTerm, error) {
+	return queryTermByID(ctx, s.db, projectID, termID, termType)
+}
+
+type termQueryRower interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func queryTermByID(ctx context.Context, queryer termQueryRower, projectID, termID, termType string) (TaxonomyTerm, error) {
+	row := queryer.QueryRowContext(ctx, `
+		SELECT id, type, slug, name, COALESCE(description, ''), COALESCE(parent_id, ''), indexability
+		FROM taxonomy_terms
+		WHERE project_id = ? AND id = ? AND type = ? AND status = 'active'
+	`, projectID, termID, termType)
+	return scanTerm(row)
+}
+
+func (s *Store) getHydratedTermByID(ctx context.Context, projectID, termID, termType string) (TaxonomyTerm, error) {
+	terms, err := s.ListTerms(ctx, projectID, termType)
+	if err != nil {
+		return TaxonomyTerm{}, err
+	}
+	for _, term := range terms {
+		if term.ID == termID {
+			return term, nil
+		}
+	}
+	return TaxonomyTerm{}, sql.ErrNoRows
+}
+
+func (s *Store) getSeriesByID(ctx context.Context, projectID, seriesID string) (Series, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, slug, name, COALESCE(description, ''), indexability
+		FROM series
+		WHERE project_id = ? AND id = ?
+	`, projectID, seriesID)
+	return scanSeries(row)
 }
 
 const adminArticleColumns = `
@@ -949,6 +1211,56 @@ func insertPublicationOutbox(ctx context.Context, tx *sql.Tx, projectID, article
 	return err
 }
 
+func insertTermOutbox(ctx context.Context, tx *sql.Tx, projectID, termID, eventType, termType string, input TermInput) error {
+	payload, err := json.Marshal(map[string]any{
+		"project_id":  projectID,
+		"term_id":     termID,
+		"type":        termType,
+		"slug":        input.Slug,
+		"parent_id":   input.ParentID,
+		"indexable":   input.Indexable,
+		"description": input.Description,
+	})
+	if err != nil {
+		return err
+	}
+	eventID, err := securityRandomID("event")
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO outbox_events(
+		  id, project_id, event_type, aggregate_type, aggregate_id,
+		  payload_json, idempotency_key
+		) VALUES (?, ?, ?, 'taxonomy_term', ?, ?, ?)
+	`, eventID, projectID, eventType, termID, string(payload), fmt.Sprintf("%s:%s:%s", eventType, termID, eventID))
+	return err
+}
+
+func insertSeriesOutbox(ctx context.Context, tx *sql.Tx, projectID, seriesID, eventType string, input SeriesInput) error {
+	payload, err := json.Marshal(map[string]any{
+		"project_id":  projectID,
+		"series_id":   seriesID,
+		"slug":        input.Slug,
+		"indexable":   input.Indexable,
+		"description": input.Description,
+	})
+	if err != nil {
+		return err
+	}
+	eventID, err := securityRandomID("event")
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO outbox_events(
+		  id, project_id, event_type, aggregate_type, aggregate_id,
+		  payload_json, idempotency_key
+		) VALUES (?, ?, ?, 'series', ?, ?, ?)
+	`, eventID, projectID, eventType, seriesID, string(payload), fmt.Sprintf("%s:%s:%s", eventType, seriesID, eventID))
+	return err
+}
+
 func applyArticleDefaults(input ArticleInput) ArticleInput {
 	input.ArticleType = strings.TrimSpace(input.ArticleType)
 	if input.ArticleType == "" {
@@ -984,6 +1296,171 @@ func validateArticleInput(input ArticleInput) error {
 	default:
 		return fmt.Errorf("%w: unsupported article type", ErrValidation)
 	}
+}
+
+func applyTermDefaults(input TermInput) TermInput {
+	input.Slug = slugify(input.Slug)
+	input.Name = strings.TrimSpace(input.Name)
+	input.Description = strings.TrimSpace(input.Description)
+	input.ParentID = strings.TrimSpace(input.ParentID)
+	return input
+}
+
+func termInputFromTerm(term TaxonomyTerm) TermInput {
+	return TermInput{
+		Slug:        term.Slug,
+		Name:        term.Name,
+		Description: term.Description,
+		ParentID:    term.ParentID,
+		Indexable:   term.Indexable,
+	}
+}
+
+func validateTermInput(termType string, input TermInput) error {
+	if input.Slug == "" {
+		return fmt.Errorf("%w: taxonomy slug is required", ErrValidation)
+	}
+	if input.Name == "" {
+		return fmt.Errorf("%w: taxonomy name is required", ErrValidation)
+	}
+	if termType != "category" && termType != "tag" {
+		return fmt.Errorf("%w: unsupported taxonomy type", ErrValidation)
+	}
+	if termType != "category" && input.ParentID != "" {
+		return fmt.Errorf("%w: tags cannot have parents", ErrValidation)
+	}
+	return nil
+}
+
+func validateTermParent(ctx context.Context, tx *sql.Tx, projectID, termID, termType, parentID string) error {
+	if parentID == "" {
+		return nil
+	}
+	if termType != "category" {
+		return fmt.Errorf("%w: tags cannot have parents", ErrValidation)
+	}
+	if termID != "" && parentID == termID {
+		return fmt.Errorf("%w: category cannot parent itself", ErrValidation)
+	}
+	var exists int
+	err := tx.QueryRowContext(ctx, `
+		SELECT 1
+		FROM taxonomy_terms
+		WHERE project_id = ?
+		  AND id = ?
+		  AND type = 'category'
+		  AND status = 'active'
+	`, projectID, parentID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: parentId must reference an active category in this project", ErrValidation)
+	}
+	return err
+}
+
+func ensureTaxonomySlugNotReserved(ctx context.Context, tx *sql.Tx, projectID, termType, slug string) error {
+	sourcePath, err := taxonomyArchivePath(termType, slug)
+	if err != nil {
+		return err
+	}
+	var exists int
+	err = tx.QueryRowContext(ctx, `
+		SELECT 1
+		FROM slug_redirects
+		WHERE project_id = ? AND source_path = ?
+	`, projectID, sourcePath).Scan(&exists)
+	switch {
+	case err == nil:
+		return fmt.Errorf("%w: taxonomy slug is reserved by redirect history", ErrValidation)
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	default:
+		return err
+	}
+}
+
+func insertTaxonomySlugRedirect(ctx context.Context, tx *sql.Tx, projectID, termType, oldSlug, newSlug string) error {
+	sourcePath, err := taxonomyArchivePath(termType, oldSlug)
+	if err != nil {
+		return err
+	}
+	targetPath, err := taxonomyArchivePath(termType, newSlug)
+	if err != nil {
+		return err
+	}
+	if sourcePath == targetPath {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE slug_redirects
+		SET target_path = ?
+		WHERE project_id = ? AND target_path = ?
+	`, targetPath, projectID, sourcePath); err != nil {
+		return err
+	}
+	redirectID, err := securityRandomID("redirect")
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO slug_redirects(id, project_id, source_path, target_path, status_code)
+		VALUES (?, ?, ?, ?, 301)
+	`, redirectID, projectID, sourcePath, targetPath); err != nil {
+		return taxonomyConstraintError(err)
+	}
+	return nil
+}
+
+func taxonomyArchivePath(termType, slug string) (string, error) {
+	switch termType {
+	case "category":
+		return "/categories/" + slug, nil
+	case "tag":
+		return "/tags/" + slug, nil
+	default:
+		return "", fmt.Errorf("%w: unsupported taxonomy type", ErrValidation)
+	}
+}
+
+func taxonomyConstraintError(err error) error {
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "taxonomy_terms.project_id, taxonomy_terms.slug") ||
+		strings.Contains(message, "slug_redirects.project_id, slug_redirects.source_path") ||
+		strings.Contains(message, "category cannot parent itself") ||
+		strings.Contains(message, "only categories may have category parents") ||
+		strings.Contains(message, "category hierarchy cannot contain a cycle") ||
+		strings.Contains(message, "category hierarchy cannot exceed three levels") ||
+		strings.Contains(message, "a taxonomy term with children must remain a category") {
+		return fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	return err
+}
+
+func applySeriesDefaults(input SeriesInput) SeriesInput {
+	input.Slug = slugify(input.Slug)
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Slug == "" {
+		input.Slug = slugify(input.Name)
+	}
+	input.Description = strings.TrimSpace(input.Description)
+	return input
+}
+
+func validateSeriesInput(input SeriesInput) error {
+	if input.Slug == "" {
+		return fmt.Errorf("%w: series slug is required", ErrValidation)
+	}
+	if input.Name == "" {
+		return fmt.Errorf("%w: series name is required", ErrValidation)
+	}
+	return nil
+}
+
+func seriesConstraintError(err error) error {
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "series.project_id, series.slug") {
+		return fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	return err
 }
 
 func renderRevisionBody(document any, html, title string) (string, string, string, error) {

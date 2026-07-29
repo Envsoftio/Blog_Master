@@ -193,11 +193,32 @@ func (s *Server) getTerm(c *fiber.Ctx, termType string) error {
 	term, err := s.store.GetTerm(c.UserContext(), project.ProjectID, termType, c.Params("slug"))
 	if err != nil {
 		if err == sql.ErrNoRows {
+			prefix := taxonomyRoutePrefix(termType)
+			if prefix != "" {
+				redirect, redirectErr := s.store.GetRedirect(c.UserContext(), project.ProjectID, prefix+c.Params("slug"))
+				if redirectErr == nil && strings.HasPrefix(redirect.TargetPath, prefix) {
+					return c.Redirect("/content/v1"+redirect.TargetPath, fiber.StatusMovedPermanently)
+				}
+				if redirectErr != nil && redirectErr != sql.ErrNoRows {
+					return problem(c, fiber.StatusInternalServerError, "Could not load taxonomy redirect", "")
+				}
+			}
 			return problem(c, fiber.StatusNotFound, "Taxonomy term not found", "")
 		}
 		return problem(c, fiber.StatusInternalServerError, "Could not load taxonomy term", "")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.TaxonomyTerm]{Data: term, Meta: MetaData{ProjectID: project.ProjectID}})
+}
+
+func taxonomyRoutePrefix(termType string) string {
+	switch termType {
+	case "category":
+		return "/categories/"
+	case "tag":
+		return "/tags/"
+	default:
+		return ""
+	}
 }
 
 func (s *Server) listAuthors(c *fiber.Ctx) error {

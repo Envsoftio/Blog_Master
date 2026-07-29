@@ -74,14 +74,14 @@ func (s *Server) registerAdminRoutes() {
 
 	api.Get("/projects/:projectID/categories", s.requireAdminSession, s.listAdminCategories)
 	api.Post("/projects/:projectID/categories", s.requireAdminSession, s.requireAdminCSRF, s.createCategory)
-	api.Patch("/projects/:projectID/categories/:termID", func(c *fiber.Ctx) error { return notImplemented(c, "category update") })
+	api.Patch("/projects/:projectID/categories/:termID", s.requireAdminSession, s.requireAdminCSRF, s.updateCategory)
 	api.Get("/projects/:projectID/tags", s.requireAdminSession, s.listAdminTags)
 	api.Post("/projects/:projectID/tags", s.requireAdminSession, s.requireAdminCSRF, s.createTag)
 	api.Get("/projects/:projectID/authors", s.requireAdminSession, s.listAdminAuthors)
 	api.Post("/projects/:projectID/authors", s.requireAdminSession, s.requireAdminCSRF, s.createAuthor)
 	api.Patch("/projects/:projectID/authors/:authorID", s.requireAdminSession, s.requireAdminCSRF, s.updateAuthor)
-	api.Get("/projects/:projectID/series", func(c *fiber.Ctx) error { return notImplemented(c, "series management") })
-	api.Post("/projects/:projectID/series", func(c *fiber.Ctx) error { return notImplemented(c, "series creation") })
+	api.Get("/projects/:projectID/series", s.requireAdminSession, s.listAdminSeries)
+	api.Post("/projects/:projectID/series", s.requireAdminSession, s.requireAdminCSRF, s.createSeries)
 
 	api.Get("/projects/:projectID/media", func(c *fiber.Ctx) error { return notImplemented(c, "media library") })
 	api.Post("/projects/:projectID/media/uploads", func(c *fiber.Ctx) error { return notImplemented(c, "media upload initiation") })
@@ -246,6 +246,21 @@ type termRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	ParentID    string `json:"parentId"`
+	Indexable   *bool  `json:"indexable"`
+}
+
+type termPatchRequest struct {
+	Slug        *string `json:"slug"`
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	ParentID    *string `json:"parentId"`
+	Indexable   *bool   `json:"indexable"`
+}
+
+type seriesRequest struct {
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 	Indexable   *bool  `json:"indexable"`
 }
 
@@ -875,6 +890,22 @@ func (s *Server) createTag(c *fiber.Ctx) error {
 	return s.createAdminTerm(c, "tag")
 }
 
+func (s *Server) updateCategory(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input termPatchRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	term, err := s.store.UpdateTerm(c.UserContext(), user.ID, c.Params("projectID"), c.Params("termID"), "category", input.toStorePatch())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not update taxonomy term")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.TaxonomyTerm]{Data: term})
+}
+
 func (s *Server) createAdminTerm(c *fiber.Ctx, termType string) error {
 	user, ok := adminUser(c)
 	if !ok {
@@ -889,6 +920,41 @@ func (s *Server) createAdminTerm(c *fiber.Ctx, termType string) error {
 		return s.adminMutationError(c, err, "Could not create taxonomy term")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.TaxonomyTerm]{Data: term})
+}
+
+func (s *Server) listAdminSeries(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	items, err := s.store.ListAdminSeries(c.UserContext(), user.ID, c.Params("projectID"))
+	if err != nil {
+		return s.adminReadError(c, err, "Project not found", "Could not list series")
+	}
+	page, next, pageErr := paginateByID(items, c.Query("cursor"), boundedLimit(c.Query("limit", "50"), 100), func(item store.Series) string { return item.ID })
+	if pageErr != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.Series]{
+		Data: page,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: len(page), NextCursor: next},
+	})
+}
+
+func (s *Server) createSeries(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input seriesRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	series, err := s.store.CreateSeries(c.UserContext(), user.ID, c.Params("projectID"), input.toStoreInput())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not create series")
+	}
+	return writeJSON(c, fiber.StatusCreated, Envelope[store.Series]{Data: series})
 }
 
 func (s *Server) listAdminAuthors(c *fiber.Ctx) error {
@@ -1243,6 +1309,29 @@ func (input termRequest) toStoreInput() store.TermInput {
 		Name:        input.Name,
 		Description: input.Description,
 		ParentID:    input.ParentID,
+		Indexable:   indexable,
+	}
+}
+
+func (input termPatchRequest) toStorePatch() store.TermPatch {
+	return store.TermPatch{
+		Slug:        input.Slug,
+		Name:        input.Name,
+		Description: input.Description,
+		ParentID:    input.ParentID,
+		Indexable:   input.Indexable,
+	}
+}
+
+func (input seriesRequest) toStoreInput() store.SeriesInput {
+	indexable := true
+	if input.Indexable != nil {
+		indexable = *input.Indexable
+	}
+	return store.SeriesInput{
+		Slug:        input.Slug,
+		Name:        input.Name,
+		Description: input.Description,
 		Indexable:   indexable,
 	}
 }

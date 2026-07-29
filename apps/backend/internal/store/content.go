@@ -488,6 +488,16 @@ func (s *Store) ListRedirects(ctx context.Context, projectID string) ([]Redirect
 	return redirects, rows.Err()
 }
 
+func (s *Store) GetRedirect(ctx context.Context, projectID, sourcePath string) (RedirectRecord, error) {
+	var redirect RedirectRecord
+	err := s.db.QueryRowContext(ctx, `
+		SELECT source_path, target_path, status_code
+		FROM slug_redirects
+		WHERE project_id = ? AND source_path = ?
+	`, projectID, sourcePath).Scan(&redirect.SourcePath, &redirect.TargetPath, &redirect.StatusCode)
+	return redirect, err
+}
+
 func (s *Store) ListChanges(ctx context.Context, projectID string, cursor ChangeCursor, limit int) ([]ChangeRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, event_type, aggregate_id, created_at
