@@ -1779,6 +1779,190 @@ func TestScheduledPublishFlow(t *testing.T) {
 	}
 }
 
+func TestReviewCommentLifecycleAndScoping(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	otherLogin := seedAndLogin(t, server, db, "other@example.test", "another correct horse battery staple")
+	writerLogin := seedAndLogin(t, server, db, "writer@example.test", "writer correct horse battery staple")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"comments","name":"Comments Project"}`)
+	otherProject := createTestProject(t, server, otherLogin, `{"slug":"other-comments","name":"Other Comments"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, writerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+	category := createTestCategory(t, server, ownerLogin, project.ID, `{"slug":"guides","name":"Guides"}`)
+	article := createTestArticle(t, server, ownerLogin, project.ID, `{
+		"articleType":"guide",
+		"title":"Reviewed Guide",
+		"slug":"reviewed-guide",
+		"primaryCategoryId":"`+category.ID+`",
+		"html":"<p>Draft body</p>"
+	}`)
+
+	createRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/comments",
+		`{"revisionId":"`+article.LatestRevision.ID+`","blockId":"intro","body":"Please add source detail."}`,
+		ownerLogin,
+	)
+	createResponse := mustTest(t, server, createRequest)
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected comment creation 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.ReviewComment]
+	decodeJSONResponse(t, createResponse, &created)
+	if created.Data.Status != "open" || created.Data.Body != "Please add source detail." || created.Data.RevisionID != article.LatestRevision.ID {
+		t.Fatalf("expected open revision-scoped comment, got %#v", created.Data)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/comments", nil)
+	addCookies(listRequest, ownerLogin.cookies)
+	listResponse := mustTest(t, server, listRequest)
+	if listResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected comments list 200, got %d: %s", listResponse.StatusCode, readBody(t, listResponse))
+	}
+	var list ListEnvelope[store.ReviewComment]
+	decodeJSONResponse(t, listResponse, &list)
+	if len(list.Data) != 1 || list.Data[0].ID != created.Data.ID {
+		t.Fatalf("expected created comment in list, got %#v", list.Data)
+	}
+
+	writerCommentRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/comments",
+		`{"body":"I have addressed this feedback."}`,
+		writerLogin,
+	)
+	writerCommentResponse := mustTest(t, server, writerCommentRequest)
+	if writerCommentResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected writer comment creation 201, got %d: %s", writerCommentResponse.StatusCode, readBody(t, writerCommentResponse))
+	}
+
+	writerResolveRequest := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/comments/"+created.Data.ID+"/resolve", `{}`, writerLogin)
+	writerResolveResponse := mustTest(t, server, writerResolveRequest)
+	if writerResolveResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer comment resolution denial, got %d: %s", writerResolveResponse.StatusCode, readBody(t, writerResolveResponse))
+	}
+
+	resolveRequest := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/comments/"+created.Data.ID+"/resolve", `{}`, ownerLogin)
+	resolveResponse := mustTest(t, server, resolveRequest)
+	if resolveResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected resolve comment 200, got %d: %s", resolveResponse.StatusCode, readBody(t, resolveResponse))
+	}
+	var resolved Envelope[store.ReviewComment]
+	decodeJSONResponse(t, resolveResponse, &resolved)
+	if resolved.Data.Status != "resolved" || resolved.Data.ResolvedBy != ownerLogin.userID || resolved.Data.ResolvedAt == "" {
+		t.Fatalf("expected resolved comment metadata, got %#v", resolved.Data)
+	}
+
+	writerReopenRequest := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/comments/"+created.Data.ID+"/reopen", `{}`, writerLogin)
+	writerReopenResponse := mustTest(t, server, writerReopenRequest)
+	if writerReopenResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer comment reopening denial, got %d: %s", writerReopenResponse.StatusCode, readBody(t, writerReopenResponse))
+	}
+
+	reopenRequest := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/comments/"+created.Data.ID+"/reopen", `{}`, ownerLogin)
+	reopenResponse := mustTest(t, server, reopenRequest)
+	if reopenResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected reopen comment 200, got %d: %s", reopenResponse.StatusCode, readBody(t, reopenResponse))
+	}
+	var reopened Envelope[store.ReviewComment]
+	decodeJSONResponse(t, reopenResponse, &reopened)
+	if reopened.Data.Status != "reopened" || reopened.Data.ResolvedBy != "" || reopened.Data.ResolvedAt != "" {
+		t.Fatalf("expected reopened comment, got %#v", reopened.Data)
+	}
+
+	crossProjectCreate := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+otherProject.ID+"/articles/"+article.ID+"/comments",
+		`{"body":"cross project"}`,
+		otherLogin,
+	)
+	crossProjectCreateResponse := mustTest(t, server, crossProjectCreate)
+	if crossProjectCreateResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project article comment to return 404, got %d: %s", crossProjectCreateResponse.StatusCode, readBody(t, crossProjectCreateResponse))
+	}
+
+	crossProjectResolve := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+otherProject.ID+"/comments/"+created.Data.ID+"/resolve", `{}`, otherLogin)
+	crossProjectResolveResponse := mustTest(t, server, crossProjectResolve)
+	if crossProjectResolveResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project comment resolve to return 404, got %d: %s", crossProjectResolveResponse.StatusCode, readBody(t, crossProjectResolveResponse))
+	}
+
+	invalidRevision := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/comments",
+		`{"revisionId":"rev_missing","body":"bad revision"}`,
+		ownerLogin,
+	)
+	invalidRevisionResponse := mustTest(t, server, invalidRevision)
+	if invalidRevisionResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected invalid revision to return 404, got %d: %s", invalidRevisionResponse.StatusCode, readBody(t, invalidRevisionResponse))
+	}
+
+	unicodeBody := strings.Repeat("界", 4000)
+	unicodeRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/comments",
+		`{"body":"`+unicodeBody+`"}`,
+		ownerLogin,
+	)
+	unicodeResponse := mustTest(t, server, unicodeRequest)
+	if unicodeResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 4000-character Unicode comment creation 201, got %d: %s", unicodeResponse.StatusCode, readBody(t, unicodeResponse))
+	}
+
+	tooLongRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/comments",
+		`{"body":"`+unicodeBody+`界"}`,
+		ownerLogin,
+	)
+	tooLongResponse := mustTest(t, server, tooLongRequest)
+	if tooLongResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 4001-character Unicode comment rejection, got %d: %s", tooLongResponse.StatusCode, readBody(t, tooLongResponse))
+	}
+
+	suspendRequest := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/suspend", `{}`, ownerLogin)
+	suspendResponse := mustTest(t, server, suspendRequest)
+	if suspendResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected project suspension 200, got %d: %s", suspendResponse.StatusCode, readBody(t, suspendResponse))
+	}
+
+	suspendedCreateRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/comments",
+		`{"body":"should not be created"}`,
+		ownerLogin,
+	)
+	suspendedCreateResponse := mustTest(t, server, suspendedCreateRequest)
+	if suspendedCreateResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected suspended-project comment creation conflict, got %d: %s", suspendedCreateResponse.StatusCode, readBody(t, suspendedCreateResponse))
+	}
+
+	suspendedResolveRequest := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/comments/"+created.Data.ID+"/resolve", `{}`, ownerLogin)
+	suspendedResolveResponse := mustTest(t, server, suspendedResolveRequest)
+	if suspendedResolveResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected suspended-project comment resolution conflict, got %d: %s", suspendedResolveResponse.StatusCode, readBody(t, suspendedResolveResponse))
+	}
+
+	var auditCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ?
+		  AND target_id = ?
+		  AND action IN ('comment.create', 'comment.resolve', 'comment.reopen')
+	`, project.ID, created.Data.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 3 {
+		t.Fatalf("expected comment lifecycle audit events, got %d", auditCount)
+	}
+}
+
 type adminLoginResult struct {
 	cookies   []*http.Cookie
 	csrfToken string

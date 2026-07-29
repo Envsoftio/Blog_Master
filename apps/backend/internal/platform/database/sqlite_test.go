@@ -181,6 +181,22 @@ func TestAuditEventsGenerateLegacyIDsAndRemainAppendOnly(t *testing.T) {
 	assertSQLFails(t, db, `DELETE FROM audit_events WHERE id = 'audit_test'`, "append-only")
 }
 
+func TestReviewCommentsContentIndex(t *testing.T) {
+	db := testDatabase(t)
+	var definition string
+	if err := db.QueryRow(`
+		SELECT sql
+		FROM sqlite_master
+		WHERE type = 'index' AND name = 'idx_review_comments_content'
+	`).Scan(&definition); err != nil {
+		t.Fatal(err)
+	}
+	normalized := strings.Join(strings.Fields(definition), " ")
+	if !strings.Contains(normalized, "review_comments(project_id, content_id, id)") {
+		t.Fatalf("unexpected review comments index definition %q", definition)
+	}
+}
+
 func assertSQLFails(t *testing.T, db *sql.DB, statement, expected string) {
 	t.Helper()
 	if _, err := db.Exec(statement); err == nil {

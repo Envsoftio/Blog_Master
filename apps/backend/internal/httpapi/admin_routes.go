@@ -96,10 +96,10 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/projects/:projectID/revisions/:revisionID/claims", func(c *fiber.Ctx) error { return notImplemented(c, "claim creation") })
 	api.Post("/projects/:projectID/claims/:claimID/verify", func(c *fiber.Ctx) error { return notImplemented(c, "claim verification") })
 
-	api.Get("/projects/:projectID/articles/:articleID/comments", func(c *fiber.Ctx) error { return notImplemented(c, "review comments") })
-	api.Post("/projects/:projectID/articles/:articleID/comments", func(c *fiber.Ctx) error { return notImplemented(c, "review comment creation") })
-	api.Post("/projects/:projectID/comments/:commentID/resolve", func(c *fiber.Ctx) error { return notImplemented(c, "review comment resolution") })
-	api.Post("/projects/:projectID/comments/:commentID/reopen", func(c *fiber.Ctx) error { return notImplemented(c, "review comment reopening") })
+	api.Get("/projects/:projectID/articles/:articleID/comments", s.requireAdminSession, s.listReviewComments)
+	api.Post("/projects/:projectID/articles/:articleID/comments", s.requireAdminSession, s.requireAdminCSRF, s.createReviewComment)
+	api.Post("/projects/:projectID/comments/:commentID/resolve", s.requireAdminSession, s.requireAdminCSRF, s.resolveReviewComment)
+	api.Post("/projects/:projectID/comments/:commentID/reopen", s.requireAdminSession, s.requireAdminCSRF, s.reopenReviewComment)
 	api.Get("/projects/:projectID/articles/:articleID/assignments", func(c *fiber.Ctx) error { return notImplemented(c, "review assignments") })
 	api.Post("/projects/:projectID/articles/:articleID/assignments", func(c *fiber.Ctx) error { return notImplemented(c, "review assignment creation") })
 
@@ -294,6 +294,12 @@ type authorPatchRequest struct {
 	ExternalProfiles *[]string `json:"externalProfiles"`
 	SameAs           *[]string `json:"sameAs"`
 	Status           *string   `json:"status"`
+}
+
+type reviewCommentRequest struct {
+	RevisionID string `json:"revisionId"`
+	BlockID    string `json:"blockId"`
+	Body       string `json:"body"`
 }
 
 func (s *Server) login(c *fiber.Ctx) error {
@@ -1008,6 +1014,67 @@ func (s *Server) updateAuthor(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.Author]{Data: author})
 }
 
+func (s *Server) listReviewComments(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	comments, err := s.store.ListReviewComments(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), c.Query("cursor"), limit+1)
+	if err != nil {
+		return s.adminReadError(c, err, "Article not found", "Could not list review comments")
+	}
+	nextCursor := ""
+	if len(comments) > limit {
+		comments = comments[:limit]
+		nextCursor = comments[len(comments)-1].ID
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.ReviewComment]{
+		Data: comments,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
+	})
+}
+
+func (s *Server) createReviewComment(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input reviewCommentRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	comment, err := s.store.CreateReviewComment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not create review comment")
+	}
+	return writeJSON(c, fiber.StatusCreated, Envelope[store.ReviewComment]{Data: comment})
+}
+
+func (s *Server) resolveReviewComment(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	comment, err := s.store.ResolveReviewComment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("commentID"))
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not resolve review comment")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewComment]{Data: comment})
+}
+
+func (s *Server) reopenReviewComment(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	comment, err := s.store.ReopenReviewComment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("commentID"))
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not reopen review comment")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewComment]{Data: comment})
+}
+
 func (s *Server) requireAdminSession(c *fiber.Ctx) error {
 	rawSession := c.Cookies(sessionCookieName)
 	if rawSession == "" {
@@ -1369,6 +1436,14 @@ func (input authorPatchRequest) toStorePatch() store.AuthorPatch {
 		ExternalProfiles: input.ExternalProfiles,
 		SameAs:           input.SameAs,
 		Status:           input.Status,
+	}
+}
+
+func (input reviewCommentRequest) toStoreInput() store.ReviewCommentInput {
+	return store.ReviewCommentInput{
+		RevisionID: input.RevisionID,
+		BlockID:    input.BlockID,
+		Body:       input.Body,
 	}
 }
 
