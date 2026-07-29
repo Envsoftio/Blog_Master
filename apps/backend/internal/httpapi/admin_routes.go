@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/url"
 	"strings"
 	"time"
@@ -69,7 +71,7 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/projects/:projectID/articles/:articleID/publish", s.requireAdminSession, s.requireAdminCSRF, s.publishArticle)
 	api.Post("/projects/:projectID/articles/:articleID/schedule", s.requireAdminSession, s.requireAdminCSRF, s.scheduleArticle)
 	api.Post("/projects/:projectID/articles/:articleID/unpublish", s.requireAdminSession, s.requireAdminCSRF, s.unpublishArticle)
-	api.Post("/projects/:projectID/articles/:articleID/rollback", func(c *fiber.Ctx) error { return notImplemented(c, "article rollback") })
+	api.Post("/projects/:projectID/articles/:articleID/rollback", s.requireAdminSession, s.requireAdminCSRF, s.rollbackArticle)
 	api.Post("/projects/:projectID/articles/:articleID/copy-to-project", func(c *fiber.Ctx) error { return notImplemented(c, "article copy to project") })
 
 	api.Get("/projects/:projectID/categories", s.requireAdminSession, s.listAdminCategories)
@@ -232,6 +234,11 @@ type publicationRequest struct {
 	CanonicalURL    string `json:"canonicalUrl"`
 	ScheduledFor    string `json:"scheduledFor"`
 	ScheduledForUTC string `json:"scheduledForUtc"`
+}
+
+type rollbackRequest struct {
+	RevisionID string `json:"revisionId"`
+	Locale     string `json:"locale,omitempty"`
 }
 
 type apiKeyRequest struct {
@@ -861,6 +868,28 @@ func (s *Server) unpublishArticle(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
 }
 
+func (s *Server) rollbackArticle(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input rollbackRequest
+	if err := decodeStrictRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
+	}
+	article, err := s.store.RollbackArticle(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("articleID"),
+		store.RollbackInput{RevisionID: input.RevisionID, Locale: input.Locale},
+	)
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not rollback article")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
+}
+
 func (s *Server) listAdminCategories(c *fiber.Ctx) error {
 	return s.listAdminTerms(c, "category")
 }
@@ -1259,6 +1288,21 @@ func adminUser(c *fiber.Ctx) (store.AdminUser, bool) {
 
 func decodeRequestBody(c *fiber.Ctx, destination any) error {
 	return json.Unmarshal(c.Body(), destination)
+}
+
+func decodeStrictRequestBody(c *fiber.Ctx, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(c.Body()))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request body must contain one JSON object")
+		}
+		return err
+	}
+	return nil
 }
 
 const sqliteUTCFormat = "2006-01-02 15:04:05"

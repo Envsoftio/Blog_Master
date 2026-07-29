@@ -9,6 +9,7 @@ node_modules/
 dist/
 coverage/
 tmp/
+.deploy/
 .gocache/
 *.log
 *.db

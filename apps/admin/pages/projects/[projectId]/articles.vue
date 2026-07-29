@@ -41,15 +41,7 @@
     </header>
 
     <div class="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-6 py-6 lg:grid-cols-[220px_1fr]">
-      <aside class="flex gap-2 overflow-x-auto lg:block lg:space-y-2">
-        <NuxtLink class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" to="/projects">Projects</NuxtLink>
-        <NuxtLink class="block rounded-md bg-white px-3 py-2 text-sm shadow-sm dark:bg-[#252b28]" :to="`/projects/${projectID}/articles`">Articles</NuxtLink>
-        <NuxtLink class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${projectID}/categories`">Categories</NuxtLink>
-        <NuxtLink class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${projectID}/authors`">Authors</NuxtLink>
-        <NuxtLink v-if="project?.role === 'project_owner' || project?.role === 'project_admin'" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${projectID}/members`">Members</NuxtLink>
-        <NuxtLink class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${projectID}/api-keys`">API keys</NuxtLink>
-        <NuxtLink v-if="project?.role === 'project_owner' || project?.role === 'project_admin'" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${projectID}/audit-events`">Audit</NuxtLink>
-      </aside>
+      <ProjectNav :project-id="projectID" :project="project" active="articles" />
 
       <div class="space-y-5">
         <p v-if="errorMessage" class="rounded-md border border-[#edc6c2] bg-[#fff4f2] px-4 py-3 text-sm text-[#9b2d23] dark:border-[#6d352f] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]" role="alert">
@@ -137,6 +129,13 @@
 
               <div class="mt-5 grid gap-3 lg:grid-cols-[1fr_auto]">
                 <div class="flex flex-wrap items-center gap-2">
+                  <NuxtLink
+                    class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]"
+                    :to="`/projects/${projectID}/articles/${article.id}`"
+                  >
+                    <FileText class="h-4 w-4" />
+                    Open
+                  </NuxtLink>
                   <button
                     v-if="article.editorialState === 'draft' || article.editorialState === 'changes_requested'"
                     class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
@@ -373,7 +372,7 @@ type TaxonomyTerm = {
 const route = useRoute()
 const projectID = computed(() => {
   const value = route.params.projectId
-  return Array.isArray(value) ? value[0] : String(value || '')
+  return Array.isArray(value) ? String(value[0] || '') : String(value || '')
 })
 
 const articleTypes = [

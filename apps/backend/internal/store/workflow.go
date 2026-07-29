@@ -82,6 +82,11 @@ type PublicationInput struct {
 	ScheduledForUTC string
 }
 
+type RollbackInput struct {
+	RevisionID string
+	Locale     string
+}
+
 type TermInput struct {
 	Slug        string
 	Name        string
@@ -421,6 +426,100 @@ func (s *Store) ScheduleArticle(ctx context.Context, actorUserID, projectID, art
 
 func (s *Store) PublishArticle(ctx context.Context, actorUserID, projectID, articleID string, input PublicationInput) (AdminArticle, error) {
 	return s.setArticlePublication(ctx, actorUserID, projectID, articleID, input, "published")
+}
+
+func (s *Store) RollbackArticle(ctx context.Context, actorUserID, projectID, articleID string, input RollbackInput) (AdminArticle, error) {
+	if err := s.requireContentPublish(ctx, actorUserID, projectID); err != nil {
+		return AdminArticle{}, err
+	}
+	input.RevisionID = strings.TrimSpace(input.RevisionID)
+	input.Locale = strings.TrimSpace(input.Locale)
+	if input.RevisionID == "" {
+		return AdminArticle{}, fmt.Errorf("%w: revisionId is required", ErrValidation)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	defer tx.Rollback()
+
+	project, err := loadWorkflowProject(ctx, tx, projectID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if project.Status != "active" {
+		return AdminArticle{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	if _, err := loadArticleType(ctx, tx, projectID, articleID); err != nil {
+		return AdminArticle{}, err
+	}
+	revision, err := loadRevision(ctx, tx, projectID, articleID, input.RevisionID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if revision.EditorialState != "approved" {
+		return AdminArticle{}, fmt.Errorf("%w: rollback revision must be approved", ErrInvalidWorkflow)
+	}
+	if err := ensurePublishableTaxonomy(ctx, tx, projectID, articleID); err != nil {
+		return AdminArticle{}, err
+	}
+
+	locale := input.Locale
+	if locale == "" {
+		locale = revision.Locale
+	}
+	if locale == "" {
+		locale = project.DefaultLocale
+	}
+	publication, err := loadPublicationForLocale(ctx, tx, projectID, articleID, locale)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AdminArticle{}, fmt.Errorf("%w: article must be published before rollback", ErrInvalidWorkflow)
+	}
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if publication.PublicationState != "published" {
+		return AdminArticle{}, fmt.Errorf("%w: article must be published before rollback", ErrInvalidWorkflow)
+	}
+	if publication.PublishedRevisionID == revision.ID {
+		return AdminArticle{}, fmt.Errorf("%w: revision is already published", ErrInvalidWorkflow)
+	}
+
+	publicationID, err := upsertPublication(
+		ctx,
+		tx,
+		projectID,
+		articleID,
+		revision.ID,
+		locale,
+		publication.Slug,
+		publication.CanonicalURL,
+		"",
+		"published",
+	)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	version, err := loadPublicationVersion(ctx, tx, projectID, articleID, locale)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := insertPublicationOutbox(ctx, tx, projectID, articleID, revision.ID, "content.restored", publication.CanonicalURL, version); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "article.rollback", "publication", publicationID, "success", map[string]string{
+		"revision_id": revision.ID,
+	}); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminArticle{}, err
+	}
+	return s.GetArticleForUser(ctx, actorUserID, projectID, articleID)
 }
 
 func (s *Store) UnpublishArticle(ctx context.Context, actorUserID, projectID, articleID string) (AdminArticle, error) {
@@ -985,18 +1084,37 @@ func scanAdminRevision(row rowScanner) (AdminRevision, error) {
 type publicationRecord struct {
 	ID                  string
 	PublishedRevisionID string
+	Locale              string
+	Slug                string
 	CanonicalURL        string
+	PublicationState    string
 	PublicationVersion  int64
 }
 
 func loadPublication(ctx context.Context, tx *sql.Tx, projectID, articleID string) (publicationRecord, error) {
+	return loadPublicationForLocale(ctx, tx, projectID, articleID, "")
+}
+
+func loadPublicationForLocale(ctx context.Context, tx *sql.Tx, projectID, articleID, locale string) (publicationRecord, error) {
 	var publication publicationRecord
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, COALESCE(published_revision_id, ''), canonical_url, publication_version
+		SELECT id, COALESCE(published_revision_id, ''), locale, slug, canonical_url,
+		       publication_state, publication_version
 		FROM project_publications
-		WHERE project_id = ? AND content_id = ?
+		WHERE project_id = ?
+		  AND content_id = ?
+		  AND (? = '' OR locale = ?)
+		ORDER BY updated_at DESC, id DESC
 		LIMIT 1
-	`, projectID, articleID).Scan(&publication.ID, &publication.PublishedRevisionID, &publication.CanonicalURL, &publication.PublicationVersion)
+	`, projectID, articleID, locale, locale).Scan(
+		&publication.ID,
+		&publication.PublishedRevisionID,
+		&publication.Locale,
+		&publication.Slug,
+		&publication.CanonicalURL,
+		&publication.PublicationState,
+		&publication.PublicationVersion,
+	)
 	return publication, err
 }
 

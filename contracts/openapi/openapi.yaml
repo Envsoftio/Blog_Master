@@ -1,5 +1,101 @@
 components:
   schemas:
+    AdminArticle:
+      additionalProperties: false
+      properties:
+        articleType:
+          type: string
+        canonicalUrl:
+          type: string
+        createdAt:
+          type: string
+        editorialState:
+          type: string
+        id:
+          type: string
+        latestRevision:
+          $ref: "#/components/schemas/AdminRevision"
+        locale:
+          type: string
+        projectId:
+          type: string
+        publicationState:
+          type: string
+        publishedAt:
+          type: string
+        scheduledForUtc:
+          type: string
+        slug:
+          type: string
+        title:
+          type: string
+      required:
+        - id
+        - projectId
+        - articleType
+        - slug
+        - locale
+        - title
+        - editorialState
+        - publicationState
+        - createdAt
+      type: object
+    AdminRevision:
+      additionalProperties: false
+      properties:
+        articleId:
+          type: string
+        contentHash:
+          type: string
+        createdAt:
+          type: string
+        deck:
+          type: string
+        editorialState:
+          type: string
+        excerpt:
+          type: string
+        id:
+          type: string
+        locale:
+          type: string
+        projectId:
+          type: string
+        revisionNumber:
+          format: int64
+          type: integer
+        shortAnswer:
+          type: string
+        title:
+          type: string
+      required:
+        - id
+        - projectId
+        - articleId
+        - revisionNumber
+        - title
+        - locale
+        - editorialState
+        - contentHash
+        - createdAt
+      type: object
+    EnvelopeAdminArticle:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EnvelopeAdminArticle.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          $ref: "#/components/schemas/AdminArticle"
+        meta:
+          $ref: "#/components/schemas/MetaData"
+      required:
+        - data
+      type: object
     ErrorDetail:
       additionalProperties: false
       properties:
@@ -79,6 +175,58 @@ components:
         - status
         - service
         - version
+      type: object
+    MetaData:
+      additionalProperties: false
+      properties:
+        contentGeneration:
+          format: int64
+          type: integer
+        etag:
+          type: string
+        projectId:
+          type: string
+      type: object
+    Problem:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/Problem.json
+          format: uri
+          readOnly: true
+          type: string
+        detail:
+          type: string
+        status:
+          format: int64
+          type: integer
+        title:
+          type: string
+        type:
+          type: string
+      required:
+        - type
+        - title
+        - status
+      type: object
+    RollbackRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RollbackRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        locale:
+          type: string
+        revisionId:
+          type: string
+      required:
+        - revisionId
       type: object
 info:
   title: SEO Blog CMS API
@@ -1295,24 +1443,78 @@ paths:
         - Administration
   /api/v1/projects/{projectID}/articles/{articleID}/rollback:
     post:
-      description: Administrative API route.
-      operationId: post_api_v1_projects_projectid_articles_articleid_rollback
+      description: Publishes a previously approved revision for the selected locale while preserving publication routing metadata and revision history.
+      operationId: rollbackArticle
+      parameters:
+        - description: Project identifier
+          in: path
+          name: projectID
+          required: true
+          schema:
+            type: string
+        - description: Article identifier
+          in: path
+          name: articleID
+          required: true
+          schema:
+            type: string
+        - description: Administrative session CSRF token
+          in: header
+          name: X-CSRF-Token
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RollbackRequest"
+        description: Approved revision and optional publication locale to restore.
+        required: true
       responses:
         "200":
-          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeAdminArticle"
+          description: Article publication rolled back
         "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Invalid request
         "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Authentication required
         "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Insufficient permission
         "404":
-          description: Resource not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Project, article, or revision not found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Article or revision is not in a rollback-compatible state
         "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
-      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/rollback
+      summary: Rollback an article
       tags:
         - Administration
   /api/v1/projects/{projectID}/articles/{articleID}/schedule:

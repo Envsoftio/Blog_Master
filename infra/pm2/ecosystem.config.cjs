@@ -1,4 +1,9 @@
-const releaseRoot = '/srv/seoblog/current'
+const releaseRoot = process.env.SEOBLOG_RELEASE_ROOT || '/srv/seoblog/current'
+const sharedRoot = process.env.SEOBLOG_SHARED_ROOT || '/srv/seoblog/shared'
+const apiAddr = process.env.SEOBLOG_HTTP_ADDR || `127.0.0.1:${process.env.SEOBLOG_API_PORT || '8080'}`
+const adminHost = process.env.NITRO_HOST || '127.0.0.1'
+const adminPort = process.env.NITRO_PORT || process.env.SEOBLOG_ADMIN_PORT || '3000'
+const dbPath = process.env.SEOBLOG_DB_PATH || `${sharedRoot}/seoblog.db`
 
 module.exports = {
   apps: [
@@ -19,9 +24,9 @@ module.exports = {
       max_memory_restart: '768M',
       env_production: {
         NODE_ENV: 'production',
-        NITRO_HOST: '127.0.0.1',
-        NITRO_PORT: '3000',
-        NUXT_API_BASE_URL: 'http://127.0.0.1:8080'
+        NITRO_HOST: adminHost,
+        NITRO_PORT: adminPort,
+        NUXT_API_BASE_URL: process.env.NUXT_API_BASE_URL || `http://${apiAddr}`
       }
     },
     {
@@ -39,7 +44,10 @@ module.exports = {
       kill_timeout: 15000,
       env_production: {
         SEOBLOG_ENV: 'production',
-        SEOBLOG_HTTP_ADDR: '127.0.0.1:8080'
+        SEOBLOG_HTTP_ADDR: apiAddr,
+        SEOBLOG_DB_PATH: dbPath,
+        SEOBLOG_DEV_AUTH: process.env.SEOBLOG_DEV_AUTH || 'false',
+        SEOBLOG_TRUSTED_PROXIES: process.env.SEOBLOG_TRUSTED_PROXIES || '127.0.0.1'
       }
     },
     {
@@ -56,7 +64,11 @@ module.exports = {
       max_restarts: 10,
       kill_timeout: 30000,
       env_production: {
-        SEOBLOG_ENV: 'production'
+        SEOBLOG_ENV: 'production',
+        SEOBLOG_HTTP_ADDR: apiAddr,
+        SEOBLOG_DB_PATH: dbPath,
+        SEOBLOG_DEV_AUTH: process.env.SEOBLOG_DEV_AUTH || 'false',
+        SEOBLOG_TRUSTED_PROXIES: process.env.SEOBLOG_TRUSTED_PROXIES || '127.0.0.1'
       }
     }
   ]

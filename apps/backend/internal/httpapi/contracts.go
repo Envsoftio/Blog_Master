@@ -2,11 +2,14 @@ package httpapi
 
 import (
 	"net/http"
+	"reflect"
 	"regexp"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/gofiber/fiber/v2"
+
+	"seoblog/apps/backend/internal/store"
 )
 
 var fiberParameter = regexp.MustCompile(`:([A-Za-z][A-Za-z0-9_]*)`)
@@ -16,6 +19,8 @@ var operationIDPart = regexp.MustCompile(`[^A-Za-z0-9]+`)
 // as the Huma-owned endpoints. Runtime routing remains in Fiber while the
 // contract stays complete and available at /openapi.json and /openapi.yaml.
 func documentFiberRoutes(api huma.API, app *fiber.App) {
+	documentRollbackRoute(api)
+
 	for _, methodRoutes := range app.Stack() {
 		for _, route := range methodRoutes {
 			if route.Path == "/healthz" ||
@@ -68,6 +73,75 @@ func documentFiberRoutes(api huma.API, app *fiber.App) {
 			})
 		}
 	}
+}
+
+func documentRollbackRoute(api huma.API) {
+	openAPI := api.OpenAPI()
+	registry := openAPI.Components.Schemas
+	requestSchema := registry.Schema(reflect.TypeOf(rollbackRequest{}), true, "RollbackArticleRequest")
+	responseSchema := registry.Schema(reflect.TypeOf(Envelope[store.AdminArticle]{}), true, "RollbackArticleResponse")
+	problemSchema := registry.Schema(reflect.TypeOf(Problem{}), true, "Problem")
+
+	problemResponse := func(description string) *huma.Response {
+		return &huma.Response{
+			Description: description,
+			Content: map[string]*huma.MediaType{
+				"application/problem+json": {Schema: problemSchema},
+			},
+		}
+	}
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodPost,
+		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/rollback",
+		OperationID: "rollbackArticle",
+		Summary:     "Rollback an article",
+		Description: "Publishes a previously approved revision for the selected locale while preserving publication routing metadata and revision history.",
+		Tags:        []string{"Administration"},
+		Parameters: []*huma.Param{
+			{
+				Name:        "projectID",
+				In:          "path",
+				Description: "Project identifier",
+				Required:    true,
+				Schema:      &huma.Schema{Type: "string"},
+			},
+			{
+				Name:        "articleID",
+				In:          "path",
+				Description: "Article identifier",
+				Required:    true,
+				Schema:      &huma.Schema{Type: "string"},
+			},
+			{
+				Name:        "X-CSRF-Token",
+				In:          "header",
+				Description: "Administrative session CSRF token",
+				Required:    true,
+				Schema:      &huma.Schema{Type: "string"},
+			},
+		},
+		RequestBody: &huma.RequestBody{
+			Description: "Approved revision and optional publication locale to restore.",
+			Required:    true,
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: requestSchema},
+			},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Article publication rolled back",
+				Content: map[string]*huma.MediaType{
+					"application/json": {Schema: responseSchema},
+				},
+			},
+			"400": problemResponse("Invalid request"),
+			"401": problemResponse("Authentication required"),
+			"403": problemResponse("Insufficient permission"),
+			"404": problemResponse("Project, article, or revision not found"),
+			"409": problemResponse("Article or revision is not in a rollback-compatible state"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
 }
 
 func operationForMethod(item *huma.PathItem, method string) *huma.Operation {

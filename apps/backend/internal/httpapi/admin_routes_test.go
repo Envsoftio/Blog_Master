@@ -1779,6 +1779,327 @@ func TestScheduledPublishFlow(t *testing.T) {
 	}
 }
 
+func TestArticleRollbackRestoresApprovedRevision(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+
+	project := createTestProject(t, server, login, `{"slug":"rollback","name":"Rollback Project","primaryDomain":"example.test"}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"guides","name":"Guides"}`)
+	article := createTestArticle(t, server, login, project.ID, `{
+		"articleType":"guide",
+		"title":"Original Guide",
+		"slug":"rollback-guide",
+		"primaryCategoryId":"`+category.ID+`",
+		"excerpt":"Original excerpt",
+		"html":"<p>Original body</p>"
+	}`)
+	firstRevisionID := article.LatestRevision.ID
+	approveTestRevision(t, server, login, project.ID, firstRevisionID)
+	publishTestArticle(t, server, login, project.ID, article.ID, firstRevisionID, "rollback-guide")
+
+	secondRevision := createTestRevision(t, server, login, project.ID, article.ID, `{
+		"title":"Updated Guide",
+		"excerpt":"Updated excerpt",
+		"html":"<p>Updated body</p>"
+	}`)
+	approveTestRevision(t, server, login, project.ID, secondRevision.ID)
+	publishTestArticle(t, server, login, project.ID, article.ID, secondRevision.ID, "rollback-guide")
+
+	draftRevision := createTestRevision(t, server, login, project.ID, article.ID, `{
+		"title":"Unapproved Draft",
+		"html":"<p>Draft body</p>"
+	}`)
+	rejectDraftRollback := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/rollback",
+		`{"revisionId":"`+draftRevision.ID+`"}`,
+		login,
+	)
+	rejectDraftRollbackResponse := mustTest(t, server, rejectDraftRollback)
+	if rejectDraftRollbackResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected draft rollback to fail with 409, got %d: %s", rejectDraftRollbackResponse.StatusCode, readBody(t, rejectDraftRollbackResponse))
+	}
+
+	updatedRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts/rollback-guide?locale=en", nil)
+	updatedRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	updatedResponse := mustTest(t, server, updatedRequest)
+	if updatedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected updated article to be published, got %d: %s", updatedResponse.StatusCode, readBody(t, updatedResponse))
+	}
+	var updated Envelope[store.PublishedPost]
+	decodeJSONResponse(t, updatedResponse, &updated)
+	if updated.Data.Title != "Updated Guide" {
+		t.Fatalf("expected updated title before rollback, got %q", updated.Data.Title)
+	}
+
+	var versionBeforeRollback int64
+	if err := db.QueryRow(`
+		SELECT publication_version
+		FROM project_publications
+		WHERE project_id = ? AND content_id = ?
+	`, project.ID, article.ID).Scan(&versionBeforeRollback); err != nil {
+		t.Fatal(err)
+	}
+
+	rejectRoutingChangeRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/rollback",
+		`{"revisionId":"`+firstRevisionID+`","slug":"moved-guide","canonicalUrl":"https://example.test/blog/moved-guide"}`,
+		login,
+	)
+	rejectRoutingChangeResponse := mustTest(t, server, rejectRoutingChangeRequest)
+	if rejectRoutingChangeResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected rollback routing metadata to fail with 400, got %d: %s", rejectRoutingChangeResponse.StatusCode, readBody(t, rejectRoutingChangeResponse))
+	}
+
+	rollbackRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/rollback",
+		`{"revisionId":"`+firstRevisionID+`"}`,
+		login,
+	)
+	rollbackResponse := mustTest(t, server, rollbackRequest)
+	if rollbackResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected rollback 200, got %d: %s", rollbackResponse.StatusCode, readBody(t, rollbackResponse))
+	}
+	var rollbackPayload Envelope[store.AdminArticle]
+	decodeJSONResponse(t, rollbackResponse, &rollbackPayload)
+	if rollbackPayload.Data.LatestRevision == nil || rollbackPayload.Data.LatestRevision.ID != draftRevision.ID {
+		t.Fatalf("expected rollback to preserve newer draft history, got %#v", rollbackPayload.Data.LatestRevision)
+	}
+
+	restoredRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts/rollback-guide?locale=en", nil)
+	restoredRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	restoredResponse := mustTest(t, server, restoredRequest)
+	if restoredResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected restored article to be readable, got %d: %s", restoredResponse.StatusCode, readBody(t, restoredResponse))
+	}
+	var restored Envelope[store.PublishedPost]
+	decodeJSONResponse(t, restoredResponse, &restored)
+	if restored.Data.Title != "Original Guide" || restored.Data.Revision != 1 {
+		t.Fatalf("expected original revision after rollback, got title=%q revision=%d", restored.Data.Title, restored.Data.Revision)
+	}
+
+	var versionAfterRollback int64
+	if err := db.QueryRow(`
+		SELECT publication_version
+		FROM project_publications
+		WHERE project_id = ? AND content_id = ?
+	`, project.ID, article.ID).Scan(&versionAfterRollback); err != nil {
+		t.Fatal(err)
+	}
+	if versionAfterRollback <= versionBeforeRollback {
+		t.Fatalf("expected rollback to advance publication version from %d, got %d", versionBeforeRollback, versionAfterRollback)
+	}
+
+	var restoredEvents int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM outbox_events
+		WHERE project_id = ?
+		  AND aggregate_id = ?
+		  AND event_type = 'content.restored'
+	`, project.ID, article.ID).Scan(&restoredEvents); err != nil {
+		t.Fatal(err)
+	}
+	if restoredEvents != 1 {
+		t.Fatalf("expected one content.restored outbox event, got %d", restoredEvents)
+	}
+
+	var rollbackAudits int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ?
+		  AND target_id = (
+		    SELECT id FROM project_publications WHERE project_id = ? AND content_id = ?
+		  )
+		  AND action = 'article.rollback'
+	`, project.ID, project.ID, article.ID).Scan(&rollbackAudits); err != nil {
+		t.Fatal(err)
+	}
+	if rollbackAudits != 1 {
+		t.Fatalf("expected one article.rollback audit event, got %d", rollbackAudits)
+	}
+}
+
+func TestArticleRollbackTargetsPublicationLocale(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+
+	project := createTestProject(t, server, login, `{
+		"slug":"localized-rollback",
+		"name":"Localized Rollback",
+		"primaryDomain":"example.test",
+		"supportedLocales":["en","fr"]
+	}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"guides","name":"Guides"}`)
+	article := createTestArticle(t, server, login, project.ID, `{
+		"articleType":"guide",
+		"title":"Original Guide",
+		"slug":"english-guide",
+		"locale":"en",
+		"primaryCategoryId":"`+category.ID+`",
+		"html":"<p>Original body</p>"
+	}`)
+	firstRevisionID := article.LatestRevision.ID
+	approveTestRevision(t, server, login, project.ID, firstRevisionID)
+	publishTestArticleForLocale(t, server, login, project.ID, article.ID, firstRevisionID, "english-guide", "en")
+	publishTestArticleForLocale(t, server, login, project.ID, article.ID, firstRevisionID, "guide-francais", "fr")
+
+	secondRevision := createTestRevision(t, server, login, project.ID, article.ID, `{
+		"title":"Updated Guide",
+		"html":"<p>Updated body</p>"
+	}`)
+	approveTestRevision(t, server, login, project.ID, secondRevision.ID)
+	publishTestArticleForLocale(t, server, login, project.ID, article.ID, secondRevision.ID, "english-guide", "en")
+	publishTestArticleForLocale(t, server, login, project.ID, article.ID, secondRevision.ID, "guide-francais", "fr")
+
+	type publicationRoute struct {
+		slug       string
+		canonical  string
+		revisionID string
+	}
+	loadRoute := func(locale string) publicationRoute {
+		t.Helper()
+		var route publicationRoute
+		if err := db.QueryRow(`
+			SELECT slug, canonical_url, published_revision_id
+			FROM project_publications
+			WHERE project_id = ? AND content_id = ? AND locale = ?
+		`, project.ID, article.ID, locale).Scan(&route.slug, &route.canonical, &route.revisionID); err != nil {
+			t.Fatal(err)
+		}
+		return route
+	}
+	englishBefore := loadRoute("en")
+	frenchBefore := loadRoute("fr")
+
+	if _, err := db.Exec(`
+		UPDATE project_publications
+		SET updated_at = '2099-01-01 00:00:00'
+		WHERE project_id = ? AND content_id = ? AND locale = 'en'
+	`, project.ID, article.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rollbackRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/rollback",
+		`{"revisionId":"`+firstRevisionID+`","locale":"fr"}`,
+		login,
+	)
+	rollbackResponse := mustTest(t, server, rollbackRequest)
+	if rollbackResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected localized rollback 200, got %d: %s", rollbackResponse.StatusCode, readBody(t, rollbackResponse))
+	}
+
+	englishAfter := loadRoute("en")
+	frenchAfter := loadRoute("fr")
+	if englishAfter != englishBefore {
+		t.Fatalf("expected English publication to remain unchanged, before=%#v after=%#v", englishBefore, englishAfter)
+	}
+	if frenchAfter.slug != frenchBefore.slug || frenchAfter.canonical != frenchBefore.canonical {
+		t.Fatalf("expected French routing metadata to remain unchanged, before=%#v after=%#v", frenchBefore, frenchAfter)
+	}
+	if frenchAfter.revisionID != firstRevisionID {
+		t.Fatalf("expected French publication to restore revision %q, got %q", firstRevisionID, frenchAfter.revisionID)
+	}
+
+	englishRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts/english-guide?locale=en", nil)
+	englishRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	englishResponse := mustTest(t, server, englishRequest)
+	if englishResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected English article 200, got %d: %s", englishResponse.StatusCode, readBody(t, englishResponse))
+	}
+	var english Envelope[store.PublishedPost]
+	decodeJSONResponse(t, englishResponse, &english)
+	if english.Data.Title != "Updated Guide" {
+		t.Fatalf("expected English publication to remain on updated revision, got %q", english.Data.Title)
+	}
+
+	frenchRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts/guide-francais?locale=fr", nil)
+	frenchRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	frenchResponse := mustTest(t, server, frenchRequest)
+	if frenchResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected French article 200, got %d: %s", frenchResponse.StatusCode, readBody(t, frenchResponse))
+	}
+	var french Envelope[store.PublishedPost]
+	decodeJSONResponse(t, frenchResponse, &french)
+	if french.Data.Title != "Original Guide" {
+		t.Fatalf("expected French publication to restore original revision, got %q", french.Data.Title)
+	}
+}
+
+func TestArticleRollbackRequiresPublishedSource(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+
+	project := createTestProject(t, server, login, `{"slug":"rollback-state","name":"Rollback State"}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"guides","name":"Guides"}`)
+	article := createTestArticle(t, server, login, project.ID, `{
+		"articleType":"guide",
+		"title":"Stateful Guide",
+		"slug":"stateful-guide",
+		"primaryCategoryId":"`+category.ID+`",
+		"html":"<p>Body</p>"
+	}`)
+	revisionID := article.LatestRevision.ID
+	approveTestRevision(t, server, login, project.ID, revisionID)
+
+	assertRollbackConflict := func() {
+		t.Helper()
+		request := newMemberMutationRequest(
+			http.MethodPost,
+			"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/rollback",
+			`{"revisionId":"`+revisionID+`"}`,
+			login,
+		)
+		response := mustTest(t, server, request)
+		if response.StatusCode != http.StatusConflict {
+			t.Fatalf("expected rollback conflict, got %d: %s", response.StatusCode, readBody(t, response))
+		}
+	}
+	assertRollbackConflict()
+
+	publishTestArticle(t, server, login, project.ID, article.ID, revisionID, "stateful-guide")
+	unpublishRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/unpublish",
+		`{}`,
+		login,
+	)
+	unpublishResponse := mustTest(t, server, unpublishRequest)
+	if unpublishResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected unpublish 200, got %d: %s", unpublishResponse.StatusCode, readBody(t, unpublishResponse))
+	}
+	assertRollbackConflict()
+
+	var state string
+	if err := db.QueryRow(`
+		SELECT publication_state
+		FROM project_publications
+		WHERE project_id = ? AND content_id = ?
+	`, project.ID, article.ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "unpublished" {
+		t.Fatalf("expected failed rollback to preserve unpublished state, got %q", state)
+	}
+
+	var rollbackAudits int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ? AND action = 'article.rollback'
+	`, project.ID).Scan(&rollbackAudits); err != nil {
+		t.Fatal(err)
+	}
+	if rollbackAudits != 0 {
+		t.Fatalf("expected failed rollback attempts not to create success audits, got %d", rollbackAudits)
+	}
+}
+
 func TestReviewCommentLifecycleAndScoping(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
@@ -2144,6 +2465,56 @@ func createTestArticle(t *testing.T, server *Server, login adminLoginResult, pro
 	if payload.Data.LatestRevision == nil {
 		t.Fatal("expected created article to include latest revision")
 	}
+	return payload.Data
+}
+
+func createTestRevision(t *testing.T, server *Server, login adminLoginResult, projectID, articleID, body string) store.AdminRevision {
+	t.Helper()
+	request := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/articles/"+articleID+"/revisions", body, login)
+	response := mustTest(t, server, request)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("expected create revision 201, got %d: %s", response.StatusCode, readBody(t, response))
+	}
+	var payload Envelope[store.AdminRevision]
+	decodeJSONResponse(t, response, &payload)
+	return payload.Data
+}
+
+func approveTestRevision(t *testing.T, server *Server, login adminLoginResult, projectID, revisionID string) store.AdminRevision {
+	t.Helper()
+	request := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/revisions/"+revisionID+"/approve", `{}`, login)
+	response := mustTest(t, server, request)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected approve revision 200, got %d: %s", response.StatusCode, readBody(t, response))
+	}
+	var payload Envelope[store.AdminRevision]
+	decodeJSONResponse(t, response, &payload)
+	return payload.Data
+}
+
+func publishTestArticle(t *testing.T, server *Server, login adminLoginResult, projectID, articleID, revisionID, slug string) store.AdminArticle {
+	t.Helper()
+	return publishTestArticleForLocale(t, server, login, projectID, articleID, revisionID, slug, "")
+}
+
+func publishTestArticleForLocale(t *testing.T, server *Server, login adminLoginResult, projectID, articleID, revisionID, slug, locale string) store.AdminArticle {
+	t.Helper()
+	localeField := ""
+	if locale != "" {
+		localeField = `,"locale":"` + locale + `"`
+	}
+	request := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectID+"/articles/"+articleID+"/publish",
+		`{"revisionId":"`+revisionID+`","slug":"`+slug+`"`+localeField+`}`,
+		login,
+	)
+	response := mustTest(t, server, request)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected publish article 200, got %d: %s", response.StatusCode, readBody(t, response))
+	}
+	var payload Envelope[store.AdminArticle]
+	decodeJSONResponse(t, response, &payload)
 	return payload.Data
 }
 

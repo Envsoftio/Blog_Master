@@ -40,13 +40,16 @@
 
     <div class="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-6 py-6 lg:grid-cols-[220px_1fr]">
       <aside class="flex gap-2 overflow-x-auto lg:block lg:space-y-2">
+        <NuxtLink class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" to="/dashboard">Dashboard</NuxtLink>
         <NuxtLink class="block rounded-md bg-white px-3 py-2 text-sm shadow-sm dark:bg-[#252b28]" to="/projects">Projects</NuxtLink>
         <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/articles`">Articles</NuxtLink>
         <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/categories`">Categories</NuxtLink>
+        <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/series`">Series</NuxtLink>
         <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/authors`">Authors</NuxtLink>
         <NuxtLink v-if="firstManagedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstManagedProjectID}/members`">Members</NuxtLink>
         <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/api-keys`">API keys</NuxtLink>
         <NuxtLink v-if="firstManagedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstManagedProjectID}/audit-events`">Audit</NuxtLink>
+        <NuxtLink v-if="firstManagedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstManagedProjectID}/settings`">Settings</NuxtLink>
       </aside>
 
       <div class="space-y-5">
@@ -89,6 +92,9 @@
 
         <p v-if="errorMessage" class="rounded-md border border-[#edc6c2] bg-[#fff4f2] px-4 py-3 text-sm text-[#9b2d23] dark:border-[#6d352f] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]" role="alert">
           {{ errorMessage }}
+        </p>
+        <p v-if="successMessage" class="rounded-md border border-[#b9dcc9] bg-[#edf9f1] px-4 py-3 text-sm text-[#165a4a] dark:border-[#2d644a] dark:bg-[#13261e] dark:text-[#aee4d0]">
+          {{ successMessage }}
         </p>
 
         <div v-if="pending" class="flex items-center gap-3 rounded-lg border border-[#cfd8d1] bg-white p-5 text-sm text-[#58625c] dark:border-[#3f4843] dark:bg-[#202522] dark:text-[#bec7c1]">
@@ -175,8 +181,10 @@ const pending = ref(true)
 const creating = ref(false)
 const formOpen = ref(false)
 const errorMessage = ref('')
+const successMessage = ref('')
 const firstProjectID = computed(() => projects.value[0]?.id || '')
 const firstManagedProjectID = computed(() => projects.value.find(project => project.role === 'project_owner' || project.role === 'project_admin')?.id || '')
+const route = useRoute()
 
 const form = reactive({
   name: '',
@@ -191,18 +199,22 @@ watch(() => form.name, (value) => {
   if (!form.slug) form.slug = slugify(value)
 })
 
-onMounted(fetchProjects)
+onMounted(() => {
+  formOpen.value = route.query.new === '1'
+  fetchProjects()
+})
 
 async function fetchProjects() {
   pending.value = true
   errorMessage.value = ''
+  successMessage.value = ''
   try {
     const response = await $fetch<APIListEnvelope<AdminProject>>('/api/v1/projects', {
       credentials: 'include'
     })
     projects.value = response.data
-  } catch {
-    errorMessage.value = 'Could not load projects. Sign in again if your session has expired.'
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, 'Could not load projects. Sign in again if your session has expired.')
   } finally {
     pending.value = false
   }
@@ -211,30 +223,42 @@ async function fetchProjects() {
 async function createProject() {
   creating.value = true
   errorMessage.value = ''
+  successMessage.value = ''
+  let createdProject: AdminProject
   try {
     const csrfToken = await getCSRFToken()
-    await $fetch<APIEnvelope<AdminProject>>('/api/v1/projects', {
+    const response = await $fetch<APIEnvelope<AdminProject>>('/api/v1/projects', {
       method: 'POST',
       credentials: 'include',
       headers: { 'X-CSRF-Token': csrfToken },
       body: {
-        name: form.name,
-        slug: form.slug,
-        primaryDomain: form.primaryDomain,
-        blogBasePath: form.blogBasePath,
+        name: form.name.trim(),
+        slug: form.slug.trim(),
+        primaryDomain: form.primaryDomain.trim(),
+        blogBasePath: normalizedBlogBasePath(),
         defaultLocale: form.defaultLocale,
         supportedLocales: [form.defaultLocale],
         timezone: form.timezone
       }
     })
-    form.name = ''
-    form.slug = ''
-    form.primaryDomain = ''
-    form.blogBasePath = '/blog'
-    formOpen.value = false
-    await fetchProjects()
+    createdProject = response.data
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, 'Could not create project. Check the fields and try again.')
+    creating.value = false
+    return
+  }
+
+  projects.value = [createdProject, ...projects.value.filter(project => project.id !== createdProject.id)]
+  form.name = ''
+  form.slug = ''
+  form.primaryDomain = ''
+  form.blogBasePath = '/blog'
+  formOpen.value = false
+  successMessage.value = 'Project created.'
+  try {
+    await navigateTo(`/projects/${createdProject.id}/articles`)
   } catch {
-    errorMessage.value = 'Could not create project. Check the fields and try again.'
+    errorMessage.value = 'Project created, but the project workspace did not open. Refresh or open it from the project list.'
   } finally {
     creating.value = false
   }
@@ -277,11 +301,27 @@ function roleLabel(role: string) {
   return role.replaceAll('_', ' ')
 }
 
+function normalizedBlogBasePath() {
+  const value = form.blogBasePath.trim() || '/blog'
+  return value.startsWith('/') ? value : `/${value}`
+}
+
 function slugify(value: string) {
   return value
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
+}
+
+function normalizeAPIError(error: unknown, fallback: string) {
+  if (typeof error === 'object' && error !== null && 'data' in error) {
+    const data = (error as { data?: { title?: string, detail?: string, statusCode?: number, statusMessage?: string, message?: string } }).data
+    if (data?.statusCode === 502) {
+      return 'The admin API is unavailable. Start the Go API on the configured proxy port or set NUXT_API_BASE_URL to the running API.'
+    }
+    return data?.detail || data?.title || data?.message || fallback
+  }
+  return fallback
 }
 </script>

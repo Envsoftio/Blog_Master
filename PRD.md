@@ -2,15 +2,15 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft v1.8, ready for product review |
-| Version | 1.8 |
-| Date | 2026-07-29 |
+| Status | Draft v1.9, ready for implementation alignment review |
+| Version | 1.9 |
+| Date | 2026-07-30 |
 | Product | Headless blog CMS and versioned JSON content API |
 | Primary users | Workspace owner, project owner/administrator, editor, reviewer, writer, landing-page developer |
 | Direct consumers | Landing-project build, SSR, ISR and backend services |
 | Indirect consumers | Visitors, search crawlers and answer engines through landing-project HTML |
 | Object storage decision | Backblaze B2 Cloud Storage for media and SQLite backup data |
-| Revision note | Replaced the phased roadmap with one committed delivery containing foundation, manual writing, AI writing, optimization and integration scope |
+| Revision note | Aligned repository, command, Docker Compose and OpenAPI contract conventions with the checked-in monorepo; added implementation drift controls for Fiber, migrations and generated client artifacts |
 
 ## 1. Executive summary
 
@@ -318,9 +318,9 @@ The Content API resolves `project_id` from the credential before reading cache o
 
 Use one Git monorepo/workspace containing two independent applications:
 
-- `apps/backend`: one Go module producing API, worker and admin-CLI binaries.
+- `apps/backend`: one Go module producing API, worker and `admincli` binaries.
 - `apps/admin`: one Nuxt admin application producing a Nitro Node SSR build for production.
-- `contracts` and `packages/content-client`: generated OpenAPI and TypeScript integration artifacts.
+- `contracts/openapi/openapi.yaml` and `packages/content-client`: generated OpenAPI and TypeScript integration artifacts.
 - `infra`: Nginx, Docker development, PM2, Litestream, service definitions and infrastructure code.
 
 The product codebase therefore has only two application areas: backend and frontend/admin. The API, worker and administrative CLI are separate executables produced by the same backend application, not separate product applications. External landing applications are API consumers and remain outside this repository.
@@ -1659,7 +1659,7 @@ Landing-rendered HTML → visitors, search crawlers and answer engines
 
 ### 11.2 Repository and runtime structure
 
-The product shall use one Git monorepo containing independent Go and Nuxt applications:
+The product shall use one Git monorepo containing independent Go and Nuxt applications. The checked-in v1.9 layout and naming baseline is:
 
 ```text
 seoblog/
@@ -1668,70 +1668,37 @@ seoblog/
 │   │   ├── cmd/
 │   │   │   ├── api/main.go
 │   │   │   ├── worker/main.go
-│   │   │   └── admin-cli/main.go
+│   │   │   └── admincli/main.go
 │   │   ├── internal/
-│   │   │   ├── app/
-│   │   │   ├── platform/
-│   │   │   │   ├── config/
-│   │   │   │   ├── database/
-│   │   │   │   ├── redis/
-│   │   │   │   ├── b2/
-│   │   │   │   ├── email/
-│   │   │   │   ├── telemetry/
-│   │   │   │   └── http/
-│   │   │   └── modules/
-│   │   │       ├── identity/
-│   │   │       ├── authorization/
-│   │   │       ├── projects/
-│   │   │       ├── content/
-│   │   │       ├── editorial/
-│   │   │       ├── publication/
-│   │   │       ├── taxonomy/
-│   │   │       ├── media/
-│   │   │       ├── seo/
-│   │   │       ├── delivery/
-│   │   │       ├── integrations/
-│   │   │       ├── ai/
-│   │   │       ├── audit/
-│   │   │       └── jobs/
-│   │   ├── db/
-│   │   │   ├── migrations/
-│   │   │   ├── queries/
-│   │   │   └── sqlc.yaml
-│   │   ├── tests/
+│   │   │   ├── config/
+│   │   │   ├── httpapi/
+│   │   │   ├── platform/database/migrations/
+│   │   │   ├── security/
+│   │   │   └── store/
+│   │   ├── queries/
+│   │   ├── sqlc.yaml
+│   │   ├── Dockerfile
 │   │   ├── go.mod
 │   │   └── go.sum
 │   └── admin/
-│       ├── app/
-│       │   ├── components/
-│       │   ├── composables/
-│       │   ├── layouts/
-│       │   ├── middleware/
-│       │   ├── pages/
-│       │   ├── stores/
-│       │   └── utils/
-│       ├── shared/
-│       ├── public/
+│       ├── assets/css/
+│       ├── layouts/
+│       ├── pages/
+│       ├── app.vue
+│       ├── Dockerfile
 │       ├── nuxt.config.ts
 │       └── package.json
 ├── packages/
-│   └── content-client/
+│   └── content-client/src/
 ├── contracts/
-│   └── openapi.json
+│   └── openapi/openapi.yaml
 ├── infra/
 │   ├── nginx/
-│   ├── docker/
-│   ├── litestream/
 │   ├── pm2/
 │   │   └── ecosystem.config.cjs
-│   ├── systemd/
-│   └── opentofu/
-├── scripts/
-│   ├── deploy-production.sh
-│   └── verify-release.sh
-├── docs/
+│   └── ...
 ├── pnpm-workspace.yaml
-├── compose.dev.yaml
+├── docker-compose.yml
 ├── Taskfile.yml
 └── PRD.md
 ```
@@ -1739,11 +1706,13 @@ seoblog/
 Normative boundaries:
 
 - `apps/backend` is one Go module with one `go.mod`; a `go.work` file is unnecessary until the repository contains multiple independent Go modules.
-- `cmd/api`, `cmd/worker` and `cmd/admin-cli` compile as separate binaries and reuse packages under `internal`.
+- `cmd/api`, `cmd/worker` and `cmd/admincli` compile as separate binaries and reuse packages under `internal`.
+- Runtime SQLite migrations used by the binaries live under `apps/backend/internal/platform/database/migrations` and are embedded by the database package. Any duplicate migration directory must be generated from, or reconciled with, that authoritative source before production release.
+- The current foundation may keep coarse packages such as `internal/httpapi` and `internal/store` while requirements stabilize. When the codebase is split into finer domain packages, Section 11.3 defines the intended package boundaries.
 - The PNPM workspace manages only the Nuxt application and TypeScript packages; it does not manage Go dependencies.
 - A root task runner coordinates builds, tests, migrations, contract generation, Docker development and the versioned production release without merging dependency graphs.
-- `task dev` shall start the complete development stack through `compose.dev.yaml`; `task deploy:prod RELEASE=<immutable-release-id>` shall release both application artifacts through the controlled production deployment script.
-- Huma’s OpenAPI output is the API contract source. `contracts/openapi.json` and `packages/content-client` are generated/versioned outputs, and CI shall fail on contract/client drift.
+- `task dev` shall start the complete development stack through the repository's canonical Docker Compose entry point, currently `docker-compose.yml`; `task deploy:prod RELEASE=<immutable-release-id>` shall release both application artifacts through the controlled production deployment script.
+- Huma's OpenAPI output is the API contract source. The generated contract is stored at `contracts/openapi/openapi.yaml`, and the protected API also exposes `/openapi.yaml` while running. `task contracts:generate` and the generated `packages/content-client` package shall be checked in or validated together, and CI shall fail on contract/client drift.
 - Nuxt shall contain no direct SQLite access, authoritative authorization or duplicated core Nitro API implementation. It calls the Go admin API.
 - Nuxt SSR may perform presentation-layer session bootstrap and call the Go API over the host-private network, but Go remains authoritative for authentication, authorization, validation, persistence and publication.
 - Landing applications remain in separate repositories and consume the versioned Content API or generated content client.
@@ -1784,6 +1753,8 @@ Fiber v3 is selected for routing and middleware. Huma provides:
 - Some insulation between transport and domain services.
 
 All database, AI, Redis and object-storage calls receive explicit service-level contexts and timeouts. Background work receives copied immutable identifiers and never a retained Fiber request context.
+
+Implementation alignment gate: the checked-in foundation currently imports `github.com/gofiber/fiber/v2`. Before production acceptance, the backend shall either migrate to Fiber v3 with the compatible Huma adapter and regenerate contract/client artifacts, or record an explicit architecture decision changing the selected HTTP stack. Until that gate is resolved, requirements that name Fiber v3 describe the selected target rather than proof that the current code has completed the migration.
 
 ### 11.5 Nuxt versus HTMX
 
@@ -2058,11 +2029,11 @@ The release bundle contains independently runnable, mutually compatible artifact
 ```text
 backend-api          native Go API binary
 backend-worker       native Go worker binary
-backend-admin-cli    on-demand bootstrap/migration/maintenance binary
+backend-admincli     on-demand bootstrap/migration/maintenance binary
 admin/.output/       versioned Nuxt Nitro Node SSR build
 ecosystem.config.cjs versioned PM2 application declaration
 nginx/seoblog.conf   reviewed Nginx virtual-host configuration
-openapi.json         generated API contract
+openapi.yaml         generated API contract
 content-client       generated versioned TypeScript package
 release.json         release ID, commit SHA, build metadata and checksums
 ```
@@ -2075,7 +2046,7 @@ All artifacts receive the same immutable release ID and commit SHA. They are sep
 │   ├── 2026-07-29.1/
 │   │   ├── bin/seoblog-api
 │   │   ├── bin/seoblog-worker
-│   │   ├── bin/seoblog-admin-cli
+│   │   ├── bin/seoblog-admincli
 │   │   ├── admin/.output/
 │   │   ├── ecosystem.config.cjs
 │   │   └── release.json
@@ -2086,7 +2057,7 @@ All artifacts receive the same immutable release ID and commit SHA. They are sep
 └── previous -> releases/<previous-release>
 ```
 
-The SQLite database and other mutable state live outside a release directory. Switching the `current` symlink must never switch, copy or delete the authoritative database. Database migrations should be embedded in the admin CLI or shipped as checksummed release data.
+The SQLite database and other mutable state live outside a release directory. Switching the `current` symlink must never switch, copy or delete the authoritative database. Database migrations should be embedded in the `admincli` binary or shipped as checksummed release data.
 
 Nginx provides the public origin and routes:
 
@@ -2105,7 +2076,7 @@ Local development shall run through one root command:
 
 ```text
 task dev
-  -> docker compose -f compose.dev.yaml up --build
+  -> docker compose up --build
 ```
 
 The default Compose project contains:
@@ -2113,21 +2084,21 @@ The default Compose project contains:
 | Service | Purpose | Local exposure and state |
 |---|---|---|
 | `nginx` | Production-like same-origin routing | Browser entry point, default `http://localhost:8088` |
-| `admin` | Nuxt SSR development server with HMR | Internal port 3000; source and dependency-cache mounts |
-| `api` | Go API with a pinned development reloader | Internal port 8080; shared SQLite volume |
-| `worker` | Go worker with a pinned development reloader | No public port; shared SQLite volume |
-| `redis` | Disposable cache and rate-limit state | Compose-private only; persistent data is not required |
+| `admin` | Nuxt SSR application | Internal port 3000; source/HMR support may be provided by Compose or documented direct dev mode |
+| `api` | Go API | Internal port 8080; shared SQLite volume |
+| `worker` | Go worker | No public port; shared SQLite volume |
+| `redis` | Disposable cache and rate-limit state | Compose-private only; any local volume is convenience state and may be reset |
 | `mailpit` | Captures invitations and password-reset email | Web UI bound to loopback; SMTP is Compose-private |
 
 An optional `backup` profile may run Litestream against a dedicated development/test target. It shall never receive production B2 credentials. AI, transactional email and B2 integrations use explicit development accounts or deterministic test adapters; Docker startup must not silently call production services.
 
 The Compose design shall:
 
-- Use a named local Docker volume such as `seoblog_sqlite_dev` mounted only into the API, worker and optional backup container. This avoids host bind-mount filesystem differences for SQLite WAL and locks.
+- Use a named local Docker volume such as `seoblog_sqlite` mounted only into the API, worker and optional backup container. This avoids host bind-mount filesystem differences for SQLite WAL and locks.
 - Keep the database path identical in API and worker configuration and keep it on one Docker host; never use NFS or a network volume.
 - Use one shared backend development image with different API and worker commands, while keeping them as independent processes.
 - Run application containers as non-root users, use `init: true` or equivalent signal forwarding and implement health checks.
-- Mount source for hot reload but use named dependency/build caches so routine restarts do not reinstall every dependency.
+- Support either source-mounted hot reload through Docker Compose or an equivalent documented direct development loop using `task backend:dev`, `task backend:worker` and `pnpm --filter @seoblog/admin dev`; use named dependency/build caches where source mounts are enabled so routine restarts do not reinstall every dependency.
 - Support Nuxt HMR/WebSocket proxying through the local Nginx route.
 - Bind any optional direct debug ports to loopback only. Redis and SQLite are never exposed.
 - Keep `.env` untracked, provide a non-secret `.env.example` and fail clearly when required development values are absent.
@@ -2891,6 +2862,8 @@ Production launch requires evidence that:
 - Dashboards, alerts and the operational runbooks in Section 12.12 are usable by the responsible operator.
 - Email domain authentication and invitation/password-reset delivery have been tested.
 - Docker Compose onboarding, named-volume preservation/reset, HMR through local Nginx and Redis-failure behavior pass on every supported developer operating system.
+- The checked-in HTTP stack matches the selected Fiber v3 + Huma decision, or an approved architecture decision records and tests the accepted deviation.
+- `task contracts:generate` produces `contracts/openapi/openapi.yaml`, and the TypeScript content client is regenerated or validated from the same contract without drift.
 - A clean-host rehearsal verifies PM2 startup/save, process ownership, graceful shutdown, bounded logs, Nginx routing, deployment locking, exact-process rollback and recovery after reboot.
 - The production release is checksummed, the pre-migration B2 recovery point is verified and no build occurs from mutable source on the host.
 - Nuxt SSR has no database credential or direct domain-write path, and the public Nginx configuration exposes no PM2 or Redis port.
@@ -2898,6 +2871,12 @@ Production launch requires evidence that:
 ## 19. Single committed delivery
 
 The product shall be implemented and accepted as one complete delivery. The workstreams below may be sequenced internally for engineering dependency management, but they are not separate product phases or independently deferred releases.
+
+### Current implementation checkpoint
+
+As of PRD v1.9, the checked-in foundation includes root Taskfile orchestration, Docker Compose services for Nginx, Nuxt, Go API, Go worker, Redis and Mailpit, an `admincli` for migrations/bootstrap/OpenAPI generation, embedded SQLite migrations, a Nuxt admin shell with project-scoped pages, invite/session/member/API-key/audit flows, article/category/author/series workflow slices, scheduled publication worker behavior, article rollback through the admin API, protected Content API routes and a server-only TypeScript content client. This checkpoint is implementation evidence, not a scope reduction.
+
+Still-required committed scope includes richer structured editing, autosave conflict handling, revision diff and rollback UI completion, media/B2 processing, source/claim/disclosure/correction workflows, AI evidence/jobs/provenance, preview tokens, webhook delivery/replay, Redis cache-aside behavior, full SEO/discovery polish, production release automation, backup/restore automation, observability and the Fiber v3 alignment gate unless an approved architecture decision changes it.
 
 ### Foundation workstream
 
