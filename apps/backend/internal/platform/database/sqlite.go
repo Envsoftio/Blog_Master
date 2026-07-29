@@ -16,6 +16,12 @@ var initialMigration string
 //go:embed migrations/0002_session_reauthentication.sql
 var sessionReauthenticationMigration string
 
+//go:embed migrations/0003_invitation_revocation.sql
+var invitationRevocationMigration string
+
+//go:embed migrations/0004_audit_event_ids.sql
+var auditEventIDsMigration string
+
 type migration struct {
 	version    string
 	statements string
@@ -54,6 +60,8 @@ func Migrate(db *sql.DB) error {
 	migrations := []migration{
 		{version: "0001_initial", statements: initialMigration},
 		{version: "0002_session_reauthentication", statements: sessionReauthenticationMigration},
+		{version: "0003_invitation_revocation", statements: invitationRevocationMigration},
+		{version: "0004_audit_event_ids", statements: auditEventIDsMigration},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {

@@ -31,15 +31,27 @@ type Server struct {
 }
 
 func New(opts Options) *Server {
-	app := fiber.New(fiber.Config{
+	fiberConfig := fiber.Config{
 		AppName:               "seoblog-api",
 		BodyLimit:             2 * 1024 * 1024,
 		ReadTimeout:           10 * time.Second,
 		WriteTimeout:          30 * time.Second,
 		IdleTimeout:           60 * time.Second,
 		DisableStartupMessage: true,
-	})
+	}
+	if len(opts.Config.TrustedProxies) > 0 {
+		fiberConfig.ProxyHeader = fiber.HeaderXForwardedFor
+		fiberConfig.EnableIPValidation = true
+		fiberConfig.EnableTrustedProxyCheck = true
+		fiberConfig.TrustedProxies = opts.Config.TrustedProxies
+	}
+	app := fiber.New(fiberConfig)
 	app.Use(requestid.New())
+	app.Use(func(c *fiber.Ctx) error {
+		requestID, _ := c.Locals("requestid").(string)
+		c.SetUserContext(store.WithRequestID(c.UserContext(), requestID))
+		return c.Next()
+	})
 	app.Use(recover.New(recover.Config{EnableStackTrace: false}))
 
 	s := &Server{

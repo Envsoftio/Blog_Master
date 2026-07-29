@@ -13,7 +13,7 @@
 
       <label class="block space-y-2">
         <span class="text-sm font-medium">Password</span>
-        <input v-model="password" class="w-full rounded-md border border-[#c9c9bf] px-3 py-2 dark:border-[#555a50] dark:bg-[#1c1e1b]" name="password" type="password" autocomplete="current-password" required minlength="15" />
+        <input v-model="password" class="w-full rounded-md border border-[#c9c9bf] px-3 py-2 dark:border-[#555a50] dark:bg-[#1c1e1b]" name="password" type="password" autocomplete="current-password" required minlength="8" />
       </label>
 
       <p v-if="errorMessage" class="text-sm text-red-700" role="alert">{{ errorMessage }}</p>

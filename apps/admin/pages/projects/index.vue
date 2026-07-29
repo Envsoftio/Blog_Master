@@ -43,7 +43,9 @@
         <NuxtLink class="block rounded-md bg-white px-3 py-2 text-sm shadow-sm dark:bg-[#252b28]" to="/projects">Projects</NuxtLink>
         <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/articles`">Articles</NuxtLink>
         <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/categories`">Categories</NuxtLink>
+        <NuxtLink v-if="firstManagedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstManagedProjectID}/members`">Members</NuxtLink>
         <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/api-keys`">API keys</NuxtLink>
+        <NuxtLink v-if="firstManagedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstManagedProjectID}/audit-events`">Audit</NuxtLink>
       </aside>
 
       <div class="space-y-5">
@@ -173,6 +175,7 @@ const creating = ref(false)
 const formOpen = ref(false)
 const errorMessage = ref('')
 const firstProjectID = computed(() => projects.value[0]?.id || '')
+const firstManagedProjectID = computed(() => projects.value.find(project => project.role === 'project_owner' || project.role === 'project_admin')?.id || '')
 
 const form = reactive({
   name: '',

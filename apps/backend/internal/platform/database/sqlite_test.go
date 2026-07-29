@@ -110,6 +110,38 @@ func TestProjectScopedOperationalForeignKeys(t *testing.T) {
 	`, "foreign key")
 }
 
+func TestAuditEventsGenerateLegacyIDsAndRemainAppendOnly(t *testing.T) {
+	db := testDatabase(t)
+	seedProjects(t, db)
+	if _, err := db.Exec(`
+		INSERT INTO audit_events(project_id, actor_type, action, outcome)
+		VALUES ('project-a', 'user', 'project.test', 'success')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	var generatedID string
+	if err := db.QueryRow(`
+		SELECT id
+		FROM audit_events
+		WHERE project_id = 'project-a' AND action = 'project.test'
+	`).Scan(&generatedID); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(generatedID, "audit_") {
+		t.Fatalf("expected a generated legacy audit ID, got %q", generatedID)
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO audit_events(id, project_id, actor_type, action, outcome)
+		VALUES ('audit_test', 'project-a', 'user', 'project.test', 'success')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	assertSQLFails(t, db, `UPDATE audit_events SET outcome = 'failure' WHERE id = '`+generatedID+`'`, "append-only")
+	assertSQLFails(t, db, `UPDATE audit_events SET outcome = 'failure' WHERE id = 'audit_test'`, "append-only")
+	assertSQLFails(t, db, `DELETE FROM audit_events WHERE id = 'audit_test'`, "append-only")
+}
+
 func assertSQLFails(t *testing.T, db *sql.DB, statement, expected string) {
 	t.Helper()
 	if _, err := db.Exec(statement); err == nil {

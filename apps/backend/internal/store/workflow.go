@@ -256,10 +256,7 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 	`, publicationID, projectID, articleID, input.Locale, input.Slug, canonicalURL(project, input.Slug)); err != nil {
 		return AdminArticle{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
-		VALUES (?, 'user', ?, 'content.create', 'content', ?, 'success', '{}')
-	`, projectID, actorUserID, articleID); err != nil {
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "content.create", "content", articleID, "success", nil); err != nil {
 		return AdminArticle{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -391,10 +388,7 @@ func (s *Store) ApproveRevision(ctx context.Context, actorUserID, projectID, rev
 	`, decisionID, projectID, revision.ArticleID, revisionID, revision.ContentHash, actorUserID, nullIfEmpty(note)); err != nil {
 		return AdminRevision{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
-		VALUES (?, 'user', ?, 'revision.approve', 'revision', ?, 'success', '{}')
-	`, projectID, actorUserID, revisionID); err != nil {
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "revision.approve", "revision", revisionID, "success", nil); err != nil {
 		return AdminRevision{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -570,10 +564,7 @@ func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectI
 			return AdminArticle{}, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
-		VALUES (?, 'user', ?, ?, 'publication', ?, 'success', '{}')
-	`, projectID, actorUserID, "article."+state, publicationID); err != nil {
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "article."+state, "publication", publicationID, "success", nil); err != nil {
 		return AdminArticle{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -587,7 +578,13 @@ func (s *Store) setRevisionState(ctx context.Context, actorUserID, projectID, re
 	if err != nil {
 		return AdminRevision{}, err
 	}
-	_, err = s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
 		UPDATE content_revisions
 		SET editorial_state = ?
 		WHERE project_id = ? AND id = ?
@@ -595,10 +592,17 @@ func (s *Store) setRevisionState(ctx context.Context, actorUserID, projectID, re
 	if err != nil {
 		return AdminRevision{}, err
 	}
-	_, _ = s.db.ExecContext(ctx, `
-		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
-		VALUES (?, 'user', ?, ?, 'revision', ?, 'success', '{}')
-	`, projectID, actorUserID, action, revision.ID)
+	if changed, err := result.RowsAffected(); err != nil {
+		return AdminRevision{}, err
+	} else if changed != 1 {
+		return AdminRevision{}, sql.ErrNoRows
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, action, "revision", revision.ID, "success", nil); err != nil {
+		return AdminRevision{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminRevision{}, err
+	}
 	return s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
 }
 

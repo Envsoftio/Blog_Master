@@ -5,12 +5,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -126,6 +128,580 @@ func TestAdminProjectAccessIsMembershipScoped(t *testing.T) {
 	}
 }
 
+func TestProjectMembershipInvitationAndRoleLifecycle(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"members","name":"Members Project"}`)
+
+	inviteRequest := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/invitations", strings.NewReader(`{"email":" Writer@Example.Test ","role":"writer"}`))
+	inviteRequest.Header.Set("Content-Type", "application/json")
+	inviteRequest.Header.Set("X-CSRF-Token", login.csrfToken)
+	addCookies(inviteRequest, login.cookies)
+	inviteResponse := mustTest(t, server, inviteRequest)
+	if inviteResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected invite 201, got %d: %s", inviteResponse.StatusCode, readBody(t, inviteResponse))
+	}
+	var invited Envelope[store.ProjectMemberInvitation]
+	decodeJSONResponse(t, inviteResponse, &invited)
+	if invited.Data.Token == "" {
+		t.Fatal("expected one-time invitation token")
+	}
+	if invited.Data.Member.Email != "writer@example.test" {
+		t.Fatalf("expected normalized invite email, got %q", invited.Data.Member.Email)
+	}
+	if invited.Data.Member.Role != "writer" || invited.Data.Member.Status != "invited" {
+		t.Fatalf("expected invited writer membership, got %#v", invited.Data.Member)
+	}
+
+	var storedTokenHash string
+	if err := db.QueryRow(`
+		SELECT token_hash
+		FROM invitations
+		WHERE project_id = ? AND email_normalized = ?
+	`, project.ID, "writer@example.test").Scan(&storedTokenHash); err != nil {
+		t.Fatal(err)
+	}
+	if storedTokenHash == invited.Data.Token {
+		t.Fatal("expected invitation token verifier to be stored instead of the raw token")
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/members", nil)
+	addCookies(listRequest, login.cookies)
+	listResponse := mustTest(t, server, listRequest)
+	if listResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected members list 200, got %d: %s", listResponse.StatusCode, readBody(t, listResponse))
+	}
+	var list ListEnvelope[store.AdminProjectMember]
+	decodeJSONResponse(t, listResponse, &list)
+	if findProjectMember(list.Data, invited.Data.Member.UserID).UserID == "" {
+		t.Fatalf("expected list to include invited member, got %#v", list.Data)
+	}
+
+	patchRequest := httptest.NewRequest(http.MethodPatch, "/api/v1/projects/"+project.ID+"/members/"+invited.Data.Member.UserID, strings.NewReader(`{"role":"reviewer"}`))
+	patchRequest.Header.Set("Content-Type", "application/json")
+	patchRequest.Header.Set("X-CSRF-Token", login.csrfToken)
+	addCookies(patchRequest, login.cookies)
+	patchResponse := mustTest(t, server, patchRequest)
+	if patchResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected role update 200, got %d: %s", patchResponse.StatusCode, readBody(t, patchResponse))
+	}
+	var patched Envelope[store.AdminProjectMember]
+	decodeJSONResponse(t, patchResponse, &patched)
+	if patched.Data.Role != "reviewer" || patched.Data.Status != "invited" {
+		t.Fatalf("expected invited reviewer after patch, got %#v", patched.Data)
+	}
+
+	removeRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/"+project.ID+"/members/"+invited.Data.Member.UserID, nil)
+	removeRequest.Header.Set("X-CSRF-Token", login.csrfToken)
+	addCookies(removeRequest, login.cookies)
+	removeResponse := mustTest(t, server, removeRequest)
+	if removeResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected remove member 204, got %d: %s", removeResponse.StatusCode, readBody(t, removeResponse))
+	}
+
+	listAfterRemove := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/members", nil)
+	addCookies(listAfterRemove, login.cookies)
+	listAfterRemoveResponse := mustTest(t, server, listAfterRemove)
+	if listAfterRemoveResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected members list after remove 200, got %d", listAfterRemoveResponse.StatusCode)
+	}
+	var afterRemove ListEnvelope[store.AdminProjectMember]
+	decodeJSONResponse(t, listAfterRemoveResponse, &afterRemove)
+	removed := findProjectMember(afterRemove.Data, invited.Data.Member.UserID)
+	if removed.Status != "removed" || removed.RemovedAt == "" {
+		t.Fatalf("expected removed member to stay auditable, got %#v", removed)
+	}
+}
+
+func TestProjectMembershipOwnerRetentionAndAdminLimits(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	adminLogin := seedAndLogin(t, server, db, "admin@example.test", "another correct horse battery staple")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"owner-retention","name":"Owner Retention"}`)
+
+	_, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'project_admin', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, adminLogin.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adminInviteOwner := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/invitations", strings.NewReader(`{"email":"new-owner@example.test","role":"project_owner"}`))
+	adminInviteOwner.Header.Set("Content-Type", "application/json")
+	adminInviteOwner.Header.Set("X-CSRF-Token", adminLogin.csrfToken)
+	addCookies(adminInviteOwner, adminLogin.cookies)
+	adminInviteOwnerResponse := mustTest(t, server, adminInviteOwner)
+	if adminInviteOwnerResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected project admin owner invite to fail with 403, got %d: %s", adminInviteOwnerResponse.StatusCode, readBody(t, adminInviteOwnerResponse))
+	}
+
+	demoteOnlyOwner := httptest.NewRequest(http.MethodPatch, "/api/v1/projects/"+project.ID+"/members/"+ownerLogin.userID, strings.NewReader(`{"role":"project_admin"}`))
+	demoteOnlyOwner.Header.Set("Content-Type", "application/json")
+	demoteOnlyOwner.Header.Set("X-CSRF-Token", ownerLogin.csrfToken)
+	addCookies(demoteOnlyOwner, ownerLogin.cookies)
+	demoteOnlyOwnerResponse := mustTest(t, server, demoteOnlyOwner)
+	if demoteOnlyOwnerResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected last owner demotion to fail with 409, got %d: %s", demoteOnlyOwnerResponse.StatusCode, readBody(t, demoteOnlyOwnerResponse))
+	}
+
+	removeOnlyOwner := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/"+project.ID+"/members/"+ownerLogin.userID, nil)
+	removeOnlyOwner.Header.Set("X-CSRF-Token", ownerLogin.csrfToken)
+	addCookies(removeOnlyOwner, ownerLogin.cookies)
+	removeOnlyOwnerResponse := mustTest(t, server, removeOnlyOwner)
+	if removeOnlyOwnerResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected last owner removal to fail with 409, got %d: %s", removeOnlyOwnerResponse.StatusCode, readBody(t, removeOnlyOwnerResponse))
+	}
+
+	adminDemoteOwner := httptest.NewRequest(http.MethodPatch, "/api/v1/projects/"+project.ID+"/members/"+ownerLogin.userID, strings.NewReader(`{"role":"editor"}`))
+	adminDemoteOwner.Header.Set("Content-Type", "application/json")
+	adminDemoteOwner.Header.Set("X-CSRF-Token", adminLogin.csrfToken)
+	addCookies(adminDemoteOwner, adminLogin.cookies)
+	adminDemoteOwnerResponse := mustTest(t, server, adminDemoteOwner)
+	if adminDemoteOwnerResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected project admin owner demotion to fail with 403, got %d: %s", adminDemoteOwnerResponse.StatusCode, readBody(t, adminDemoteOwnerResponse))
+	}
+
+	adminInviteWriter := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/invitations", strings.NewReader(`{"email":"writer@example.test","role":"writer"}`))
+	adminInviteWriter.Header.Set("Content-Type", "application/json")
+	adminInviteWriter.Header.Set("X-CSRF-Token", adminLogin.csrfToken)
+	addCookies(adminInviteWriter, adminLogin.cookies)
+	adminInviteWriterResponse := mustTest(t, server, adminInviteWriter)
+	if adminInviteWriterResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected project admin writer invite 201, got %d: %s", adminInviteWriterResponse.StatusCode, readBody(t, adminInviteWriterResponse))
+	}
+}
+
+func TestOwnershipChangesRequireRecentReauthentication(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	secondOwnerLogin := seedAndLogin(t, server, db, "second-owner@example.test", "second owner correct password")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"ownership-reauth","name":"Ownership Reauthentication"}`)
+
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'project_owner', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, secondOwnerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		UPDATE sessions
+		SET reauthenticated_at = datetime(CURRENT_TIMESTAMP, '-10 minutes')
+		WHERE user_id = ?
+	`, ownerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	writerInvite := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/invitations",
+		`{"email":"writer@example.test","role":"writer"}`,
+		ownerLogin,
+	)
+	writerInviteResponse := mustTest(t, server, writerInvite)
+	if writerInviteResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected a non-ownership invite to remain available, got %d: %s", writerInviteResponse.StatusCode, readBody(t, writerInviteResponse))
+	}
+
+	ownerInvite := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/invitations",
+		`{"email":"new-owner@example.test","role":"project_owner"}`,
+		ownerLogin,
+	)
+	ownerInviteResponse := mustTest(t, server, ownerInvite)
+	assertRecentReauthenticationRequired(t, ownerInviteResponse)
+
+	demoteOwner := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+project.ID+"/members/"+secondOwnerLogin.userID,
+		`{"role":"editor"}`,
+		ownerLogin,
+	)
+	demoteOwnerResponse := mustTest(t, server, demoteOwner)
+	assertRecentReauthenticationRequired(t, demoteOwnerResponse)
+
+	removeOwner := newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/members/"+secondOwnerLogin.userID,
+		"",
+		ownerLogin,
+	)
+	removeOwnerResponse := mustTest(t, server, removeOwner)
+	assertRecentReauthenticationRequired(t, removeOwnerResponse)
+}
+
+func TestProjectInvitationAcceptanceUsesCurrentRoleAndIsSingleUse(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"acceptance","name":"Invitation Acceptance"}`)
+	invitation := createTestInvitation(t, server, ownerLogin, project.ID, `{"email":"new-user@example.test","role":"writer"}`)
+
+	patchRequest := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+project.ID+"/members/"+invitation.Member.UserID,
+		`{"role":"reviewer"}`,
+		ownerLogin,
+	)
+	patchResponse := mustTest(t, server, patchRequest)
+	if patchResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected invited role update 200, got %d: %s", patchResponse.StatusCode, readBody(t, patchResponse))
+	}
+
+	var storedRole string
+	if err := db.QueryRow(`
+		SELECT role
+		FROM invitations
+		WHERE token_hash = ?
+	`, security.TokenHash(invitation.Token)).Scan(&storedRole); err != nil {
+		t.Fatal(err)
+	}
+	if storedRole != "reviewer" {
+		t.Fatalf("expected pending invitation role reviewer, got %q", storedRole)
+	}
+
+	password := "new user correct password"
+	acceptance := acceptTestInvitation(t, server, invitation.Token, password, http.StatusOK)
+	if acceptance.Role != "reviewer" || acceptance.UserID != invitation.Member.UserID {
+		t.Fatalf("unexpected invitation acceptance %#v", acceptance)
+	}
+
+	var userStatus, membershipStatus string
+	if err := db.QueryRow(`SELECT status FROM users WHERE id = ?`, invitation.Member.UserID).Scan(&userStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`
+		SELECT status
+		FROM project_memberships
+		WHERE project_id = ? AND user_id = ?
+	`, project.ID, invitation.Member.UserID).Scan(&membershipStatus); err != nil {
+		t.Fatal(err)
+	}
+	if userStatus != "active" || membershipStatus != "active" {
+		t.Fatalf("expected active user and membership, got user=%q membership=%q", userStatus, membershipStatus)
+	}
+
+	_ = adminLogin(t, server, "new-user@example.test", password)
+	_ = acceptTestInvitation(t, server, invitation.Token, password, http.StatusBadRequest)
+}
+
+func TestProjectInvitationReissueAndRemovalRevokePendingTokens(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"revocation","name":"Invitation Revocation"}`)
+
+	first := createTestInvitation(t, server, ownerLogin, project.ID, `{"email":"pending@example.test","role":"editor"}`)
+	second := createTestInvitation(t, server, ownerLogin, project.ID, `{"email":"pending@example.test","role":"writer"}`)
+	if first.Token == second.Token {
+		t.Fatal("expected reissued invitation to use a new token")
+	}
+	assertInvitationRevoked(t, db, first.Token)
+	_ = acceptTestInvitation(t, server, first.Token, "pending account password", http.StatusBadRequest)
+
+	removeRequest := newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/members/"+second.Member.UserID,
+		"",
+		ownerLogin,
+	)
+	removeResponse := mustTest(t, server, removeRequest)
+	if removeResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected pending member removal 204, got %d: %s", removeResponse.StatusCode, readBody(t, removeResponse))
+	}
+	assertInvitationRevoked(t, db, second.Token)
+	_ = acceptTestInvitation(t, server, second.Token, "pending account password", http.StatusBadRequest)
+}
+
+func TestMembershipRoleChangePreservesSessionsAndUsesLiveAuthorization(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	memberLogin := seedAndLogin(t, server, db, "member@example.test", "member correct horse password")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"sessions","name":"Session Revocation"}`)
+	otherProject := createTestProject(t, server, memberLogin, `{"slug":"other-project","name":"Other Project"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, memberLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	patchRequest := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+project.ID+"/members/"+memberLogin.userID,
+		`{"role":"reviewer"}`,
+		ownerLogin,
+	)
+	patchResponse := mustTest(t, server, patchRequest)
+	if patchResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected role update 200, got %d: %s", patchResponse.StatusCode, readBody(t, patchResponse))
+	}
+
+	meRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	addCookies(meRequest, memberLogin.cookies)
+	meResponse := mustTest(t, server, meRequest)
+	if meResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected the project-scoped role change to preserve the session, got %d: %s", meResponse.StatusCode, readBody(t, meResponse))
+	}
+
+	projectRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID, nil)
+	addCookies(projectRequest, memberLogin.cookies)
+	projectResponse := mustTest(t, server, projectRequest)
+	if projectResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected project access through the existing session, got %d: %s", projectResponse.StatusCode, readBody(t, projectResponse))
+	}
+	var changedProject Envelope[store.AdminProject]
+	decodeJSONResponse(t, projectResponse, &changedProject)
+	if changedProject.Data.Role != "reviewer" {
+		t.Fatalf("expected the existing session to observe the new reviewer role, got %q", changedProject.Data.Role)
+	}
+
+	otherProjectRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+otherProject.ID, nil)
+	addCookies(otherProjectRequest, memberLogin.cookies)
+	otherProjectResponse := mustTest(t, server, otherProjectRequest)
+	if otherProjectResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected the role change to preserve access to other projects, got %d: %s", otherProjectResponse.StatusCode, readBody(t, otherProjectResponse))
+	}
+
+	removeRequest := newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/members/"+memberLogin.userID,
+		"",
+		ownerLogin,
+	)
+	removeResponse := mustTest(t, server, removeRequest)
+	if removeResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected project removal 204, got %d: %s", removeResponse.StatusCode, readBody(t, removeResponse))
+	}
+	meAfterRemovalRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	addCookies(meAfterRemovalRequest, memberLogin.cookies)
+	meAfterRemovalResponse := mustTest(t, server, meAfterRemovalRequest)
+	if meAfterRemovalResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected project removal to preserve the global session, got %d: %s", meAfterRemovalResponse.StatusCode, readBody(t, meAfterRemovalResponse))
+	}
+	removedProjectRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID, nil)
+	addCookies(removedProjectRequest, memberLogin.cookies)
+	removedProjectResponse := mustTest(t, server, removedProjectRequest)
+	if removedProjectResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected removed project access to end immediately, got %d: %s", removedProjectResponse.StatusCode, readBody(t, removedProjectResponse))
+	}
+	otherProjectAfterRemovalRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+otherProject.ID, nil)
+	addCookies(otherProjectAfterRemovalRequest, memberLogin.cookies)
+	otherProjectAfterRemovalResponse := mustTest(t, server, otherProjectAfterRemovalRequest)
+	if otherProjectAfterRemovalResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected removal from one project to preserve access to another, got %d: %s", otherProjectAfterRemovalResponse.StatusCode, readBody(t, otherProjectAfterRemovalResponse))
+	}
+}
+
+func TestMembershipAuthorizationAndCrossProjectScoping(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerALogin := seedAndLogin(t, server, db, "owner-a@example.test", "owner a correct password")
+	ownerBLogin := seedAndLogin(t, server, db, "owner-b@example.test", "owner b correct password")
+	writerLogin := seedAndLogin(t, server, db, "writer@example.test", "writer correct password")
+	projectA := createTestProject(t, server, ownerALogin, `{"slug":"project-a","name":"Project A"}`)
+	projectB := createTestProject(t, server, ownerBLogin, `{"slug":"project-b","name":"Project B"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, projectA.ID, writerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projectA.ID+"/members", nil)
+	addCookies(listRequest, writerLogin.cookies)
+	listResponse := mustTest(t, server, listRequest)
+	if listResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer member list denial, got %d: %s", listResponse.StatusCode, readBody(t, listResponse))
+	}
+
+	inviteRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectA.ID+"/invitations",
+		`{"email":"another@example.test","role":"writer"}`,
+		writerLogin,
+	)
+	inviteResponse := mustTest(t, server, inviteRequest)
+	if inviteResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer invitation denial, got %d: %s", inviteResponse.StatusCode, readBody(t, inviteResponse))
+	}
+
+	crossProjectRequest := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+projectB.ID+"/members/"+ownerBLogin.userID,
+		`{"role":"editor"}`,
+		ownerALogin,
+	)
+	crossProjectResponse := mustTest(t, server, crossProjectRequest)
+	if crossProjectResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project member mutation to return 404, got %d: %s", crossProjectResponse.StatusCode, readBody(t, crossProjectResponse))
+	}
+}
+
+func TestProjectMembersCursorPagination(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"pagination","name":"Member Pagination"}`)
+	for index := 0; index < 55; index++ {
+		userID := fmt.Sprintf("usr_page_%03d", index)
+		email := fmt.Sprintf("page-%03d@example.test", index)
+		if _, err := db.Exec(`
+			INSERT INTO users(id, email_normalized, status)
+			VALUES (?, ?, 'invited')
+		`, userID, email); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`
+			INSERT INTO project_memberships(project_id, user_id, role, status, invited_by, invited_at)
+			VALUES (?, ?, 'writer', 'invited', ?, CURRENT_TIMESTAMP)
+		`, project.ID, userID, ownerLogin.userID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cursor := ""
+	seen := map[string]bool{}
+	for {
+		path := "/api/v1/projects/" + project.ID + "/members?limit=20"
+		if cursor != "" {
+			path += "&cursor=" + cursor
+		}
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		addCookies(request, ownerLogin.cookies)
+		response := mustTest(t, server, request)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("expected paginated member list 200, got %d: %s", response.StatusCode, readBody(t, response))
+		}
+		var page ListEnvelope[store.AdminProjectMember]
+		decodeJSONResponse(t, response, &page)
+		for _, member := range page.Data {
+			if seen[member.UserID] {
+				t.Fatalf("member %q appeared in more than one page", member.UserID)
+			}
+			seen[member.UserID] = true
+		}
+		cursor = page.Meta.NextCursor
+		if cursor == "" {
+			break
+		}
+	}
+	if len(seen) != 56 {
+		t.Fatalf("expected owner plus 55 invited members, got %d", len(seen))
+	}
+}
+
+func TestInvitationRateLimitSeparatesRecipients(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"rate-limit","name":"Invitation Rate Limit"}`)
+
+	for attempt := 1; attempt <= 6; attempt++ {
+		request := newMemberMutationRequest(
+			http.MethodPost,
+			"/api/v1/projects/"+project.ID+"/invitations",
+			`{"email":"limited@example.test","role":"writer"}`,
+			ownerLogin,
+		)
+		response := mustTest(t, server, request)
+		expected := http.StatusCreated
+		if attempt == 6 {
+			expected = http.StatusTooManyRequests
+		}
+		if response.StatusCode != expected {
+			t.Fatalf("attempt %d: expected %d, got %d: %s", attempt, expected, response.StatusCode, readBody(t, response))
+		}
+	}
+
+	otherRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/invitations",
+		`{"email":"other@example.test","role":"writer"}`,
+		ownerLogin,
+	)
+	otherResponse := mustTest(t, server, otherRequest)
+	if otherResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected a separate recipient identity to remain available, got %d: %s", otherResponse.StatusCode, readBody(t, otherResponse))
+	}
+}
+
+func TestInvitationSourceRateLimitIgnoresUntrustedForwardedFor(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"source-rate-limit","name":"Source Rate Limit"}`)
+
+	for attempt := 1; attempt <= 31; attempt++ {
+		request := newMemberMutationRequest(
+			http.MethodPost,
+			"/api/v1/projects/"+project.ID+"/invitations",
+			fmt.Sprintf(`{"email":"recipient-%02d@example.test","role":"writer"}`, attempt),
+			ownerLogin,
+		)
+		request.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", attempt))
+		response := mustTest(t, server, request)
+		expected := http.StatusCreated
+		if attempt == 31 {
+			expected = http.StatusTooManyRequests
+		}
+		if response.StatusCode != expected {
+			t.Fatalf("attempt %d: expected %d, got %d: %s", attempt, expected, response.StatusCode, readBody(t, response))
+		}
+	}
+}
+
+func TestConcurrentOwnerRemovalRetainsOneOwner(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	firstLogin := seedAndLogin(t, server, db, "first@example.test", "first owner correct password")
+	secondLogin := seedAndLogin(t, server, db, "second@example.test", "second owner correct password")
+	project := createTestProject(t, server, firstLogin, `{"slug":"concurrent-owners","name":"Concurrent Owners"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'project_owner', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, secondLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	requests := []*http.Request{
+		newMemberMutationRequest(http.MethodDelete, "/api/v1/projects/"+project.ID+"/members/"+secondLogin.userID, "", firstLogin),
+		newMemberMutationRequest(http.MethodDelete, "/api/v1/projects/"+project.ID+"/members/"+firstLogin.userID, "", secondLogin),
+	}
+	statuses := make(chan int, len(requests))
+	var wait sync.WaitGroup
+	for _, request := range requests {
+		wait.Add(1)
+		go func(request *http.Request) {
+			defer wait.Done()
+			response, err := server.app.Test(request, 15_000)
+			if err != nil {
+				statuses <- 0
+				return
+			}
+			defer response.Body.Close()
+			statuses <- response.StatusCode
+		}(request)
+	}
+	wait.Wait()
+	close(statuses)
+
+	successes := 0
+	for status := range statuses {
+		if status == http.StatusNoContent {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("expected exactly one concurrent owner removal to succeed, got %d", successes)
+	}
+	var ownerCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM project_memberships
+		WHERE project_id = ? AND role = 'project_owner' AND status = 'active'
+	`, project.ID).Scan(&ownerCount); err != nil {
+		t.Fatal(err)
+	}
+	if ownerCount != 1 {
+		t.Fatalf("expected one active owner after concurrent removals, got %d", ownerCount)
+	}
+}
+
 func TestAdminLogoutRevokesSession(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
@@ -231,6 +807,157 @@ func TestProjectAPIKeyLifecycleAndContentAuth(t *testing.T) {
 	}
 	if rotationAuditCount != 1 {
 		t.Fatalf("expected one rotation audit event, got %d", rotationAuditCount)
+	}
+}
+
+func TestProjectAuditEventsHaveIDsAndOmitSecrets(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	writerLogin := seedAndLogin(t, server, db, "writer@example.test", "writer correct password")
+	project := createTestProject(t, server, login, `{"slug":"audit","name":"Audit Project"}`)
+	const invitationRequestID = "request-audited-invitation"
+	invitationRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/invitations",
+		`{"email":"audited@example.test","role":"writer"}`,
+		login,
+	)
+	invitationRequest.Header.Set("X-Request-ID", invitationRequestID)
+	invitationResponse := mustTest(t, server, invitationRequest)
+	if invitationResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected invitation creation 201, got %d: %s", invitationResponse.StatusCode, readBody(t, invitationResponse))
+	}
+	var invitationPayload Envelope[store.ProjectMemberInvitation]
+	decodeJSONResponse(t, invitationResponse, &invitationPayload)
+	invitation := invitationPayload.Data
+	apiKey := createTestAPIKey(t, server, login, project.ID, `{"environment":"production","name":"audited key"}`)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/audit-events?limit=2", nil)
+	addCookies(request, login.cookies)
+	response := mustTest(t, server, request)
+	body := readBody(t, response)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected audit list 200, got %d: %s", response.StatusCode, body)
+	}
+	if strings.Contains(body, invitation.Token) || strings.Contains(body, apiKey.Data.Secret) {
+		t.Fatalf("audit response leaked a one-time secret: %s", body)
+	}
+	if strings.Contains(body, security.TokenHash(invitation.Token)) || strings.Contains(body, security.TokenHash(apiKey.Data.Secret)) {
+		t.Fatalf("audit response leaked a token verifier: %s", body)
+	}
+
+	var firstPage ListEnvelope[store.AuditEvent]
+	if err := json.Unmarshal([]byte(body), &firstPage); err != nil {
+		t.Fatal(err)
+	}
+	if len(firstPage.Data) != 2 || firstPage.Meta.NextCursor == "" {
+		t.Fatalf("expected first audit page to have two rows and a cursor, got %#v", firstPage)
+	}
+	for _, event := range firstPage.Data {
+		if event.ID == "" {
+			t.Fatalf("expected audit event IDs, got %#v", event)
+		}
+		if event.ProjectID != project.ID {
+			t.Fatalf("expected project-scoped audit event, got %#v", event)
+		}
+	}
+
+	secondRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/audit-events?cursor="+firstPage.Meta.NextCursor, nil)
+	addCookies(secondRequest, login.cookies)
+	secondResponse := mustTest(t, server, secondRequest)
+	if secondResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected second audit page 200, got %d: %s", secondResponse.StatusCode, readBody(t, secondResponse))
+	}
+	var secondPage ListEnvelope[store.AuditEvent]
+	decodeJSONResponse(t, secondResponse, &secondPage)
+
+	actions := map[string]bool{}
+	requestIDs := map[string]bool{}
+	for _, event := range append(firstPage.Data, secondPage.Data...) {
+		actions[event.Action] = true
+		requestIDs[event.RequestID] = true
+	}
+	for _, action := range []string{"project.create", "member.invite", "api_key.create"} {
+		if !actions[action] {
+			t.Fatalf("expected audit action %q in %#v", action, actions)
+		}
+	}
+	if !requestIDs[invitationRequestID] {
+		t.Fatalf("expected invitation audit request ID %q in %#v", invitationRequestID, requestIDs)
+	}
+
+	_, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, writerLogin.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forbidden := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/audit-events", nil)
+	addCookies(forbidden, writerLogin.cookies)
+	forbiddenResponse := mustTest(t, server, forbidden)
+	if forbiddenResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer audit read denial with 403, got %d: %s", forbiddenResponse.StatusCode, readBody(t, forbiddenResponse))
+	}
+}
+
+func TestAuditedProjectMutationsRollbackWhenAuditInsertionFails(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"audit-rollback","name":"Original Name"}`)
+
+	if _, err := db.Exec(`
+		CREATE TRIGGER fail_project_update_audit
+		BEFORE INSERT ON audit_events
+		WHEN NEW.action = 'project.update'
+		BEGIN
+			SELECT RAISE(ABORT, 'forced audit failure');
+		END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	updateRequest := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+project.ID,
+		`{"name":"Changed Name"}`,
+		login,
+	)
+	updateResponse := mustTest(t, server, updateRequest)
+	if updateResponse.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected failed audit insertion to fail project update, got %d: %s", updateResponse.StatusCode, readBody(t, updateResponse))
+	}
+	var storedName string
+	if err := db.QueryRow(`SELECT name FROM projects WHERE id = ?`, project.ID).Scan(&storedName); err != nil {
+		t.Fatal(err)
+	}
+	if storedName != "Original Name" {
+		t.Fatalf("expected project update rollback, got name %q", storedName)
+	}
+	if _, err := db.Exec(`DROP TRIGGER fail_project_update_audit`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.Exec(`
+		CREATE TRIGGER fail_project_delete_audit
+		BEFORE INSERT ON audit_events
+		WHEN NEW.action = 'project.delete'
+		BEGIN
+			SELECT RAISE(ABORT, 'forced audit failure');
+		END
+	`); err != nil {
+		t.Fatal(err)
+	}
+	deleteRequest := newMemberMutationRequest(http.MethodDelete, "/api/v1/projects/"+project.ID, "", login)
+	deleteResponse := mustTest(t, server, deleteRequest)
+	if deleteResponse.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected failed audit insertion to fail project deletion, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+	var projectCount int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM projects WHERE id = ?`, project.ID).Scan(&projectCount); err != nil {
+		t.Fatal(err)
+	}
+	if projectCount != 1 {
+		t.Fatal("expected project deletion to roll back when audit insertion fails")
 	}
 }
 
@@ -483,6 +1210,73 @@ func createTestProject(t *testing.T, server *Server, login adminLoginResult, bod
 	return payload.Data
 }
 
+func createTestInvitation(t *testing.T, server *Server, login adminLoginResult, projectID, body string) store.ProjectMemberInvitation {
+	t.Helper()
+	request := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/invitations", body, login)
+	response := mustTest(t, server, request)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("expected create invitation 201, got %d: %s", response.StatusCode, readBody(t, response))
+	}
+	var payload Envelope[store.ProjectMemberInvitation]
+	decodeJSONResponse(t, response, &payload)
+	return payload.Data
+}
+
+func acceptTestInvitation(t *testing.T, server *Server, token, password string, expectedStatus int) store.ProjectInvitationAcceptance {
+	t.Helper()
+	body, err := json.Marshal(invitationAcceptanceRequest{Password: password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/invitations/"+token+"/accept", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := mustTest(t, server, request)
+	if response.StatusCode != expectedStatus {
+		t.Fatalf("expected invitation acceptance %d, got %d: %s", expectedStatus, response.StatusCode, readBody(t, response))
+	}
+	if expectedStatus != http.StatusOK {
+		return store.ProjectInvitationAcceptance{}
+	}
+	var payload Envelope[store.ProjectInvitationAcceptance]
+	decodeJSONResponse(t, response, &payload)
+	return payload.Data
+}
+
+func assertInvitationRevoked(t *testing.T, db *sql.DB, token string) {
+	t.Helper()
+	var revokedAt string
+	if err := db.QueryRow(`
+		SELECT COALESCE(revoked_at, '')
+		FROM invitations
+		WHERE token_hash = ?
+	`, security.TokenHash(token)).Scan(&revokedAt); err != nil {
+		t.Fatal(err)
+	}
+	if revokedAt == "" {
+		t.Fatal("expected invitation to be revoked")
+	}
+}
+
+func newMemberMutationRequest(method, path, body string, login adminLoginResult) *http.Request {
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", login.csrfToken)
+	addCookies(request, login.cookies)
+	return request
+}
+
+func assertRecentReauthenticationRequired(t *testing.T, response *http.Response) {
+	t.Helper()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected recent reauthentication failure, got %d: %s", response.StatusCode, readBody(t, response))
+	}
+	var payload Problem
+	decodeJSONResponse(t, response, &payload)
+	if payload.Title != "Recent reauthentication required" {
+		t.Fatalf("expected recent reauthentication problem, got %#v", payload)
+	}
+}
+
 func createTestCategory(t *testing.T, server *Server, login adminLoginResult, projectID, body string) store.TaxonomyTerm {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/categories", strings.NewReader(body))
@@ -603,7 +1397,7 @@ func adminLogin(t *testing.T, server *Server, email, password string) adminLogin
 
 func mustTest(t *testing.T, server *Server, request *http.Request) *http.Response {
 	t.Helper()
-	response, err := server.app.Test(request)
+	response, err := server.app.Test(request, 15_000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,4 +1425,13 @@ func readBody(t *testing.T, response *http.Response) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+func findProjectMember(members []store.AdminProjectMember, userID string) store.AdminProjectMember {
+	for _, member := range members {
+		if member.UserID == userID {
+			return member
+		}
+	}
+	return store.AdminProjectMember{}
 }

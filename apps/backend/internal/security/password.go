@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	passwordMinLength = 15
+	passwordMinLength = 8
 	argonTime         = uint32(3)
 	argonMemoryKiB    = uint32(64 * 1024)
 	argonThreads      = uint8(1)
@@ -21,7 +21,7 @@ const (
 	saltLength        = 16
 )
 
-var ErrPasswordTooShort = errors.New("password must be at least 15 characters")
+var ErrPasswordTooShort = errors.New("password must be at least 8 characters")
 
 func HashPassword(password string) (string, error) {
 	if len(password) < passwordMinLength {

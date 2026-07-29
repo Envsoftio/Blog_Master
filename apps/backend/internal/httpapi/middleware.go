@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -67,11 +68,7 @@ func contentProject(c *fiber.Ctx) (ProjectContext, bool) {
 
 func contentSourceRateLimiter() fiber.Handler {
 	return newContentRateLimiter(300, func(c *fiber.Ctx) string {
-		source := strings.TrimSpace(strings.Split(c.Get("X-Forwarded-For"), ",")[0])
-		if source == "" {
-			source = c.IP()
-		}
-		return "source:" + source
+		return "source:" + requestSource(c)
 	})
 }
 
@@ -98,4 +95,56 @@ func newContentRateLimiter(max int, keyGenerator func(*fiber.Ctx) string) fiber.
 			return problem(c, fiber.StatusTooManyRequests, "Content API rate limit exceeded", "Retry after the current rate-limit window")
 		},
 	})
+}
+
+func invitationCreationSourceRateLimiter() fiber.Handler {
+	return newAdminRateLimiter(30, time.Minute, func(c *fiber.Ctx) string {
+		return "invitation-create-source:" + requestSource(c)
+	})
+}
+
+func invitationRecipientRateLimiter() fiber.Handler {
+	return newAdminRateLimiter(5, time.Hour, func(c *fiber.Ctx) string {
+		var input struct {
+			Email string `json:"email"`
+		}
+		_ = json.Unmarshal(c.Body(), &input)
+		identity := strings.ToLower(strings.TrimSpace(input.Email))
+		if identity == "" {
+			identity = "invalid"
+		}
+		return "invitation-recipient:" + hashRateLimitIdentity(identity)
+	})
+}
+
+func invitationAcceptanceSourceRateLimiter() fiber.Handler {
+	return newAdminRateLimiter(30, 15*time.Minute, func(c *fiber.Ctx) string {
+		return "invitation-accept-source:" + requestSource(c)
+	})
+}
+
+func invitationTokenRateLimiter() fiber.Handler {
+	return newAdminRateLimiter(10, 15*time.Minute, func(c *fiber.Ctx) string {
+		return "invitation-token:" + hashRateLimitIdentity(c.Params("token"))
+	})
+}
+
+func newAdminRateLimiter(max int, expiration time.Duration, keyGenerator func(*fiber.Ctx) string) fiber.Handler {
+	return limiter.New(limiter.Config{
+		Max:          max,
+		Expiration:   expiration,
+		KeyGenerator: keyGenerator,
+		LimitReached: func(c *fiber.Ctx) error {
+			return problem(c, fiber.StatusTooManyRequests, "Too many requests", "Retry after the current rate-limit window")
+		},
+	})
+}
+
+func requestSource(c *fiber.Ctx) string {
+	return c.IP()
+}
+
+func hashRateLimitIdentity(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }

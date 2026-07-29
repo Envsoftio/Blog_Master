@@ -18,8 +18,25 @@ var (
 	ErrEmailAlreadyExists      = errors.New("email already exists")
 	ErrBootstrapAlreadyCreated = errors.New("a user already exists")
 	ErrForbidden               = errors.New("forbidden")
+	ErrInvalidInvitation       = errors.New("invalid or expired invitation")
 	ErrProjectHasContent       = errors.New("project has retained content")
+	ErrRecentReauthentication  = errors.New("recent reauthentication required")
 )
+
+type requestIDContextKey struct{}
+
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, requestIDContextKey{}, requestID)
+}
+
+func requestIDFromContext(ctx context.Context) string {
+	requestID, _ := ctx.Value(requestIDContextKey{}).(string)
+	return requestID
+}
 
 type AdminUser struct {
 	ID         string `json:"id"`
@@ -66,6 +83,41 @@ type AdminProject struct {
 	UpdatedAt           string   `json:"updatedAt"`
 }
 
+type AdminProjectMember struct {
+	ProjectID string `json:"projectId"`
+	UserID    string `json:"userId"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	Status    string `json:"status"`
+	InvitedBy string `json:"invitedBy,omitempty"`
+	InvitedAt string `json:"invitedAt,omitempty"`
+	JoinedAt  string `json:"joinedAt,omitempty"`
+	UpdatedAt string `json:"updatedAt"`
+	RemovedAt string `json:"removedAt,omitempty"`
+}
+
+type ProjectMemberInvitation struct {
+	Member    AdminProjectMember `json:"member"`
+	Token     string             `json:"token"`
+	ExpiresAt string             `json:"expiresAt"`
+}
+
+type ProjectInvitationAcceptance struct {
+	ProjectID string `json:"projectId"`
+	UserID    string `json:"userId"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+}
+
+type invitationAcceptanceCandidate struct {
+	ProjectID    string
+	UserID       string
+	Email        string
+	Role         string
+	UserStatus   string
+	PasswordHash string
+}
+
 type ProjectInput struct {
 	WorkspaceID         string
 	WorkspaceSlug       string
@@ -96,6 +148,16 @@ type ProjectPatch struct {
 	DefaultRobotsPolicy *string
 }
 
+type ProjectMemberInviteInput struct {
+	Email     string
+	Role      string
+	ExpiresAt string
+}
+
+type ProjectMemberPatch struct {
+	Role string
+}
+
 type ProjectDeletionImpact struct {
 	ProjectID             string `json:"projectId"`
 	CanDelete             bool   `json:"canDelete"`
@@ -108,6 +170,25 @@ type ProjectDeletionImpact struct {
 	Assets                int64  `json:"assets"`
 	Webhooks              int64  `json:"webhooks"`
 	PendingJobs           int64  `json:"pendingJobs"`
+}
+
+type AuditCursor struct {
+	CreatedAt string `json:"createdAt"`
+	ID        string `json:"id"`
+}
+
+type AuditEvent struct {
+	ID         string         `json:"id"`
+	ProjectID  string         `json:"projectId,omitempty"`
+	ActorType  string         `json:"actorType"`
+	ActorID    string         `json:"actorId,omitempty"`
+	Action     string         `json:"action"`
+	TargetType string         `json:"targetType,omitempty"`
+	TargetID   string         `json:"targetId,omitempty"`
+	Outcome    string         `json:"outcome"`
+	RequestID  string         `json:"requestId,omitempty"`
+	Metadata   map[string]any `json:"metadata"`
+	CreatedAt  string         `json:"createdAt"`
 }
 
 type AdminAPIKey struct {
@@ -427,10 +508,7 @@ func (s *Store) CreateProject(ctx context.Context, actorUserID string, input Pro
 	`, projectID, actorUserID); err != nil {
 		return AdminProject{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
-		VALUES (?, 'user', ?, 'project.create', 'project', ?, 'success', '{}')
-	`, projectID, actorUserID, projectID); err != nil {
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "project.create", "project", projectID, "success", nil); err != nil {
 		return AdminProject{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -507,7 +585,13 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 	if err != nil {
 		return AdminProject{}, err
 	}
-	_, err = s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminProject{}, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
 		UPDATE projects
 		SET name = ?,
 		    primary_domain = ?,
@@ -527,10 +611,17 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 	if err != nil {
 		return AdminProject{}, err
 	}
-	_, _ = s.db.ExecContext(ctx, `
-		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
-		VALUES (?, 'user', ?, 'project.update', 'project', ?, 'success', '{}')
-	`, projectID, actorUserID, projectID)
+	if changed, err := result.RowsAffected(); err != nil {
+		return AdminProject{}, err
+	} else if changed != 1 {
+		return AdminProject{}, sql.ErrNoRows
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "project.update", "project", projectID, "success", nil); err != nil {
+		return AdminProject{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminProject{}, err
+	}
 	return s.GetProjectForUser(ctx, actorUserID, projectID)
 }
 
@@ -545,17 +636,31 @@ func (s *Store) SetProjectStatus(ctx context.Context, actorUserID, projectID, st
 	if status == "archived" {
 		archivedAtSQL = "CURRENT_TIMESTAMP"
 	}
-	if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminProject{}, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 		UPDATE projects
 		SET status = ?, archived_at = %s, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, archivedAtSQL), status, projectID); err != nil {
+	`, archivedAtSQL), status, projectID)
+	if err != nil {
 		return AdminProject{}, err
 	}
-	_, _ = s.db.ExecContext(ctx, `
-		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
-		VALUES (?, 'user', ?, ?, 'project', ?, 'success', '{}')
-	`, projectID, actorUserID, "project."+status, projectID)
+	if changed, err := result.RowsAffected(); err != nil {
+		return AdminProject{}, err
+	} else if changed != 1 {
+		return AdminProject{}, sql.ErrNoRows
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "project."+status, "project", projectID, "success", nil); err != nil {
+		return AdminProject{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminProject{}, err
+	}
 	return s.GetProjectForUser(ctx, actorUserID, projectID)
 }
 
@@ -601,11 +706,16 @@ func (s *Store) DeleteProject(ctx context.Context, actorUserID, projectID string
 	if !impact.CanDelete {
 		return ErrProjectHasContent
 	}
-	_, _ = s.db.ExecContext(ctx, `
-		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
-		VALUES (?, 'user', ?, 'project.delete', 'project', ?, 'success', '{}')
-	`, projectID, actorUserID, projectID)
-	result, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, projectID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "project.delete", "project", projectID, "success", nil); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, projectID)
 	if err != nil {
 		return err
 	}
@@ -616,7 +726,487 @@ func (s *Store) DeleteProject(ctx context.Context, actorUserID, projectID string
 	if changed == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	return tx.Commit()
+}
+
+func (s *Store) ListAuditEventsForUser(ctx context.Context, actorUserID, projectID string, cursor AuditCursor, limit int) ([]AuditEvent, error) {
+	if err := s.requireProjectManagement(ctx, actorUserID, projectID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, COALESCE(project_id, ''), actor_type, COALESCE(actor_id, ''),
+		       action, COALESCE(target_type, ''), COALESCE(target_id, ''),
+		       outcome, COALESCE(request_id, ''), metadata_json, created_at
+		FROM audit_events
+		WHERE project_id = ?
+		  AND (
+		    ? = '' OR
+		    created_at < ? OR
+		    (created_at = ? AND id < ?)
+		  )
+		ORDER BY created_at DESC, id DESC
+		LIMIT ?
+	`, projectID, cursor.CreatedAt, cursor.CreatedAt, cursor.CreatedAt, cursor.ID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []AuditEvent
+	for rows.Next() {
+		event, err := scanAuditEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+func (s *Store) ListProjectMembers(ctx context.Context, actorUserID, projectID, cursor string, limit int) ([]AdminProjectMember, error) {
+	if err := s.requireProjectManagement(ctx, actorUserID, projectID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+adminProjectMemberColumns+`
+		FROM project_memberships membership
+		JOIN users user ON user.id = membership.user_id
+		WHERE membership.project_id = ?
+		  AND (? = '' OR membership.user_id > ?)
+		ORDER BY membership.user_id
+		LIMIT ?
+	`, projectID, cursor, cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var members []AdminProjectMember
+	for rows.Next() {
+		member, err := scanProjectMember(rows)
+		if err != nil {
+			return nil, err
+		}
+		members = append(members, member)
+	}
+	return members, rows.Err()
+}
+
+func (s *Store) InviteProjectMember(ctx context.Context, actorUserID, projectID string, input ProjectMemberInviteInput, allowOwnershipChange bool) (ProjectMemberInvitation, error) {
+	input = applyProjectMemberInviteDefaults(input)
+	if err := validateProjectMemberInviteInput(input); err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+
+	expiresAt := time.Now().UTC().Add(7 * 24 * time.Hour)
+	if input.ExpiresAt != "" {
+		parsed, err := parseSQLiteTime(input.ExpiresAt)
+		if err != nil {
+			return ProjectMemberInvitation{}, fmt.Errorf("%w: expiresAt must be RFC3339 or YYYY-MM-DD HH:MM:SS", ErrValidation)
+		}
+		if !parsed.After(time.Now().UTC()) {
+			return ProjectMemberInvitation{}, fmt.Errorf("%w: expiresAt must be in the future", ErrValidation)
+		}
+		expiresAt = parsed
+	}
+	token, err := newInvitationToken()
+	if err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+	defer tx.Rollback()
+
+	actorRole, err := projectRoleTx(ctx, tx, actorUserID, projectID)
+	if err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+	if actorRole != "project_owner" && (actorRole != "project_admin" || input.Role == "project_owner") {
+		return ProjectMemberInvitation{}, ErrForbidden
+	}
+	if input.Role == "project_owner" && !allowOwnershipChange {
+		return ProjectMemberInvitation{}, ErrRecentReauthentication
+	}
+
+	status, err := projectStatus(ctx, tx, projectID)
+	if err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+	if status != "active" {
+		return ProjectMemberInvitation{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+
+	userID, userStatus, err := lookupUserForInvitation(ctx, tx, input.Email)
+	if err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+	if userID == "" {
+		userID, err = security.RandomID("usr")
+		if err != nil {
+			return ProjectMemberInvitation{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO users(id, email_normalized, status)
+			VALUES (?, ?, 'invited')
+		`, userID, input.Email); err != nil {
+			return ProjectMemberInvitation{}, err
+		}
+	} else if userStatus == "disabled" {
+		return ProjectMemberInvitation{}, fmt.Errorf("%w: disabled users cannot be invited", ErrInvalidWorkflow)
+	}
+
+	var currentStatus string
+	err = tx.QueryRowContext(ctx, `
+		SELECT status
+		FROM project_memberships
+		WHERE project_id = ? AND user_id = ?
+	`, projectID, userID).Scan(&currentStatus)
+	switch {
+	case err == sql.ErrNoRows:
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO project_memberships(project_id, user_id, role, status, invited_by, invited_at)
+			VALUES (?, ?, ?, 'invited', ?, CURRENT_TIMESTAMP)
+		`, projectID, userID, input.Role, actorUserID)
+	case err != nil:
+		return ProjectMemberInvitation{}, err
+	case currentStatus == "active":
+		return ProjectMemberInvitation{}, fmt.Errorf("%w: user is already an active project member", ErrInvalidWorkflow)
+	default:
+		_, err = tx.ExecContext(ctx, `
+			UPDATE project_memberships
+			SET role = ?,
+			    status = 'invited',
+			    invited_by = ?,
+			    invited_at = CURRENT_TIMESTAMP,
+			    joined_at = NULL,
+			    updated_at = CURRENT_TIMESTAMP,
+			    removed_at = NULL
+			WHERE project_id = ? AND user_id = ?
+		`, input.Role, actorUserID, projectID, userID)
+	}
+	if err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE invitations
+		SET revoked_at = CURRENT_TIMESTAMP
+		WHERE project_id = ?
+		  AND email_normalized = ?
+		  AND accepted_at IS NULL
+		  AND revoked_at IS NULL
+	`, projectID, input.Email); err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+
+	expiry := expiresAt.UTC().Format(timeFormat)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO invitations(token_hash, project_id, email_normalized, role, invited_by, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, security.TokenHash(token), projectID, input.Email, input.Role, actorUserID, expiry); err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+	if err := insertProjectMemberAudit(ctx, tx, projectID, actorUserID, "member.invite", userID, map[string]string{
+		"email": input.Email,
+		"role":  input.Role,
+	}); err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+
+	member, err := getProjectMemberTx(ctx, tx, projectID, userID)
+	if err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ProjectMemberInvitation{}, err
+	}
+	return ProjectMemberInvitation{Member: member, Token: token, ExpiresAt: expiry}, nil
+}
+
+func (s *Store) AcceptProjectInvitation(ctx context.Context, token, password string) (ProjectInvitationAcceptance, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ProjectInvitationAcceptance{}, ErrInvalidInvitation
+	}
+	passwordHash, err := security.HashPassword(password)
+	if err != nil {
+		if errors.Is(err, security.ErrPasswordTooShort) {
+			return ProjectInvitationAcceptance{}, fmt.Errorf("%w: %v", ErrValidation, err)
+		}
+		return ProjectInvitationAcceptance{}, err
+	}
+
+	tokenHash := security.TokenHash(token)
+	candidate, err := s.invitationAcceptanceCandidate(ctx, tokenHash)
+	if err != nil {
+		return ProjectInvitationAcceptance{}, normalizeInvitationError(err)
+	}
+	if candidate.UserStatus == "active" {
+		if candidate.PasswordHash == "" {
+			return ProjectInvitationAcceptance{}, ErrInvalidInvitation
+		}
+		valid, err := security.VerifyPassword(candidate.PasswordHash, password)
+		if err != nil || !valid {
+			return ProjectInvitationAcceptance{}, ErrInvalidInvitation
+		}
+	} else if candidate.UserStatus != "invited" {
+		return ProjectInvitationAcceptance{}, ErrInvalidInvitation
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ProjectInvitationAcceptance{}, err
+	}
+	defer tx.Rollback()
+
+	current, err := invitationAcceptanceCandidateTx(ctx, tx, tokenHash)
+	if err != nil {
+		return ProjectInvitationAcceptance{}, normalizeInvitationError(err)
+	}
+	if current != candidate {
+		return ProjectInvitationAcceptance{}, ErrInvalidInvitation
+	}
+
+	if current.UserStatus == "invited" {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE users
+			SET password_hash = ?,
+			    status = 'active',
+			    email_verified_at = COALESCE(email_verified_at, CURRENT_TIMESTAMP),
+			    password_changed_at = CURRENT_TIMESTAMP,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND status = 'invited'
+		`, passwordHash, current.UserID)
+		if err != nil {
+			return ProjectInvitationAcceptance{}, err
+		}
+		if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+			if err != nil {
+				return ProjectInvitationAcceptance{}, err
+			}
+			return ProjectInvitationAcceptance{}, ErrInvalidInvitation
+		}
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE project_memberships
+		SET status = 'active',
+		    joined_at = CURRENT_TIMESTAMP,
+		    updated_at = CURRENT_TIMESTAMP,
+		    removed_at = NULL
+		WHERE project_id = ?
+		  AND user_id = ?
+		  AND role = ?
+		  AND status = 'invited'
+	`, current.ProjectID, current.UserID, current.Role)
+	if err != nil {
+		return ProjectInvitationAcceptance{}, err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		if err != nil {
+			return ProjectInvitationAcceptance{}, err
+		}
+		return ProjectInvitationAcceptance{}, ErrInvalidInvitation
+	}
+
+	result, err = tx.ExecContext(ctx, `
+		UPDATE invitations
+		SET accepted_at = CURRENT_TIMESTAMP
+		WHERE token_hash = ?
+		  AND accepted_at IS NULL
+		  AND revoked_at IS NULL
+		  AND expires_at > CURRENT_TIMESTAMP
+	`, tokenHash)
+	if err != nil {
+		return ProjectInvitationAcceptance{}, err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		if err != nil {
+			return ProjectInvitationAcceptance{}, err
+		}
+		return ProjectInvitationAcceptance{}, ErrInvalidInvitation
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE invitations
+		SET revoked_at = CURRENT_TIMESTAMP
+		WHERE project_id = ?
+		  AND email_normalized = ?
+		  AND token_hash <> ?
+		  AND accepted_at IS NULL
+		  AND revoked_at IS NULL
+	`, current.ProjectID, current.Email, tokenHash); err != nil {
+		return ProjectInvitationAcceptance{}, err
+	}
+	if err := insertProjectMemberAudit(ctx, tx, current.ProjectID, current.UserID, "member.accept", current.UserID, map[string]string{
+		"email": current.Email,
+		"role":  current.Role,
+	}); err != nil {
+		return ProjectInvitationAcceptance{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ProjectInvitationAcceptance{}, err
+	}
+	return ProjectInvitationAcceptance{
+		ProjectID: current.ProjectID,
+		UserID:    current.UserID,
+		Email:     current.Email,
+		Role:      current.Role,
+	}, nil
+}
+
+func (s *Store) UpdateProjectMemberRole(ctx context.Context, actorUserID, projectID, targetUserID string, patch ProjectMemberPatch, allowOwnershipChange bool) (AdminProjectMember, error) {
+	patch.Role = normalizeProjectRole(patch.Role)
+	if !allowedProjectRole(patch.Role) {
+		return AdminProjectMember{}, fmt.Errorf("%w: unsupported project role", ErrValidation)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	defer tx.Rollback()
+
+	actorRole, err := projectRoleTx(ctx, tx, actorUserID, projectID)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	if actorRole != "project_owner" && actorRole != "project_admin" {
+		return AdminProjectMember{}, ErrForbidden
+	}
+
+	var currentRole, currentStatus, targetEmail string
+	err = tx.QueryRowContext(ctx, `
+		SELECT membership.role, membership.status, user.email_normalized
+		FROM project_memberships membership
+		JOIN users user ON user.id = membership.user_id
+		WHERE membership.project_id = ?
+		  AND membership.user_id = ?
+		  AND membership.status IN ('active', 'invited')
+	`, projectID, targetUserID).Scan(&currentRole, &currentStatus, &targetEmail)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	if actorRole != "project_owner" && (currentRole == "project_owner" || patch.Role == "project_owner") {
+		return AdminProjectMember{}, ErrForbidden
+	}
+	if currentRole != patch.Role && (currentRole == "project_owner" || patch.Role == "project_owner") && !allowOwnershipChange {
+		return AdminProjectMember{}, ErrRecentReauthentication
+	}
+	if currentStatus == "active" && currentRole == "project_owner" && patch.Role != "project_owner" {
+		if err := ensureAnotherActiveOwner(ctx, tx, projectID, targetUserID); err != nil {
+			return AdminProjectMember{}, err
+		}
+	}
+	if currentRole == patch.Role {
+		return getProjectMemberTx(ctx, tx, projectID, targetUserID)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE project_memberships
+		SET role = ?,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND user_id = ? AND status IN ('active', 'invited')
+	`, patch.Role, projectID, targetUserID); err != nil {
+		return AdminProjectMember{}, err
+	}
+	if currentStatus == "invited" {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE invitations
+			SET role = ?
+			WHERE project_id = ?
+			  AND email_normalized = ?
+			  AND accepted_at IS NULL
+			  AND revoked_at IS NULL
+			  AND expires_at > CURRENT_TIMESTAMP
+		`, patch.Role, projectID, targetEmail); err != nil {
+			return AdminProjectMember{}, err
+		}
+	} else if err := revokePendingInvitationsTx(ctx, tx, projectID, targetEmail); err != nil {
+		return AdminProjectMember{}, err
+	}
+	if err := insertProjectMemberAudit(ctx, tx, projectID, actorUserID, "member.role_update", targetUserID, map[string]string{
+		"fromRole": currentRole,
+		"toRole":   patch.Role,
+	}); err != nil {
+		return AdminProjectMember{}, err
+	}
+	member, err := getProjectMemberTx(ctx, tx, projectID, targetUserID)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminProjectMember{}, err
+	}
+	return member, nil
+}
+
+func (s *Store) RemoveProjectMember(ctx context.Context, actorUserID, projectID, targetUserID string, allowOwnershipChange bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	actorRole, err := projectRoleTx(ctx, tx, actorUserID, projectID)
+	if err != nil {
+		return err
+	}
+	if actorRole != "project_owner" && actorRole != "project_admin" {
+		return ErrForbidden
+	}
+
+	var currentRole, currentStatus, targetEmail string
+	err = tx.QueryRowContext(ctx, `
+		SELECT membership.role, membership.status, user.email_normalized
+		FROM project_memberships membership
+		JOIN users user ON user.id = membership.user_id
+		WHERE membership.project_id = ?
+		  AND membership.user_id = ?
+		  AND membership.status IN ('active', 'invited')
+	`, projectID, targetUserID).Scan(&currentRole, &currentStatus, &targetEmail)
+	if err != nil {
+		return err
+	}
+	if actorRole != "project_owner" && currentRole == "project_owner" {
+		return ErrForbidden
+	}
+	if currentRole == "project_owner" && !allowOwnershipChange {
+		return ErrRecentReauthentication
+	}
+	if currentStatus == "active" && currentRole == "project_owner" {
+		if err := ensureAnotherActiveOwner(ctx, tx, projectID, targetUserID); err != nil {
+			return err
+		}
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE project_memberships
+		SET status = 'removed',
+		    updated_at = CURRENT_TIMESTAMP,
+		    removed_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND user_id = ? AND status IN ('active', 'invited')
+	`, projectID, targetUserID)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return sql.ErrNoRows
+	}
+	if err := revokePendingInvitationsTx(ctx, tx, projectID, targetEmail); err != nil {
+		return err
+	}
+	if err := insertProjectMemberAudit(ctx, tx, projectID, actorUserID, "member.remove", targetUserID, map[string]string{
+		"role":   currentRole,
+		"status": currentStatus,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListProjectAPIKeys(ctx context.Context, actorUserID, projectID, cursor string, limit int) ([]AdminAPIKey, error) {
@@ -932,6 +1522,62 @@ func scanAdminAPIKey(row rowScanner) (AdminAPIKey, error) {
 	return key, nil
 }
 
+const adminProjectMemberColumns = `
+	membership.project_id, user.id, user.email_normalized, membership.role, membership.status,
+	COALESCE(membership.invited_by, ''), COALESCE(membership.invited_at, ''),
+	COALESCE(membership.joined_at, ''), membership.updated_at, COALESCE(membership.removed_at, '')
+`
+
+func scanProjectMember(row rowScanner) (AdminProjectMember, error) {
+	var member AdminProjectMember
+	err := row.Scan(
+		&member.ProjectID,
+		&member.UserID,
+		&member.Email,
+		&member.Role,
+		&member.Status,
+		&member.InvitedBy,
+		&member.InvitedAt,
+		&member.JoinedAt,
+		&member.UpdatedAt,
+		&member.RemovedAt,
+	)
+	return member, err
+}
+
+func scanAuditEvent(row rowScanner) (AuditEvent, error) {
+	var event AuditEvent
+	var metadataJSON string
+	err := row.Scan(
+		&event.ID,
+		&event.ProjectID,
+		&event.ActorType,
+		&event.ActorID,
+		&event.Action,
+		&event.TargetType,
+		&event.TargetID,
+		&event.Outcome,
+		&event.RequestID,
+		&metadataJSON,
+		&event.CreatedAt,
+	)
+	if err != nil {
+		return AuditEvent{}, err
+	}
+	event.Metadata = decodeJSONObject(metadataJSON)
+	return event, nil
+}
+
+func getProjectMemberTx(ctx context.Context, tx *sql.Tx, projectID, userID string) (AdminProjectMember, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT `+adminProjectMemberColumns+`
+		FROM project_memberships membership
+		JOIN users user ON user.id = membership.user_id
+		WHERE membership.project_id = ? AND membership.user_id = ?
+	`, projectID, userID)
+	return scanProjectMember(row)
+}
+
 func ensureWorkspace(ctx context.Context, tx *sql.Tx, slug, name string) (string, error) {
 	if slug == "" {
 		slug = "default"
@@ -1096,6 +1742,39 @@ func validateAPIKeyInput(input APIKeyInput) error {
 	return nil
 }
 
+func applyProjectMemberInviteDefaults(input ProjectMemberInviteInput) ProjectMemberInviteInput {
+	input.Email = normalizeEmail(input.Email)
+	input.Role = normalizeProjectRole(input.Role)
+	if input.Role == "" {
+		input.Role = "writer"
+	}
+	input.ExpiresAt = strings.TrimSpace(input.ExpiresAt)
+	return input
+}
+
+func validateProjectMemberInviteInput(input ProjectMemberInviteInput) error {
+	if input.Email == "" || !strings.Contains(input.Email, "@") {
+		return fmt.Errorf("%w: a valid email is required", ErrValidation)
+	}
+	if !allowedProjectRole(input.Role) {
+		return fmt.Errorf("%w: unsupported project role", ErrValidation)
+	}
+	return nil
+}
+
+func normalizeProjectRole(role string) string {
+	return strings.ToLower(strings.TrimSpace(role))
+}
+
+func allowedProjectRole(role string) bool {
+	switch role {
+	case "project_owner", "project_admin", "editor", "reviewer", "writer":
+		return true
+	default:
+		return false
+	}
+}
+
 func allowedAPIKeyScope(scope string) bool {
 	switch scope {
 	case "content:published:read", "taxonomy:published:read", "authors:published:read", "discovery:read", "redirects:read":
@@ -1128,6 +1807,114 @@ func newProjectAPIKeySecret(environment string) (secret string, tokenPrefix stri
 	return secret, tokenPrefix, tokenHash, nil
 }
 
+func newInvitationToken() (string, error) {
+	random, err := security.RandomToken(32)
+	if err != nil {
+		return "", err
+	}
+	return "sbinv_" + random, nil
+}
+
+func lookupUserForInvitation(ctx context.Context, tx *sql.Tx, email string) (userID string, status string, err error) {
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, status
+		FROM users
+		WHERE email_normalized = ?
+	`, email).Scan(&userID, &status)
+	if err == sql.ErrNoRows {
+		return "", "", nil
+	}
+	return userID, status, err
+}
+
+func (s *Store) invitationAcceptanceCandidate(ctx context.Context, tokenHash string) (invitationAcceptanceCandidate, error) {
+	return scanInvitationAcceptanceCandidate(s.db.QueryRowContext(ctx, invitationAcceptanceQuery, tokenHash))
+}
+
+func invitationAcceptanceCandidateTx(ctx context.Context, tx *sql.Tx, tokenHash string) (invitationAcceptanceCandidate, error) {
+	return scanInvitationAcceptanceCandidate(tx.QueryRowContext(ctx, invitationAcceptanceQuery, tokenHash))
+}
+
+const invitationAcceptanceQuery = `
+	SELECT invitation.project_id, membership.user_id, invitation.email_normalized,
+	       membership.role, user.status, COALESCE(user.password_hash, '')
+	FROM invitations invitation
+	JOIN projects project
+	  ON project.id = invitation.project_id
+	 AND project.status = 'active'
+	JOIN users user
+	  ON user.email_normalized = invitation.email_normalized
+	JOIN project_memberships membership
+	  ON membership.project_id = invitation.project_id
+	 AND membership.user_id = user.id
+	 AND membership.status = 'invited'
+	 AND membership.role = invitation.role
+	WHERE invitation.token_hash = ?
+	  AND invitation.accepted_at IS NULL
+	  AND invitation.revoked_at IS NULL
+	  AND invitation.expires_at > CURRENT_TIMESTAMP
+`
+
+func scanInvitationAcceptanceCandidate(row rowScanner) (invitationAcceptanceCandidate, error) {
+	var candidate invitationAcceptanceCandidate
+	err := row.Scan(
+		&candidate.ProjectID,
+		&candidate.UserID,
+		&candidate.Email,
+		&candidate.Role,
+		&candidate.UserStatus,
+		&candidate.PasswordHash,
+	)
+	return candidate, err
+}
+
+func normalizeInvitationError(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrInvalidInvitation
+	}
+	return err
+}
+
+func projectRoleTx(ctx context.Context, tx *sql.Tx, userID, projectID string) (string, error) {
+	var role string
+	err := tx.QueryRowContext(ctx, `
+		SELECT role
+		FROM project_memberships
+		WHERE user_id = ? AND project_id = ? AND status = 'active'
+	`, userID, projectID).Scan(&role)
+	return role, err
+}
+
+func revokePendingInvitationsTx(ctx context.Context, tx *sql.Tx, projectID, email string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE invitations
+		SET revoked_at = CURRENT_TIMESTAMP
+		WHERE project_id = ?
+		  AND email_normalized = ?
+		  AND accepted_at IS NULL
+		  AND revoked_at IS NULL
+	`, projectID, email)
+	return err
+}
+
+func ensureAnotherActiveOwner(ctx context.Context, tx *sql.Tx, projectID, excludedUserID string) error {
+	var ownerCount int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(1)
+		FROM project_memberships
+		WHERE project_id = ?
+		  AND user_id <> ?
+		  AND role = 'project_owner'
+		  AND status = 'active'
+	`, projectID, excludedUserID).Scan(&ownerCount); err != nil {
+		return err
+	}
+	if ownerCount == 0 {
+		return fmt.Errorf("%w: every active project must retain at least one active owner", ErrInvalidWorkflow)
+	}
+	return nil
+}
+
 func projectStatus(ctx context.Context, tx *sql.Tx, projectID string) (string, error) {
 	var status string
 	err := tx.QueryRowContext(ctx, `
@@ -1138,16 +1925,42 @@ func projectStatus(ctx context.Context, tx *sql.Tx, projectID string) (string, e
 	return status, err
 }
 
-func insertAPIKeyAudit(ctx context.Context, tx *sql.Tx, projectID, actorUserID, action, keyID string, auditMetadata map[string]string) error {
-	metadata, err := jsonString(auditMetadata)
+func insertAuditEventTx(ctx context.Context, tx *sql.Tx, projectID, actorType, actorID, action, targetType, targetID, outcome string, auditMetadata any) error {
+	eventID, err := security.RandomID("audit")
+	if err != nil {
+		return err
+	}
+	metadata, err := auditMetadataJSON(auditMetadata)
 	if err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
-		VALUES (?, 'user', ?, ?, 'api_key', ?, 'success', ?)
-	`, projectID, actorUserID, action, keyID, metadata)
+		INSERT INTO audit_events(id, project_id, actor_type, actor_id, action, target_type, target_id, outcome, request_id, metadata_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, eventID, projectID, actorType, nullIfEmpty(actorID), action, nullIfEmpty(targetType), nullIfEmpty(targetID), outcome, nullIfEmpty(requestIDFromContext(ctx)), metadata)
 	return err
+}
+
+func insertProjectMemberAudit(ctx context.Context, tx *sql.Tx, projectID, actorUserID, action, targetUserID string, auditMetadata map[string]string) error {
+	return insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, action, "project_member", targetUserID, "success", auditMetadata)
+}
+
+func insertAPIKeyAudit(ctx context.Context, tx *sql.Tx, projectID, actorUserID, action, keyID string, auditMetadata map[string]string) error {
+	return insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, action, "api_key", keyID, "success", auditMetadata)
+}
+
+func auditMetadataJSON(auditMetadata any) (string, error) {
+	if auditMetadata == nil {
+		return "{}", nil
+	}
+	metadata, err := json.Marshal(auditMetadata)
+	if err != nil {
+		return "", err
+	}
+	if string(metadata) == "null" {
+		return "{}", nil
+	}
+	return string(metadata), nil
 }
 
 func parseSQLiteTime(raw string) (time.Time, error) {

@@ -40,7 +40,7 @@ Create the first admin owner with the one-time CLI command after migrations:
 ```bash
 cd apps/backend
 cp .env.example .env
-# Edit .env and set SEOBLOG_BOOTSTRAP_PASSWORD to a strong 15+ character password.
+# Edit .env and set SEOBLOG_BOOTSTRAP_PASSWORD to a strong 8+ character password.
 go run ./cmd/admincli bootstrap-owner -email owner@example.com
 ```
 
@@ -51,6 +51,6 @@ go run ./cmd/api
 go run ./cmd/worker
 ```
 
-The admin Articles page can create a category, create an article, approve its latest revision and schedule or publish it. The project API keys page can create, rotate and revoke server-side landing credentials, with the raw secret shown once. Due scheduled articles remain hidden from the Content API until the worker promotes them to `published`.
+The admin Articles page can create a category, create an article, approve its latest revision and schedule or publish it. The project Members page can create one-time invitation links, update project roles and remove members while retaining at least one active owner. Invited users accept the link to activate their account, and reissuing or removing an invitation invalidates its older tokens. The project API keys page can create, rotate and revoke server-side landing credentials, with the raw secret shown once. The project Audit page lists project-scoped security and editorial events without exposing one-time secrets or stored verifiers. Due scheduled articles remain hidden from the Content API until the worker promotes them to `published`.
 
 The protected Content API is documented at `/docs` and `/openapi.yaml` while the API process is running. Project API keys are server-only credentials and the TypeScript client refuses browser-side construction.

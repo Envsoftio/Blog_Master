@@ -33,7 +33,7 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/auth/login", s.login)
 	api.Post("/auth/forgot-password", func(c *fiber.Ctx) error { return notImplemented(c, "password reset request") })
 	api.Post("/auth/reset-password", func(c *fiber.Ctx) error { return notImplemented(c, "password reset completion") })
-	api.Post("/invitations/:token/accept", func(c *fiber.Ctx) error { return notImplemented(c, "invitation acceptance") })
+	api.Post("/invitations/:token/accept", invitationAcceptanceSourceRateLimiter(), invitationTokenRateLimiter(), s.acceptInvitation)
 
 	api.Get("/auth/me", s.requireAdminSession, s.currentUser)
 	api.Get("/auth/csrf", s.requireAdminSession, s.csrfToken)
@@ -49,10 +49,10 @@ func (s *Server) registerAdminRoutes() {
 	api.Get("/projects/:projectID/deletion-impact", s.requireAdminSession, s.deletionImpact)
 	api.Delete("/projects/:projectID", s.requireAdminSession, s.requireAdminCSRF, s.deleteProject)
 
-	api.Get("/projects/:projectID/members", func(c *fiber.Ctx) error { return notImplemented(c, "project members") })
-	api.Post("/projects/:projectID/invitations", func(c *fiber.Ctx) error { return notImplemented(c, "project invitations") })
-	api.Patch("/projects/:projectID/members/:userID", func(c *fiber.Ctx) error { return notImplemented(c, "member role update") })
-	api.Delete("/projects/:projectID/members/:userID", func(c *fiber.Ctx) error { return notImplemented(c, "member removal") })
+	api.Get("/projects/:projectID/members", s.requireAdminSession, s.listProjectMembers)
+	api.Post("/projects/:projectID/invitations", invitationCreationSourceRateLimiter(), s.requireAdminSession, s.requireAdminCSRF, invitationRecipientRateLimiter(), s.inviteProjectMember)
+	api.Patch("/projects/:projectID/members/:userID", s.requireAdminSession, s.requireAdminCSRF, s.updateProjectMemberRole)
+	api.Delete("/projects/:projectID/members/:userID", s.requireAdminSession, s.requireAdminCSRF, s.removeProjectMember)
 
 	api.Get("/projects/:projectID/api-keys", s.requireAdminSession, s.listProjectAPIKeys)
 	api.Post("/projects/:projectID/api-keys", s.requireAdminSession, s.requireAdminCSRF, s.requireRecentReauthentication, s.createProjectAPIKey)
@@ -126,7 +126,7 @@ func (s *Server) registerAdminRoutes() {
 	api.Get("/projects/:projectID/webhook-attempts", func(c *fiber.Ctx) error { return notImplemented(c, "webhook attempts") })
 	api.Post("/projects/:projectID/webhook-attempts/:attemptID/replay", func(c *fiber.Ctx) error { return notImplemented(c, "webhook replay") })
 
-	api.Get("/projects/:projectID/audit-events", func(c *fiber.Ctx) error { return notImplemented(c, "audit event export") })
+	api.Get("/projects/:projectID/audit-events", s.requireAdminSession, s.listAuditEvents)
 	api.Get("/projects/:projectID/delivery/status", func(c *fiber.Ctx) error { return notImplemented(c, "landing delivery status") })
 	api.Post("/projects/:projectID/preview-tokens", func(c *fiber.Ctx) error { return notImplemented(c, "preview token creation") })
 }
@@ -137,6 +137,10 @@ type loginRequest struct {
 }
 
 type reauthenticationRequest struct {
+	Password string `json:"password"`
+}
+
+type invitationAcceptanceRequest struct {
 	Password string `json:"password"`
 }
 
@@ -181,6 +185,16 @@ type projectPatchRequest struct {
 	PublisherName       *string   `json:"publisherName"`
 	PublisherURL        *string   `json:"publisherUrl"`
 	DefaultRobotsPolicy *string   `json:"defaultRobotsPolicy"`
+}
+
+type memberInvitationRequest struct {
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	ExpiresAt string `json:"expiresAt"`
+}
+
+type memberPatchRequest struct {
+	Role string `json:"role"`
 }
 
 type articleRequest struct {
@@ -282,6 +296,25 @@ func (s *Server) currentUser(c *fiber.Ctx) error {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminUser]{Data: user})
+}
+
+func (s *Server) acceptInvitation(c *fiber.Ctx) error {
+	var input invitationAcceptanceRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid invitation", "The invitation is invalid, expired, or already used")
+	}
+	acceptance, err := s.store.AcceptProjectInvitation(c.UserContext(), c.Params("token"), input.Password)
+	if err != nil {
+		if errors.Is(err, store.ErrValidation) {
+			return problem(c, fiber.StatusBadRequest, "Invalid password", err.Error())
+		}
+		if errors.Is(err, store.ErrInvalidInvitation) {
+			return problem(c, fiber.StatusBadRequest, "Invalid invitation", "The invitation is invalid, expired, or already used")
+		}
+		s.logger.Error("accept invitation", "error", err)
+		return problem(c, fiber.StatusInternalServerError, "Could not accept invitation", "")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.ProjectInvitationAcceptance]{Data: acceptance})
 }
 
 func (s *Server) reauthenticate(c *fiber.Ctx) error {
@@ -450,6 +483,115 @@ func (s *Server) deleteProject(c *fiber.Ctx) error {
 		return s.adminMutationError(c, err, "Could not delete project")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (s *Server) listProjectMembers(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	members, err := s.store.ListProjectMembers(c.UserContext(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
+	if err != nil {
+		return s.adminReadError(c, err, "Project not found", "Could not list project members")
+	}
+	nextCursor := ""
+	if len(members) > limit {
+		members = members[:limit]
+		nextCursor = members[len(members)-1].UserID
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.AdminProjectMember]{
+		Data: members,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
+	})
+}
+
+func (s *Server) inviteProjectMember(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input memberInvitationRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	invitation, err := s.store.InviteProjectMember(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		input.toStoreInput(),
+		recentlyReauthenticated(c),
+	)
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not invite project member")
+	}
+	return writeJSON(c, fiber.StatusCreated, Envelope[store.ProjectMemberInvitation]{Data: invitation})
+}
+
+func (s *Server) updateProjectMemberRole(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input memberPatchRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	member, err := s.store.UpdateProjectMemberRole(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("userID"),
+		input.toStorePatch(),
+		recentlyReauthenticated(c),
+	)
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not update project member")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminProjectMember]{Data: member})
+}
+
+func (s *Server) removeProjectMember(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	if err := s.store.RemoveProjectMember(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("userID"),
+		recentlyReauthenticated(c),
+	); err != nil {
+		return s.adminMutationError(c, err, "Could not remove project member")
+	}
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (s *Server) listAuditEvents(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	cursor, err := decodeCursor[store.AuditCursor](c.Query("cursor"))
+	if err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
+	}
+	events, err := s.store.ListAuditEventsForUser(c.UserContext(), user.ID, c.Params("projectID"), cursor, limit+1)
+	if err != nil {
+		return s.adminReadError(c, err, "Project not found", "Could not list audit events")
+	}
+	nextCursor := ""
+	if len(events) > limit {
+		events = events[:limit]
+		last := events[len(events)-1]
+		nextCursor = encodeCursor(store.AuditCursor{CreatedAt: last.CreatedAt, ID: last.ID})
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.AuditEvent]{
+		Data: events,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
+	})
 }
 
 func (s *Server) listProjectAPIKeys(c *fiber.Ctx) error {
@@ -752,20 +894,31 @@ func (s *Server) requireAdminCSRF(c *fiber.Ctx) error {
 }
 
 func (s *Server) requireRecentReauthentication(c *fiber.Ctx) error {
-	session, ok := c.Locals(adminSessionContextKey).(store.Session)
-	if !ok {
+	if _, ok := c.Locals(adminSessionContextKey).(store.Session); !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	reauthenticatedAt := parseDatabaseTime(session.ReauthenticatedAt)
-	if reauthenticatedAt.IsZero() || time.Since(reauthenticatedAt) > reauthenticationWindow {
+	if !recentlyReauthenticated(c) {
 		return problem(
 			c,
 			fiber.StatusForbidden,
 			"Recent reauthentication required",
-			"Confirm your current password to manage API keys",
+			"Confirm your current password to continue",
 		)
 	}
 	return c.Next()
+}
+
+func recentlyReauthenticated(c *fiber.Ctx) bool {
+	session, ok := c.Locals(adminSessionContextKey).(store.Session)
+	if !ok {
+		return false
+	}
+	reauthenticatedAt := parseDatabaseTime(session.ReauthenticatedAt)
+	if reauthenticatedAt.IsZero() {
+		return false
+	}
+	age := time.Since(reauthenticatedAt)
+	return age >= 0 && age <= reauthenticationWindow
 }
 
 func (s *Server) adminReadError(c *fiber.Ctx, err error, notFoundTitle, internalTitle string) error {
@@ -789,6 +942,8 @@ func (s *Server) adminMutationError(c *fiber.Ctx, err error, internalTitle strin
 		return problem(c, fiber.StatusBadRequest, "Invalid request", err.Error())
 	case errors.Is(err, store.ErrInvalidWorkflow):
 		return problem(c, fiber.StatusConflict, "Invalid workflow transition", err.Error())
+	case errors.Is(err, store.ErrRecentReauthentication):
+		return problem(c, fiber.StatusForbidden, "Recent reauthentication required", "Confirm your current password to continue")
 	case errors.Is(err, store.ErrProjectHasContent):
 		return problem(c, fiber.StatusConflict, "Project cannot be deleted", "Resolve retained content before deleting this project")
 	default:
@@ -923,6 +1078,18 @@ func (input projectPatchRequest) toStorePatch() store.ProjectPatch {
 		PublisherURL:        input.PublisherURL,
 		DefaultRobotsPolicy: input.DefaultRobotsPolicy,
 	}
+}
+
+func (input memberInvitationRequest) toStoreInput() store.ProjectMemberInviteInput {
+	return store.ProjectMemberInviteInput{
+		Email:     input.Email,
+		Role:      input.Role,
+		ExpiresAt: input.ExpiresAt,
+	}
+}
+
+func (input memberPatchRequest) toStorePatch() store.ProjectMemberPatch {
+	return store.ProjectMemberPatch{Role: input.Role}
 }
 
 func (input articleRequest) toStoreInput() store.ArticleInput {
