@@ -217,6 +217,38 @@ type APIKeyInput struct {
 	ExpiresAt   string
 }
 
+type AuthorInput struct {
+	Slug             string
+	DisplayName      string
+	ShortBio         string
+	FullBio          string
+	PhotoAssetID     string
+	JobTitle         string
+	Organization     string
+	Credentials      []string
+	Expertise        []string
+	ProfileURL       string
+	ExternalProfiles []string
+	SameAs           []string
+	Status           string
+}
+
+type AuthorPatch struct {
+	Slug             *string
+	DisplayName      *string
+	ShortBio         *string
+	FullBio          *string
+	PhotoAssetID     *string
+	JobTitle         *string
+	Organization     *string
+	Credentials      *[]string
+	Expertise        *[]string
+	ProfileURL       *string
+	ExternalProfiles *[]string
+	SameAs           *[]string
+	Status           *string
+}
+
 var defaultPublishedReadScopes = []string{
 	"content:published:read",
 	"taxonomy:published:read",
@@ -761,6 +793,226 @@ func (s *Store) ListAuditEventsForUser(ctx context.Context, actorUserID, project
 		events = append(events, event)
 	}
 	return events, rows.Err()
+}
+
+func (s *Store) ListAuthorsForUser(ctx context.Context, actorUserID, projectID string) ([]Author, error) {
+	if _, err := s.projectRole(ctx, actorUserID, projectID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+authorColumns+`
+		FROM authors
+		WHERE project_id = ?
+		ORDER BY display_name, id
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var authors []Author
+	for rows.Next() {
+		author, err := scanAuthor(rows)
+		if err != nil {
+			return nil, err
+		}
+		authors = append(authors, author)
+	}
+	return authors, rows.Err()
+}
+
+func (s *Store) CreateAuthor(ctx context.Context, actorUserID, projectID string, input AuthorInput) (Author, error) {
+	if err := s.requireAuthorManage(ctx, actorUserID, projectID); err != nil {
+		return Author{}, err
+	}
+	input = applyAuthorDefaults(input)
+	if err := validateAuthorInput(input); err != nil {
+		return Author{}, err
+	}
+	authorID, err := security.RandomID("auth")
+	if err != nil {
+		return Author{}, err
+	}
+	credentialsJSON, expertiseJSON, externalProfilesJSON, sameAsJSON, err := authorJSONFields(input)
+	if err != nil {
+		return Author{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Author{}, err
+	}
+	defer tx.Rollback()
+
+	status, err := projectStatus(ctx, tx, projectID)
+	if err != nil {
+		return Author{}, err
+	}
+	if status != "active" {
+		return Author{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	if err := validateAuthorPhotoAsset(ctx, tx, projectID, input.PhotoAssetID); err != nil {
+		return Author{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO authors(
+		  id, project_id, slug, display_name, short_bio, full_bio,
+		  photo_asset_id, job_title, organization, credentials_json,
+		  expertise_json, profile_url, external_profiles_json, same_as_json, status
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, authorID, projectID, input.Slug, input.DisplayName, nullIfEmpty(input.ShortBio),
+		nullIfEmpty(input.FullBio), nullIfEmpty(input.PhotoAssetID), nullIfEmpty(input.JobTitle),
+		nullIfEmpty(input.Organization), credentialsJSON, expertiseJSON, nullIfEmpty(input.ProfileURL),
+		externalProfilesJSON, sameAsJSON, input.Status); err != nil {
+		return Author{}, err
+	}
+	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+		return Author{}, err
+	}
+	if err := insertAuthorOutbox(ctx, tx, projectID, authorID, "author.created", input); err != nil {
+		return Author{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "author.create", "author", authorID, "success", nil); err != nil {
+		return Author{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Author{}, err
+	}
+	return s.getAuthorByID(ctx, projectID, authorID)
+}
+
+func (s *Store) UpdateAuthor(ctx context.Context, actorUserID, projectID, authorID string, patch AuthorPatch) (Author, error) {
+	if err := s.requireAuthorManage(ctx, actorUserID, projectID); err != nil {
+		return Author{}, err
+	}
+	current, err := s.getAuthorByID(ctx, projectID, authorID)
+	if err != nil {
+		return Author{}, err
+	}
+	next := AuthorInput{
+		Slug:             current.Slug,
+		DisplayName:      current.DisplayName,
+		ShortBio:         current.ShortBio,
+		FullBio:          current.FullBio,
+		PhotoAssetID:     current.PhotoAssetID,
+		JobTitle:         current.JobTitle,
+		Organization:     current.Organization,
+		Credentials:      current.Credentials,
+		Expertise:        current.Expertise,
+		ProfileURL:       current.ProfileURL,
+		ExternalProfiles: current.ExternalProfiles,
+		SameAs:           current.SameAs,
+		Status:           current.Status,
+	}
+	if patch.Slug != nil {
+		next.Slug = *patch.Slug
+	}
+	if patch.DisplayName != nil {
+		next.DisplayName = *patch.DisplayName
+	}
+	if patch.ShortBio != nil {
+		next.ShortBio = *patch.ShortBio
+	}
+	if patch.FullBio != nil {
+		next.FullBio = *patch.FullBio
+	}
+	if patch.PhotoAssetID != nil {
+		next.PhotoAssetID = *patch.PhotoAssetID
+	}
+	if patch.JobTitle != nil {
+		next.JobTitle = *patch.JobTitle
+	}
+	if patch.Organization != nil {
+		next.Organization = *patch.Organization
+	}
+	if patch.Credentials != nil {
+		next.Credentials = *patch.Credentials
+	}
+	if patch.Expertise != nil {
+		next.Expertise = *patch.Expertise
+	}
+	if patch.ProfileURL != nil {
+		next.ProfileURL = *patch.ProfileURL
+	}
+	if patch.ExternalProfiles != nil {
+		next.ExternalProfiles = *patch.ExternalProfiles
+	}
+	if patch.SameAs != nil {
+		next.SameAs = *patch.SameAs
+	}
+	if patch.Status != nil {
+		next.Status = strings.ToLower(strings.TrimSpace(*patch.Status))
+		if next.Status == "" {
+			return Author{}, fmt.Errorf("%w: author status is required", ErrValidation)
+		}
+	}
+	next = applyAuthorDefaults(next)
+	if err := validateAuthorInput(next); err != nil {
+		return Author{}, err
+	}
+	credentialsJSON, expertiseJSON, externalProfilesJSON, sameAsJSON, err := authorJSONFields(next)
+	if err != nil {
+		return Author{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Author{}, err
+	}
+	defer tx.Rollback()
+
+	status, err := projectStatus(ctx, tx, projectID)
+	if err != nil {
+		return Author{}, err
+	}
+	if status != "active" {
+		return Author{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	if err := validateAuthorPhotoAsset(ctx, tx, projectID, next.PhotoAssetID); err != nil {
+		return Author{}, err
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE authors
+		SET slug = ?,
+		    display_name = ?,
+		    short_bio = ?,
+		    full_bio = ?,
+		    photo_asset_id = ?,
+		    job_title = ?,
+		    organization = ?,
+		    credentials_json = ?,
+		    expertise_json = ?,
+		    profile_url = ?,
+		    external_profiles_json = ?,
+		    same_as_json = ?,
+		    status = ?,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND id = ?
+	`, next.Slug, next.DisplayName, nullIfEmpty(next.ShortBio), nullIfEmpty(next.FullBio),
+		nullIfEmpty(next.PhotoAssetID), nullIfEmpty(next.JobTitle), nullIfEmpty(next.Organization),
+		credentialsJSON, expertiseJSON, nullIfEmpty(next.ProfileURL), externalProfilesJSON,
+		sameAsJSON, next.Status, projectID, authorID)
+	if err != nil {
+		return Author{}, err
+	}
+	if changed, err := result.RowsAffected(); err != nil {
+		return Author{}, err
+	} else if changed != 1 {
+		return Author{}, sql.ErrNoRows
+	}
+	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+		return Author{}, err
+	}
+	if err := insertAuthorOutbox(ctx, tx, projectID, authorID, "author.updated", next); err != nil {
+		return Author{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "author.update", "author", authorID, "success", nil); err != nil {
+		return Author{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Author{}, err
+	}
+	return s.getAuthorByID(ctx, projectID, authorID)
 }
 
 func (s *Store) ListProjectMembers(ctx context.Context, actorUserID, projectID, cursor string, limit int) ([]AdminProjectMember, error) {
@@ -1424,6 +1676,17 @@ func (s *Store) requireProjectManagement(ctx context.Context, userID, projectID 
 	return ErrForbidden
 }
 
+func (s *Store) requireAuthorManage(ctx context.Context, userID, projectID string) error {
+	role, err := s.projectRole(ctx, userID, projectID)
+	if err != nil {
+		return err
+	}
+	if role == "project_owner" || role == "project_admin" || role == "editor" {
+		return nil
+	}
+	return ErrForbidden
+}
+
 func (s *Store) requireProjectOwner(ctx context.Context, userID, projectID string) error {
 	role, err := s.projectRole(ctx, userID, projectID)
 	if err != nil {
@@ -1576,6 +1839,15 @@ func getProjectMemberTx(ctx context.Context, tx *sql.Tx, projectID, userID strin
 		WHERE membership.project_id = ? AND membership.user_id = ?
 	`, projectID, userID)
 	return scanProjectMember(row)
+}
+
+func (s *Store) getAuthorByID(ctx context.Context, projectID, authorID string) (Author, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT `+authorColumns+`
+		FROM authors
+		WHERE project_id = ? AND id = ?
+	`, projectID, authorID)
+	return scanAuthor(row)
 }
 
 func ensureWorkspace(ctx context.Context, tx *sql.Tx, slug, name string) (string, error) {
@@ -1740,6 +2012,109 @@ func validateAPIKeyInput(input APIKeyInput) error {
 		}
 	}
 	return nil
+}
+
+func applyAuthorDefaults(input AuthorInput) AuthorInput {
+	input.Slug = slugify(input.Slug)
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	if input.Slug == "" {
+		input.Slug = slugify(input.DisplayName)
+	}
+	input.ShortBio = strings.TrimSpace(input.ShortBio)
+	input.FullBio = strings.TrimSpace(input.FullBio)
+	input.PhotoAssetID = strings.TrimSpace(input.PhotoAssetID)
+	input.JobTitle = strings.TrimSpace(input.JobTitle)
+	input.Organization = strings.TrimSpace(input.Organization)
+	input.Credentials = cleanStringSlice(input.Credentials)
+	input.Expertise = cleanStringSlice(input.Expertise)
+	input.ProfileURL = strings.TrimSpace(input.ProfileURL)
+	input.ExternalProfiles = cleanStringSlice(input.ExternalProfiles)
+	input.SameAs = cleanStringSlice(input.SameAs)
+	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
+	if input.Status == "" {
+		input.Status = "active"
+	}
+	return input
+}
+
+func validateAuthorInput(input AuthorInput) error {
+	if input.DisplayName == "" {
+		return fmt.Errorf("%w: displayName is required", ErrValidation)
+	}
+	if input.Slug == "" {
+		return fmt.Errorf("%w: author slug is required", ErrValidation)
+	}
+	if input.Status != "active" && input.Status != "inactive" {
+		return fmt.Errorf("%w: unsupported author status", ErrValidation)
+	}
+	for _, value := range append(append([]string{}, input.ExternalProfiles...), input.SameAs...) {
+		if !hasHTTPScheme(value) {
+			return fmt.Errorf("%w: author profile links must use http or https", ErrValidation)
+		}
+	}
+	if input.ProfileURL != "" && !hasHTTPScheme(input.ProfileURL) {
+		return fmt.Errorf("%w: profileUrl must use http or https", ErrValidation)
+	}
+	return nil
+}
+
+func authorJSONFields(input AuthorInput) (credentialsJSON, expertiseJSON, externalProfilesJSON, sameAsJSON string, err error) {
+	if credentialsJSON, err = jsonString(input.Credentials); err != nil {
+		return "", "", "", "", err
+	}
+	if expertiseJSON, err = jsonString(input.Expertise); err != nil {
+		return "", "", "", "", err
+	}
+	if externalProfilesJSON, err = jsonString(input.ExternalProfiles); err != nil {
+		return "", "", "", "", err
+	}
+	if sameAsJSON, err = jsonString(input.SameAs); err != nil {
+		return "", "", "", "", err
+	}
+	return credentialsJSON, expertiseJSON, externalProfilesJSON, sameAsJSON, nil
+}
+
+func validateAuthorPhotoAsset(ctx context.Context, tx *sql.Tx, projectID, photoAssetID string) error {
+	if photoAssetID == "" {
+		return nil
+	}
+	var exists int
+	err := tx.QueryRowContext(ctx, `
+		SELECT 1
+		FROM assets
+		WHERE project_id = ? AND id = ?
+	`, projectID, photoAssetID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: photoAssetId must reference an asset in this project", ErrValidation)
+	}
+	return err
+}
+
+func insertAuthorOutbox(ctx context.Context, tx *sql.Tx, projectID, authorID, eventType string, author AuthorInput) error {
+	payload, err := json.Marshal(map[string]string{
+		"project_id": projectID,
+		"author_id":  authorID,
+		"slug":       author.Slug,
+		"status":     author.Status,
+	})
+	if err != nil {
+		return err
+	}
+	eventID, err := security.RandomID("event")
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO outbox_events(
+		  id, project_id, event_type, aggregate_type, aggregate_id,
+		  payload_json, idempotency_key
+		) VALUES (?, ?, ?, 'author', ?, ?, ?)
+	`, eventID, projectID, eventType, authorID, string(payload), fmt.Sprintf("%s:%s:%s", eventType, authorID, eventID))
+	return err
+}
+
+func hasHTTPScheme(value string) bool {
+	return strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://")
 }
 
 func applyProjectMemberInviteDefaults(input ProjectMemberInviteInput) ProjectMemberInviteInput {

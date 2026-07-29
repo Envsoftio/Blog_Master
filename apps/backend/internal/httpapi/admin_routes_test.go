@@ -985,6 +985,219 @@ func TestWriterCannotManageProjectAPIKeys(t *testing.T) {
 	}
 }
 
+func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"authors","name":"Authors Project"}`)
+	if _, err := db.Exec(`
+		INSERT INTO assets(
+		  id, project_id, object_key, filename, mime_type, byte_size, created_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, "asset-priya", project.ID, "authors/priya.jpg", "priya.jpg", "image/jpeg", 1024, login.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	author := createTestAuthor(t, server, login, project.ID, `{
+		"displayName":"Priya Shah",
+		"slug":"Priya Shah",
+		"shortBio":"Search strategist",
+		"fullBio":"Priya leads evidence-backed search programs.",
+		"photoAssetId":"asset-priya",
+		"jobTitle":"Principal SEO",
+		"organization":"Example Co",
+		"credentials":["MBA","MBA","Technical SEO"],
+		"expertise":["Search","Content"],
+		"profileUrl":"https://example.test/authors/priya",
+		"externalProfiles":["https://www.linkedin.com/in/priya"],
+		"sameAs":["https://example.test/team/priya"]
+	}`)
+	if author.Slug != "priya-shah" {
+		t.Fatalf("expected normalized author slug, got %q", author.Slug)
+	}
+	if author.Status != "active" {
+		t.Fatalf("expected active author, got %q", author.Status)
+	}
+	if len(author.Credentials) != 2 {
+		t.Fatalf("expected credentials to be cleaned and de-duplicated, got %#v", author.Credentials)
+	}
+	if author.PhotoAssetID != "asset-priya" {
+		t.Fatalf("expected author photo asset to round-trip, got %q", author.PhotoAssetID)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/authors", nil)
+	addCookies(listRequest, login.cookies)
+	listResponse := mustTest(t, server, listRequest)
+	if listResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected author list 200, got %d: %s", listResponse.StatusCode, readBody(t, listResponse))
+	}
+	var list ListEnvelope[store.Author]
+	decodeJSONResponse(t, listResponse, &list)
+	if len(list.Data) != 1 || list.Data[0].ID != author.ID {
+		t.Fatalf("expected author list to include created author, got %#v", list.Data)
+	}
+
+	publishedRequest := httptest.NewRequest(http.MethodGet, "/content/v1/authors", nil)
+	publishedRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	publishedResponse := mustTest(t, server, publishedRequest)
+	if publishedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected published author list 200, got %d: %s", publishedResponse.StatusCode, readBody(t, publishedResponse))
+	}
+	var published ListEnvelope[store.Author]
+	decodeJSONResponse(t, publishedResponse, &published)
+	if len(published.Data) != 1 ||
+		published.Data[0].ProfileURL != "https://example.test/authors/priya" ||
+		published.Data[0].PhotoAssetID != "asset-priya" {
+		t.Fatalf("expected active author in content API, got %#v", published.Data)
+	}
+
+	patchRequest := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+project.ID+"/authors/"+author.ID,
+		`{"displayName":"Priya S.","photoAssetId":"","status":"inactive","sameAs":["https://example.test/people/priya"]}`,
+		login,
+	)
+	patchResponse := mustTest(t, server, patchRequest)
+	if patchResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected author update 200, got %d: %s", patchResponse.StatusCode, readBody(t, patchResponse))
+	}
+	var patched Envelope[store.Author]
+	decodeJSONResponse(t, patchResponse, &patched)
+	if patched.Data.DisplayName != "Priya S." || patched.Data.Status != "inactive" || patched.Data.PhotoAssetID != "" {
+		t.Fatalf("expected patched inactive author, got %#v", patched.Data)
+	}
+
+	inactivePublishedRequest := httptest.NewRequest(http.MethodGet, "/content/v1/authors", nil)
+	inactivePublishedRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	inactivePublishedResponse := mustTest(t, server, inactivePublishedRequest)
+	if inactivePublishedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected published author list after inactivation 200, got %d", inactivePublishedResponse.StatusCode)
+	}
+	var inactivePublished ListEnvelope[store.Author]
+	decodeJSONResponse(t, inactivePublishedResponse, &inactivePublished)
+	if len(inactivePublished.Data) != 0 {
+		t.Fatalf("expected inactive authors to be hidden from content API, got %#v", inactivePublished.Data)
+	}
+
+	adminListAfterInactive := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/authors", nil)
+	addCookies(adminListAfterInactive, login.cookies)
+	adminListAfterInactiveResponse := mustTest(t, server, adminListAfterInactive)
+	if adminListAfterInactiveResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected admin author list after inactivation 200, got %d", adminListAfterInactiveResponse.StatusCode)
+	}
+	var adminInactiveList ListEnvelope[store.Author]
+	decodeJSONResponse(t, adminListAfterInactiveResponse, &adminInactiveList)
+	if len(adminInactiveList.Data) != 1 || adminInactiveList.Data[0].Status != "inactive" {
+		t.Fatalf("expected admin list to include inactive author, got %#v", adminInactiveList.Data)
+	}
+
+	changesRequest := httptest.NewRequest(http.MethodGet, "/content/v1/changes", nil)
+	changesRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	changesResponse := mustTest(t, server, changesRequest)
+	if changesResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected changes list 200, got %d: %s", changesResponse.StatusCode, readBody(t, changesResponse))
+	}
+	var changes ListEnvelope[store.ChangeRecord]
+	decodeJSONResponse(t, changesResponse, &changes)
+	changeTypes := map[string]bool{}
+	for _, change := range changes.Data {
+		if change.AggregateID == author.ID {
+			changeTypes[change.Type] = true
+		}
+	}
+	if !changeTypes["author.created"] || !changeTypes["author.updated"] {
+		t.Fatalf("expected author create and update change events, got %#v", changes.Data)
+	}
+
+	var contentGeneration int64
+	if err := db.QueryRow(`
+		SELECT content_generation
+		FROM projects
+		WHERE id = ?
+	`, project.ID).Scan(&contentGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if contentGeneration != 3 {
+		t.Fatalf("expected author writes to advance content generation to 3, got %d", contentGeneration)
+	}
+
+	var auditCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ?
+		  AND target_id = ?
+		  AND action IN ('author.create', 'author.update')
+	`, project.ID, author.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 2 {
+		t.Fatalf("expected author create and update audit events, got %d", auditCount)
+	}
+}
+
+func TestAuthorManagementAuthorizationAndCrossProjectScoping(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerALogin := seedAndLogin(t, server, db, "owner-a@example.test", "owner a correct password")
+	ownerBLogin := seedAndLogin(t, server, db, "owner-b@example.test", "owner b correct password")
+	writerLogin := seedAndLogin(t, server, db, "writer@example.test", "writer correct password")
+	projectA := createTestProject(t, server, ownerALogin, `{"slug":"authors-a","name":"Authors A"}`)
+	projectB := createTestProject(t, server, ownerBLogin, `{"slug":"authors-b","name":"Authors B"}`)
+	if _, err := db.Exec(`
+		INSERT INTO assets(
+		  id, project_id, object_key, filename, mime_type, byte_size, created_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, "asset-project-b", projectB.ID, "authors/project-b.jpg", "project-b.jpg", "image/jpeg", 1024, ownerBLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, projectA.ID, writerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+	authorB := createTestAuthor(t, server, ownerBLogin, projectB.ID, `{"displayName":"Project B Author"}`)
+
+	writerList := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projectA.ID+"/authors", nil)
+	addCookies(writerList, writerLogin.cookies)
+	writerListResponse := mustTest(t, server, writerList)
+	if writerListResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected writer author list 200, got %d: %s", writerListResponse.StatusCode, readBody(t, writerListResponse))
+	}
+
+	writerCreate := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectA.ID+"/authors",
+		`{"displayName":"Writer Managed"}`,
+		writerLogin,
+	)
+	writerCreateResponse := mustTest(t, server, writerCreate)
+	if writerCreateResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer author creation to fail with 403, got %d: %s", writerCreateResponse.StatusCode, readBody(t, writerCreateResponse))
+	}
+
+	crossProjectPhoto := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectA.ID+"/authors",
+		`{"displayName":"Wrong Photo","photoAssetId":"asset-project-b"}`,
+		ownerALogin,
+	)
+	crossProjectPhotoResponse := mustTest(t, server, crossProjectPhoto)
+	if crossProjectPhotoResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected cross-project photo asset to fail with 400, got %d: %s", crossProjectPhotoResponse.StatusCode, readBody(t, crossProjectPhotoResponse))
+	}
+
+	crossProjectPatch := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+projectB.ID+"/authors/"+authorB.ID,
+		`{"displayName":"Leaked"}`,
+		ownerALogin,
+	)
+	crossProjectPatchResponse := mustTest(t, server, crossProjectPatch)
+	if crossProjectPatchResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project author update to return 404, got %d: %s", crossProjectPatchResponse.StatusCode, readBody(t, crossProjectPatchResponse))
+	}
+}
+
 func TestProjectAPIKeyMutationsRequireRecentReauthentication(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	password := "correct horse battery staple"
@@ -1288,6 +1501,21 @@ func createTestCategory(t *testing.T, server *Server, login adminLoginResult, pr
 		t.Fatalf("expected create category 201, got %d: %s", response.StatusCode, readBody(t, response))
 	}
 	var payload Envelope[store.TaxonomyTerm]
+	decodeJSONResponse(t, response, &payload)
+	return payload.Data
+}
+
+func createTestAuthor(t *testing.T, server *Server, login adminLoginResult, projectID, body string) store.Author {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/authors", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", login.csrfToken)
+	addCookies(request, login.cookies)
+	response := mustTest(t, server, request)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("expected create author 201, got %d: %s", response.StatusCode, readBody(t, response))
+	}
+	var payload Envelope[store.Author]
 	decodeJSONResponse(t, response, &payload)
 	return payload.Data
 }

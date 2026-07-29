@@ -77,8 +77,9 @@ func (s *Server) registerAdminRoutes() {
 	api.Patch("/projects/:projectID/categories/:termID", func(c *fiber.Ctx) error { return notImplemented(c, "category update") })
 	api.Get("/projects/:projectID/tags", s.requireAdminSession, s.listAdminTags)
 	api.Post("/projects/:projectID/tags", s.requireAdminSession, s.requireAdminCSRF, s.createTag)
-	api.Get("/projects/:projectID/authors", func(c *fiber.Ctx) error { return notImplemented(c, "author management") })
-	api.Post("/projects/:projectID/authors", func(c *fiber.Ctx) error { return notImplemented(c, "author creation") })
+	api.Get("/projects/:projectID/authors", s.requireAdminSession, s.listAdminAuthors)
+	api.Post("/projects/:projectID/authors", s.requireAdminSession, s.requireAdminCSRF, s.createAuthor)
+	api.Patch("/projects/:projectID/authors/:authorID", s.requireAdminSession, s.requireAdminCSRF, s.updateAuthor)
 	api.Get("/projects/:projectID/series", func(c *fiber.Ctx) error { return notImplemented(c, "series management") })
 	api.Post("/projects/:projectID/series", func(c *fiber.Ctx) error { return notImplemented(c, "series creation") })
 
@@ -246,6 +247,38 @@ type termRequest struct {
 	Description string `json:"description"`
 	ParentID    string `json:"parentId"`
 	Indexable   *bool  `json:"indexable"`
+}
+
+type authorRequest struct {
+	Slug             string   `json:"slug"`
+	DisplayName      string   `json:"displayName"`
+	ShortBio         string   `json:"shortBio"`
+	FullBio          string   `json:"fullBio"`
+	PhotoAssetID     string   `json:"photoAssetId"`
+	JobTitle         string   `json:"jobTitle"`
+	Organization     string   `json:"organization"`
+	Credentials      []string `json:"credentials"`
+	Expertise        []string `json:"expertise"`
+	ProfileURL       string   `json:"profileUrl"`
+	ExternalProfiles []string `json:"externalProfiles"`
+	SameAs           []string `json:"sameAs"`
+	Status           string   `json:"status"`
+}
+
+type authorPatchRequest struct {
+	Slug             *string   `json:"slug"`
+	DisplayName      *string   `json:"displayName"`
+	ShortBio         *string   `json:"shortBio"`
+	FullBio          *string   `json:"fullBio"`
+	PhotoAssetID     *string   `json:"photoAssetId"`
+	JobTitle         *string   `json:"jobTitle"`
+	Organization     *string   `json:"organization"`
+	Credentials      *[]string `json:"credentials"`
+	Expertise        *[]string `json:"expertise"`
+	ProfileURL       *string   `json:"profileUrl"`
+	ExternalProfiles *[]string `json:"externalProfiles"`
+	SameAs           *[]string `json:"sameAs"`
+	Status           *string   `json:"status"`
 }
 
 func (s *Server) login(c *fiber.Ctx) error {
@@ -858,6 +891,57 @@ func (s *Server) createAdminTerm(c *fiber.Ctx, termType string) error {
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.TaxonomyTerm]{Data: term})
 }
 
+func (s *Server) listAdminAuthors(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	authors, err := s.store.ListAuthorsForUser(c.UserContext(), user.ID, c.Params("projectID"))
+	if err != nil {
+		return s.adminReadError(c, err, "Project not found", "Could not list authors")
+	}
+	page, next, pageErr := paginateByID(authors, c.Query("cursor"), boundedLimit(c.Query("limit", "50"), 100), func(author store.Author) string { return author.ID })
+	if pageErr != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.Author]{
+		Data: page,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: len(page), NextCursor: next},
+	})
+}
+
+func (s *Server) createAuthor(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input authorRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	author, err := s.store.CreateAuthor(c.UserContext(), user.ID, c.Params("projectID"), input.toStoreInput())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not create author")
+	}
+	return writeJSON(c, fiber.StatusCreated, Envelope[store.Author]{Data: author})
+}
+
+func (s *Server) updateAuthor(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input authorPatchRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	author, err := s.store.UpdateAuthor(c.UserContext(), user.ID, c.Params("projectID"), c.Params("authorID"), input.toStorePatch())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not update author")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.Author]{Data: author})
+}
+
 func (s *Server) requireAdminSession(c *fiber.Ctx) error {
 	rawSession := c.Cookies(sessionCookieName)
 	if rawSession == "" {
@@ -1160,6 +1244,42 @@ func (input termRequest) toStoreInput() store.TermInput {
 		Description: input.Description,
 		ParentID:    input.ParentID,
 		Indexable:   indexable,
+	}
+}
+
+func (input authorRequest) toStoreInput() store.AuthorInput {
+	return store.AuthorInput{
+		Slug:             input.Slug,
+		DisplayName:      input.DisplayName,
+		ShortBio:         input.ShortBio,
+		FullBio:          input.FullBio,
+		PhotoAssetID:     input.PhotoAssetID,
+		JobTitle:         input.JobTitle,
+		Organization:     input.Organization,
+		Credentials:      input.Credentials,
+		Expertise:        input.Expertise,
+		ProfileURL:       input.ProfileURL,
+		ExternalProfiles: input.ExternalProfiles,
+		SameAs:           input.SameAs,
+		Status:           input.Status,
+	}
+}
+
+func (input authorPatchRequest) toStorePatch() store.AuthorPatch {
+	return store.AuthorPatch{
+		Slug:             input.Slug,
+		DisplayName:      input.DisplayName,
+		ShortBio:         input.ShortBio,
+		FullBio:          input.FullBio,
+		PhotoAssetID:     input.PhotoAssetID,
+		JobTitle:         input.JobTitle,
+		Organization:     input.Organization,
+		Credentials:      input.Credentials,
+		Expertise:        input.Expertise,
+		ProfileURL:       input.ProfileURL,
+		ExternalProfiles: input.ExternalProfiles,
+		SameAs:           input.SameAs,
+		Status:           input.Status,
 	}
 }
 

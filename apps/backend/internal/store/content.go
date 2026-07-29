@@ -355,7 +355,7 @@ func scanTerm(row rowScanner) (TaxonomyTerm, error) {
 
 func (s *Store) ListAuthors(ctx context.Context, projectID string) ([]Author, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, slug, display_name, COALESCE(short_bio, ''), COALESCE(full_bio, ''), COALESCE(job_title, ''), COALESCE(organization, '')
+		SELECT `+authorColumns+`
 		FROM authors
 		WHERE project_id = ? AND status = 'active'
 		ORDER BY display_name, id
@@ -378,17 +378,49 @@ func (s *Store) ListAuthors(ctx context.Context, projectID string) ([]Author, er
 
 func (s *Store) GetAuthor(ctx context.Context, projectID, slug string) (Author, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, slug, display_name, COALESCE(short_bio, ''), COALESCE(full_bio, ''), COALESCE(job_title, ''), COALESCE(organization, '')
+		SELECT `+authorColumns+`
 		FROM authors
 		WHERE project_id = ? AND slug = ? AND status = 'active'
 	`, projectID, slug)
 	return scanAuthor(row)
 }
 
+const authorColumns = `
+	id, slug, display_name, COALESCE(short_bio, ''), COALESCE(full_bio, ''),
+	COALESCE(photo_asset_id, ''), COALESCE(job_title, ''), COALESCE(organization, ''),
+	credentials_json, expertise_json, COALESCE(profile_url, ''),
+	external_profiles_json, same_as_json, status, created_at, updated_at
+`
+
 func scanAuthor(row rowScanner) (Author, error) {
 	var author Author
-	err := row.Scan(&author.ID, &author.Slug, &author.DisplayName, &author.ShortBio, &author.FullBio, &author.JobTitle, &author.Organization)
-	return author, err
+	var credentialsJSON, expertiseJSON, externalProfilesJSON, sameAsJSON string
+	err := row.Scan(
+		&author.ID,
+		&author.Slug,
+		&author.DisplayName,
+		&author.ShortBio,
+		&author.FullBio,
+		&author.PhotoAssetID,
+		&author.JobTitle,
+		&author.Organization,
+		&credentialsJSON,
+		&expertiseJSON,
+		&author.ProfileURL,
+		&externalProfilesJSON,
+		&sameAsJSON,
+		&author.Status,
+		&author.CreatedAt,
+		&author.UpdatedAt,
+	)
+	if err != nil {
+		return Author{}, err
+	}
+	decodeInto(credentialsJSON, &author.Credentials)
+	decodeInto(expertiseJSON, &author.Expertise)
+	decodeInto(externalProfilesJSON, &author.ExternalProfiles)
+	decodeInto(sameAsJSON, &author.SameAs)
+	return author, nil
 }
 
 func (s *Store) ListSeries(ctx context.Context, projectID string) ([]Series, error) {

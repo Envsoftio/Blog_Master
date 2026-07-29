@@ -1466,6 +1466,28 @@ paths:
       summary: POST /api/v1/projects/{projectID}/authors
       tags:
         - Administration
+  /api/v1/projects/{projectID}/authors/{authorID}:
+    patch:
+      description: Administrative API route.
+      operationId: patch_api_v1_projects_projectid_authors_authorid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: PATCH /api/v1/projects/{projectID}/authors/{authorID}
+      tags:
+        - Administration
   /api/v1/projects/{projectID}/categories:
     get:
       description: Administrative API route.

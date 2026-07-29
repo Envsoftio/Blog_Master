@@ -22,6 +22,9 @@ var invitationRevocationMigration string
 //go:embed migrations/0004_audit_event_ids.sql
 var auditEventIDsMigration string
 
+//go:embed migrations/0005_author_photo_asset_guard.sql
+var authorPhotoAssetGuardMigration string
+
 type migration struct {
 	version    string
 	statements string
@@ -62,6 +65,7 @@ func Migrate(db *sql.DB) error {
 		{version: "0002_session_reauthentication", statements: sessionReauthenticationMigration},
 		{version: "0003_invitation_revocation", statements: invitationRevocationMigration},
 		{version: "0004_audit_event_ids", statements: auditEventIDsMigration},
+		{version: "0005_author_photo_asset_guard", statements: authorPhotoAssetGuardMigration},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {

@@ -65,13 +65,22 @@ type TaxonomyTerm struct {
 }
 
 type Author struct {
-	ID           string `json:"id"`
-	Slug         string `json:"slug"`
-	DisplayName  string `json:"displayName"`
-	ShortBio     string `json:"shortBio,omitempty"`
-	FullBio      string `json:"fullBio,omitempty"`
-	JobTitle     string `json:"jobTitle,omitempty"`
-	Organization string `json:"organization,omitempty"`
+	ID               string   `json:"id"`
+	Slug             string   `json:"slug"`
+	DisplayName      string   `json:"displayName"`
+	ShortBio         string   `json:"shortBio,omitempty"`
+	FullBio          string   `json:"fullBio,omitempty"`
+	PhotoAssetID     string   `json:"photoAssetId,omitempty"`
+	JobTitle         string   `json:"jobTitle,omitempty"`
+	Organization     string   `json:"organization,omitempty"`
+	Credentials      []string `json:"credentials,omitempty"`
+	Expertise        []string `json:"expertise,omitempty"`
+	ProfileURL       string   `json:"profileUrl,omitempty"`
+	ExternalProfiles []string `json:"externalProfiles,omitempty"`
+	SameAs           []string `json:"sameAs,omitempty"`
+	Status           string   `json:"status,omitempty"`
+	CreatedAt        string   `json:"createdAt,omitempty"`
+	UpdatedAt        string   `json:"updatedAt,omitempty"`
 }
 
 type Contributor struct {

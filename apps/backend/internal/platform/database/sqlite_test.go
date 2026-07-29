@@ -110,6 +110,45 @@ func TestProjectScopedOperationalForeignKeys(t *testing.T) {
 	`, "foreign key")
 }
 
+func TestAuthorPhotoAssetMustBelongToProject(t *testing.T) {
+	db := testDatabase(t)
+	seedProjects(t, db)
+	if _, err := db.Exec(`
+		INSERT INTO assets(
+		  id, project_id, object_key, filename, mime_type, byte_size, created_by
+		) VALUES
+		  ('asset-a', 'project-a', 'a.jpg', 'a.jpg', 'image/jpeg', 100, 'user'),
+		  ('asset-b', 'project-b', 'b.jpg', 'b.jpg', 'image/jpeg', 100, 'user');
+		INSERT INTO authors(id, project_id, slug, display_name, photo_asset_id)
+		VALUES ('author-a', 'project-a', 'author-a', 'Author A', 'asset-a');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	assertSQLFails(t, db, `
+		INSERT INTO authors(id, project_id, slug, display_name, photo_asset_id)
+		VALUES ('author-cross-project', 'project-a', 'cross-project', 'Cross Project', 'asset-b')
+	`, "same project")
+	assertSQLFails(t, db, `
+		INSERT INTO authors(id, project_id, slug, display_name, photo_asset_id)
+		VALUES ('author-missing', 'project-a', 'missing', 'Missing', 'asset-missing')
+	`, "same project")
+	assertSQLFails(t, db, `
+		UPDATE authors
+		SET photo_asset_id = 'asset-b'
+		WHERE id = 'author-a'
+	`, "same project")
+	assertSQLFails(t, db, `
+		DELETE FROM assets
+		WHERE id = 'asset-a'
+	`, "author photo")
+	assertSQLFails(t, db, `
+		UPDATE assets
+		SET id = 'asset-a-renamed'
+		WHERE id = 'asset-a'
+	`, "author photo")
+}
+
 func TestAuditEventsGenerateLegacyIDsAndRemainAppendOnly(t *testing.T) {
 	db := testDatabase(t)
 	seedProjects(t, db)
