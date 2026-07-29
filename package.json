@@ -1,0 +1,16 @@
+{
+  "name": "seoblog",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.17.0",
+  "description": "Headless multi-project blog CMS and JSON content API",
+  "workspaces": [
+    "apps/admin",
+    "packages/content-client"
+  ],
+  "scripts": {
+    "dev": "task dev",
+    "backend:dev": "task backend:dev",
+    "backend:test": "task backend:test"
+  }
+}

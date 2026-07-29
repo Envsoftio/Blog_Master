@@ -1,0 +1,86 @@
+name: seoblog
+
+services:
+  api:
+    init: true
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    environment:
+      SEOBLOG_ENV: development
+      SEOBLOG_HTTP_ADDR: ":8080"
+      SEOBLOG_DB_PATH: /data/seoblog.db
+      SEOBLOG_DEV_AUTH: "true"
+    volumes:
+      - seoblog_sqlite:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "/app/admincli", "migrate"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      - redis
+
+  worker:
+    init: true
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    command: ["/app/worker"]
+    environment:
+      SEOBLOG_ENV: development
+      SEOBLOG_DB_PATH: /data/seoblog.db
+    volumes:
+      - seoblog_sqlite:/data
+    depends_on:
+      - redis
+
+  admin:
+    init: true
+    build:
+      context: .
+      dockerfile: apps/admin/Dockerfile
+    environment:
+      NUXT_API_BASE_URL: http://api:8080
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      - api
+
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./infra/nginx/dev.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:8088:80"
+    depends_on:
+      - api
+      - admin
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - seoblog_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:1025:1025"
+
+volumes:
+  seoblog_sqlite:
+  seoblog_redis:

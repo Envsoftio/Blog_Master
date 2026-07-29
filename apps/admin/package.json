@@ -1,0 +1,23 @@
+{
+  "name": "@seoblog/admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev --host 0.0.0.0 --port 3000",
+    "build": "nuxt build",
+    "typecheck": "nuxt typecheck",
+    "preview": "node .output/server/index.mjs"
+  },
+  "dependencies": {
+    "@nuxt/ui": "^3.0.0",
+    "nuxt": "^4.0.0",
+    "vue": "^3.5.0",
+    "lucide-vue-next": "^0.468.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0",
+    "vue-tsc": "^3.0.0"
+  }
+}

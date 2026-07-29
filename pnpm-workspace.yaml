@@ -1,0 +1,7 @@
+packages:
+  - apps/admin
+  - packages/content-client
+
+allowBuilds:
+  esbuild: true
+  vue-demi: true

@@ -1,0 +1,1079 @@
+package store
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	htmlpkg "html"
+	"regexp"
+	"strings"
+
+	"seoblog/apps/backend/internal/security"
+)
+
+var (
+	ErrValidation      = errors.New("validation failed")
+	ErrInvalidWorkflow = errors.New("invalid workflow transition")
+)
+
+type AdminRevision struct {
+	ID             string `json:"id"`
+	ProjectID      string `json:"projectId"`
+	ArticleID      string `json:"articleId"`
+	RevisionNumber int64  `json:"revisionNumber"`
+	Title          string `json:"title"`
+	Deck           string `json:"deck,omitempty"`
+	Excerpt        string `json:"excerpt,omitempty"`
+	ShortAnswer    string `json:"shortAnswer,omitempty"`
+	Locale         string `json:"locale"`
+	EditorialState string `json:"editorialState"`
+	ContentHash    string `json:"contentHash"`
+	CreatedAt      string `json:"createdAt"`
+}
+
+type AdminArticle struct {
+	ID               string         `json:"id"`
+	ProjectID        string         `json:"projectId"`
+	ArticleType      string         `json:"articleType"`
+	Slug             string         `json:"slug"`
+	Locale           string         `json:"locale"`
+	Title            string         `json:"title"`
+	EditorialState   string         `json:"editorialState"`
+	PublicationState string         `json:"publicationState"`
+	ScheduledForUTC  string         `json:"scheduledForUtc,omitempty"`
+	PublishedAt      string         `json:"publishedAt,omitempty"`
+	CanonicalURL     string         `json:"canonicalUrl,omitempty"`
+	LatestRevision   *AdminRevision `json:"latestRevision,omitempty"`
+	CreatedAt        string         `json:"createdAt"`
+}
+
+type ArticleInput struct {
+	ArticleType       string
+	Title             string
+	Slug              string
+	Locale            string
+	PrimaryCategoryID string
+	Deck              string
+	Excerpt           string
+	ShortAnswer       string
+	BodyDocument      any
+	HTML              string
+}
+
+type RevisionInput struct {
+	Title             string
+	PrimaryCategoryID string
+	Deck              string
+	Excerpt           string
+	ShortAnswer       string
+	BodyDocument      any
+	HTML              string
+}
+
+type PublicationInput struct {
+	RevisionID      string
+	Slug            string
+	Locale          string
+	CanonicalURL    string
+	ScheduledForUTC string
+}
+
+type TermInput struct {
+	Slug        string
+	Name        string
+	Description string
+	ParentID    string
+	Indexable   bool
+}
+
+type workflowProject struct {
+	ID            string
+	Status        string
+	PrimaryDomain string
+	BlogBasePath  string
+	DefaultLocale string
+}
+
+func (s *Store) ListArticlesForUser(ctx context.Context, userID, projectID, cursor string, limit int) ([]AdminArticle, error) {
+	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+adminArticleColumns+`
+		FROM content_items item
+		JOIN content_revisions revision
+		  ON revision.project_id = item.project_id
+		 AND revision.content_id = item.id
+		 AND revision.revision_number = (
+		    SELECT MAX(inner_revision.revision_number)
+		    FROM content_revisions inner_revision
+		    WHERE inner_revision.project_id = item.project_id
+		      AND inner_revision.content_id = item.id
+		 )
+		LEFT JOIN project_publications publication
+		  ON publication.project_id = item.project_id
+		 AND publication.content_id = item.id
+		 AND publication.locale = revision.locale
+		WHERE item.project_id = ?
+		  AND item.archived_at IS NULL
+		  AND (? = '' OR item.id > ?)
+		ORDER BY item.id
+		LIMIT ?
+	`, projectID, cursor, cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var articles []AdminArticle
+	for rows.Next() {
+		article, err := scanAdminArticle(rows)
+		if err != nil {
+			return nil, err
+		}
+		articles = append(articles, article)
+	}
+	return articles, rows.Err()
+}
+
+func (s *Store) GetArticleForUser(ctx context.Context, userID, projectID, articleID string) (AdminArticle, error) {
+	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
+		return AdminArticle{}, err
+	}
+	row := s.db.QueryRowContext(ctx, `
+		SELECT `+adminArticleColumns+`
+		FROM content_items item
+		JOIN content_revisions revision
+		  ON revision.project_id = item.project_id
+		 AND revision.content_id = item.id
+		 AND revision.revision_number = (
+		    SELECT MAX(inner_revision.revision_number)
+		    FROM content_revisions inner_revision
+		    WHERE inner_revision.project_id = item.project_id
+		      AND inner_revision.content_id = item.id
+		 )
+		LEFT JOIN project_publications publication
+		  ON publication.project_id = item.project_id
+		 AND publication.content_id = item.id
+		 AND publication.locale = revision.locale
+		WHERE item.project_id = ?
+		  AND item.id = ?
+		  AND item.archived_at IS NULL
+	`, projectID, articleID)
+	return scanAdminArticle(row)
+}
+
+func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string, input ArticleInput) (AdminArticle, error) {
+	if err := s.requireContentWrite(ctx, actorUserID, projectID); err != nil {
+		return AdminArticle{}, err
+	}
+	input = applyArticleDefaults(input)
+	if err := validateArticleInput(input); err != nil {
+		return AdminArticle{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	defer tx.Rollback()
+
+	project, err := loadWorkflowProject(ctx, tx, projectID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if project.Status != "active" {
+		return AdminArticle{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	if input.Locale == "" {
+		input.Locale = project.DefaultLocale
+	}
+	category, err := loadCategory(ctx, tx, projectID, input.PrimaryCategoryID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+
+	articleID, err := securityRandomID("art")
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	revisionID, err := securityRandomID("rev")
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	publicationID, err := securityRandomID("pubn")
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	bodyJSON, html, plainText, err := renderRevisionBody(input.BodyDocument, input.HTML, input.Title)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	taxonomyJSON, err := taxonomySnapshotJSON(category)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	seoJSON, err := seoSnapshotJSON(input.Title, input.Excerpt, canonicalURL(project, input.Slug))
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	contentHash, err := revisionContentHash(input.Title, html, bodyJSON, taxonomyJSON, seoJSON)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO content_items(id, project_id, article_type, created_by)
+		VALUES (?, ?, ?, ?)
+	`, articleID, projectID, input.ArticleType, actorUserID); err != nil {
+		return AdminArticle{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO article_taxonomy(project_id, content_id, taxonomy_term_id, is_primary)
+		VALUES (?, ?, ?, 1)
+	`, projectID, articleID, category.ID); err != nil {
+		return AdminArticle{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO content_revisions(
+		  id, project_id, content_id, revision_number, created_by_type, created_by_user_id,
+		  title, deck, excerpt, short_answer, body_document_json, sanitized_html, plain_text,
+		  table_of_contents_json, word_count, reading_time_seconds, locale, taxonomy_snapshot_json,
+		  seo_snapshot_json, content_hash, editorial_state
+		) VALUES (?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, 'draft')
+	`, revisionID, projectID, articleID, actorUserID, input.Title, nullIfEmpty(input.Deck),
+		nullIfEmpty(input.Excerpt), nullIfEmpty(input.ShortAnswer), bodyJSON, html, plainText,
+		wordCount(plainText), readingTimeSeconds(plainText), input.Locale, taxonomyJSON, seoJSON, contentHash); err != nil {
+		return AdminArticle{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO project_publications(
+		  id, project_id, content_id, locale, slug, canonical_url, publication_state
+		) VALUES (?, ?, ?, ?, ?, ?, 'unpublished')
+	`, publicationID, projectID, articleID, input.Locale, input.Slug, canonicalURL(project, input.Slug)); err != nil {
+		return AdminArticle{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
+		VALUES (?, 'user', ?, 'content.create', 'content', ?, 'success', '{}')
+	`, projectID, actorUserID, articleID); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminArticle{}, err
+	}
+	return s.GetArticleForUser(ctx, actorUserID, projectID, articleID)
+}
+
+func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, articleID string, input RevisionInput) (AdminRevision, error) {
+	if err := s.requireContentWrite(ctx, actorUserID, projectID); err != nil {
+		return AdminRevision{}, err
+	}
+	input.Title = strings.TrimSpace(input.Title)
+	if input.Title == "" {
+		return AdminRevision{}, fmt.Errorf("%w: title is required", ErrValidation)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	defer tx.Rollback()
+
+	if _, err := loadArticleType(ctx, tx, projectID, articleID); err != nil {
+		return AdminRevision{}, err
+	}
+	categoryID := strings.TrimSpace(input.PrimaryCategoryID)
+	if categoryID == "" {
+		categoryID, err = loadPrimaryCategoryID(ctx, tx, projectID, articleID)
+		if err != nil {
+			return AdminRevision{}, err
+		}
+	}
+	category, err := loadCategory(ctx, tx, projectID, categoryID)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	if input.PrimaryCategoryID != "" {
+		if err := replacePrimaryCategory(ctx, tx, projectID, articleID, category.ID); err != nil {
+			return AdminRevision{}, err
+		}
+	}
+	nextNumber, err := nextRevisionNumber(ctx, tx, projectID, articleID)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	revisionID, err := securityRandomID("rev")
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	bodyJSON, html, plainText, err := renderRevisionBody(input.BodyDocument, input.HTML, input.Title)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	taxonomyJSON, err := taxonomySnapshotJSON(category)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	seoJSON, err := seoSnapshotJSON(input.Title, input.Excerpt, "")
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	contentHash, err := revisionContentHash(input.Title, html, bodyJSON, taxonomyJSON, seoJSON)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO content_revisions(
+		  id, project_id, content_id, revision_number, created_by_type, created_by_user_id,
+		  title, deck, excerpt, short_answer, body_document_json, sanitized_html, plain_text,
+		  table_of_contents_json, word_count, reading_time_seconds, locale, taxonomy_snapshot_json,
+		  seo_snapshot_json, content_hash, editorial_state
+		) VALUES (?, ?, ?, ?, 'human', ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, COALESCE((
+		  SELECT locale FROM project_publications WHERE project_id = ? AND content_id = ? LIMIT 1
+		), 'en'), ?, ?, ?, 'draft')
+	`, revisionID, projectID, articleID, nextNumber, actorUserID, input.Title, nullIfEmpty(input.Deck),
+		nullIfEmpty(input.Excerpt), nullIfEmpty(input.ShortAnswer), bodyJSON, html, plainText,
+		wordCount(plainText), readingTimeSeconds(plainText), projectID, articleID, taxonomyJSON, seoJSON, contentHash); err != nil {
+		return AdminRevision{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminRevision{}, err
+	}
+	return s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
+}
+
+func (s *Store) SubmitRevision(ctx context.Context, actorUserID, projectID, revisionID string) (AdminRevision, error) {
+	if err := s.requireContentWrite(ctx, actorUserID, projectID); err != nil {
+		return AdminRevision{}, err
+	}
+	return s.setRevisionState(ctx, actorUserID, projectID, revisionID, "in_review", "revision.submit")
+}
+
+func (s *Store) RequestRevisionChanges(ctx context.Context, actorUserID, projectID, revisionID string) (AdminRevision, error) {
+	if err := s.requireContentReview(ctx, actorUserID, projectID); err != nil {
+		return AdminRevision{}, err
+	}
+	return s.setRevisionState(ctx, actorUserID, projectID, revisionID, "changes_requested", "revision.request_changes")
+}
+
+func (s *Store) ApproveRevision(ctx context.Context, actorUserID, projectID, revisionID, note string) (AdminRevision, error) {
+	if err := s.requireContentReview(ctx, actorUserID, projectID); err != nil {
+		return AdminRevision{}, err
+	}
+	revision, err := s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE content_revisions
+		SET editorial_state = 'approved'
+		WHERE project_id = ? AND id = ?
+	`, projectID, revisionID); err != nil {
+		return AdminRevision{}, err
+	}
+	decisionID, err := securityRandomID("appr")
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO approval_decisions(
+		  id, project_id, content_id, revision_id, decision, content_hash, decided_by, note
+		) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?)
+	`, decisionID, projectID, revision.ArticleID, revisionID, revision.ContentHash, actorUserID, nullIfEmpty(note)); err != nil {
+		return AdminRevision{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
+		VALUES (?, 'user', ?, 'revision.approve', 'revision', ?, 'success', '{}')
+	`, projectID, actorUserID, revisionID); err != nil {
+		return AdminRevision{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminRevision{}, err
+	}
+	return s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
+}
+
+func (s *Store) ScheduleArticle(ctx context.Context, actorUserID, projectID, articleID string, input PublicationInput) (AdminArticle, error) {
+	if strings.TrimSpace(input.ScheduledForUTC) == "" {
+		return AdminArticle{}, fmt.Errorf("%w: scheduledForUtc is required", ErrValidation)
+	}
+	return s.setArticlePublication(ctx, actorUserID, projectID, articleID, input, "scheduled")
+}
+
+func (s *Store) PublishArticle(ctx context.Context, actorUserID, projectID, articleID string, input PublicationInput) (AdminArticle, error) {
+	return s.setArticlePublication(ctx, actorUserID, projectID, articleID, input, "published")
+}
+
+func (s *Store) UnpublishArticle(ctx context.Context, actorUserID, projectID, articleID string) (AdminArticle, error) {
+	if err := s.requireContentPublish(ctx, actorUserID, projectID); err != nil {
+		return AdminArticle{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	defer tx.Rollback()
+	publication, err := loadPublication(ctx, tx, projectID, articleID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE project_publications
+		SET publication_state = 'unpublished',
+		    scheduled_for_utc = NULL,
+		    unpublished_at = CURRENT_TIMESTAMP,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND content_id = ?
+	`, projectID, articleID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if affected == 0 {
+		return AdminArticle{}, sql.ErrNoRows
+	}
+	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := insertPublicationOutbox(ctx, tx, projectID, articleID, publication.PublishedRevisionID, "content.unpublished", publication.CanonicalURL, publication.PublicationVersion+1); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminArticle{}, err
+	}
+	return s.GetArticleForUser(ctx, actorUserID, projectID, articleID)
+}
+
+func (s *Store) GetRevisionForUser(ctx context.Context, userID, projectID, revisionID string) (AdminRevision, error) {
+	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
+		return AdminRevision{}, err
+	}
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, project_id, content_id, revision_number, title,
+		       COALESCE(deck, ''), COALESCE(excerpt, ''), COALESCE(short_answer, ''),
+		       locale, editorial_state, content_hash, created_at
+		FROM content_revisions
+		WHERE project_id = ? AND id = ?
+	`, projectID, revisionID)
+	return scanAdminRevision(row)
+}
+
+func (s *Store) ListAdminTerms(ctx context.Context, userID, projectID, termType string) ([]TaxonomyTerm, error) {
+	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	return s.ListTerms(ctx, projectID, termType)
+}
+
+func (s *Store) CreateTerm(ctx context.Context, actorUserID, projectID, termType string, input TermInput) (TaxonomyTerm, error) {
+	if err := s.requireTaxonomyManage(ctx, actorUserID, projectID); err != nil {
+		return TaxonomyTerm{}, err
+	}
+	input.Slug = slugify(input.Slug)
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Slug == "" {
+		return TaxonomyTerm{}, fmt.Errorf("%w: taxonomy slug is required", ErrValidation)
+	}
+	if input.Name == "" {
+		return TaxonomyTerm{}, fmt.Errorf("%w: taxonomy name is required", ErrValidation)
+	}
+	if termType != "category" && termType != "tag" {
+		return TaxonomyTerm{}, fmt.Errorf("%w: unsupported taxonomy type", ErrValidation)
+	}
+	if termType != "category" && input.ParentID != "" {
+		return TaxonomyTerm{}, fmt.Errorf("%w: tags cannot have parents", ErrValidation)
+	}
+	termID, err := securityRandomID("term")
+	if err != nil {
+		return TaxonomyTerm{}, err
+	}
+	indexability := "noindex"
+	if input.Indexable {
+		indexability = "index"
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO taxonomy_terms(id, project_id, type, parent_id, slug, name, description, indexability)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, termID, projectID, termType, nullIfEmpty(input.ParentID), input.Slug, input.Name, nullIfEmpty(input.Description), indexability)
+	if err != nil {
+		return TaxonomyTerm{}, err
+	}
+	return s.GetTerm(ctx, projectID, termType, input.Slug)
+}
+
+func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectID, articleID string, input PublicationInput, state string) (AdminArticle, error) {
+	if err := s.requireContentPublish(ctx, actorUserID, projectID); err != nil {
+		return AdminArticle{}, err
+	}
+	input.Slug = slugify(input.Slug)
+	if input.Slug == "" {
+		return AdminArticle{}, fmt.Errorf("%w: slug is required", ErrValidation)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	defer tx.Rollback()
+
+	project, err := loadWorkflowProject(ctx, tx, projectID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if project.Status != "active" {
+		return AdminArticle{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	articleType, err := loadArticleType(ctx, tx, projectID, articleID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	_ = articleType
+	revision, err := loadRevision(ctx, tx, projectID, articleID, input.RevisionID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if revision.EditorialState != "approved" {
+		return AdminArticle{}, fmt.Errorf("%w: revision must be approved before publication", ErrInvalidWorkflow)
+	}
+	if err := ensurePublishableTaxonomy(ctx, tx, projectID, articleID); err != nil {
+		return AdminArticle{}, err
+	}
+	canonical := strings.TrimSpace(input.CanonicalURL)
+	if canonical == "" {
+		canonical = canonicalURL(project, input.Slug)
+	}
+	publicationID, err := upsertPublication(ctx, tx, projectID, articleID, revision.ID, input.Locale, input.Slug, canonical, input.ScheduledForUTC, state)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if state == "published" {
+		version, err := loadPublicationVersion(ctx, tx, projectID, articleID, input.Locale)
+		if err != nil {
+			return AdminArticle{}, err
+		}
+		if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+			return AdminArticle{}, err
+		}
+		if err := insertPublicationOutbox(ctx, tx, projectID, articleID, revision.ID, "content.published", canonical, version); err != nil {
+			return AdminArticle{}, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
+		VALUES (?, 'user', ?, ?, 'publication', ?, 'success', '{}')
+	`, projectID, actorUserID, "article."+state, publicationID); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminArticle{}, err
+	}
+	return s.GetArticleForUser(ctx, actorUserID, projectID, articleID)
+}
+
+func (s *Store) setRevisionState(ctx context.Context, actorUserID, projectID, revisionID, state, action string) (AdminRevision, error) {
+	revision, err := s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE content_revisions
+		SET editorial_state = ?
+		WHERE project_id = ? AND id = ?
+	`, state, projectID, revisionID)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	_, _ = s.db.ExecContext(ctx, `
+		INSERT INTO audit_events(project_id, actor_type, actor_id, action, target_type, target_id, outcome, metadata_json)
+		VALUES (?, 'user', ?, ?, 'revision', ?, 'success', '{}')
+	`, projectID, actorUserID, action, revision.ID)
+	return s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
+}
+
+func (s *Store) requireContentWrite(ctx context.Context, userID, projectID string) error {
+	role, err := s.projectRole(ctx, userID, projectID)
+	if err != nil {
+		return err
+	}
+	if role == "project_owner" || role == "project_admin" || role == "editor" || role == "writer" {
+		return nil
+	}
+	return ErrForbidden
+}
+
+func (s *Store) requireContentReview(ctx context.Context, userID, projectID string) error {
+	role, err := s.projectRole(ctx, userID, projectID)
+	if err != nil {
+		return err
+	}
+	if role == "project_owner" || role == "project_admin" || role == "editor" || role == "reviewer" {
+		return nil
+	}
+	return ErrForbidden
+}
+
+func (s *Store) requireContentPublish(ctx context.Context, userID, projectID string) error {
+	role, err := s.projectRole(ctx, userID, projectID)
+	if err != nil {
+		return err
+	}
+	if role == "project_owner" || role == "project_admin" || role == "editor" {
+		return nil
+	}
+	return ErrForbidden
+}
+
+func (s *Store) requireTaxonomyManage(ctx context.Context, userID, projectID string) error {
+	role, err := s.projectRole(ctx, userID, projectID)
+	if err != nil {
+		return err
+	}
+	if role == "project_owner" || role == "project_admin" || role == "editor" {
+		return nil
+	}
+	return ErrForbidden
+}
+
+const adminArticleColumns = `
+	item.id, item.project_id, item.article_type,
+	COALESCE(publication.slug, ''), COALESCE(publication.locale, revision.locale),
+	revision.title, revision.editorial_state,
+	COALESCE(publication.publication_state, 'unpublished'),
+	COALESCE(publication.scheduled_for_utc, ''),
+	COALESCE(publication.first_published_at, ''),
+	COALESCE(publication.canonical_url, ''),
+	revision.id, revision.revision_number, revision.title,
+	COALESCE(revision.deck, ''), COALESCE(revision.excerpt, ''),
+	COALESCE(revision.short_answer, ''), revision.locale,
+	revision.editorial_state, revision.content_hash, revision.created_at,
+	item.created_at
+`
+
+func scanAdminArticle(row rowScanner) (AdminArticle, error) {
+	var article AdminArticle
+	revision := AdminRevision{}
+	err := row.Scan(
+		&article.ID,
+		&article.ProjectID,
+		&article.ArticleType,
+		&article.Slug,
+		&article.Locale,
+		&article.Title,
+		&article.EditorialState,
+		&article.PublicationState,
+		&article.ScheduledForUTC,
+		&article.PublishedAt,
+		&article.CanonicalURL,
+		&revision.ID,
+		&revision.RevisionNumber,
+		&revision.Title,
+		&revision.Deck,
+		&revision.Excerpt,
+		&revision.ShortAnswer,
+		&revision.Locale,
+		&revision.EditorialState,
+		&revision.ContentHash,
+		&revision.CreatedAt,
+		&article.CreatedAt,
+	)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	revision.ProjectID = article.ProjectID
+	revision.ArticleID = article.ID
+	article.LatestRevision = &revision
+	return article, nil
+}
+
+func scanAdminRevision(row rowScanner) (AdminRevision, error) {
+	var revision AdminRevision
+	err := row.Scan(
+		&revision.ID,
+		&revision.ProjectID,
+		&revision.ArticleID,
+		&revision.RevisionNumber,
+		&revision.Title,
+		&revision.Deck,
+		&revision.Excerpt,
+		&revision.ShortAnswer,
+		&revision.Locale,
+		&revision.EditorialState,
+		&revision.ContentHash,
+		&revision.CreatedAt,
+	)
+	return revision, err
+}
+
+type publicationRecord struct {
+	ID                  string
+	PublishedRevisionID string
+	CanonicalURL        string
+	PublicationVersion  int64
+}
+
+func loadPublication(ctx context.Context, tx *sql.Tx, projectID, articleID string) (publicationRecord, error) {
+	var publication publicationRecord
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, COALESCE(published_revision_id, ''), canonical_url, publication_version
+		FROM project_publications
+		WHERE project_id = ? AND content_id = ?
+		LIMIT 1
+	`, projectID, articleID).Scan(&publication.ID, &publication.PublishedRevisionID, &publication.CanonicalURL, &publication.PublicationVersion)
+	return publication, err
+}
+
+func loadWorkflowProject(ctx context.Context, tx *sql.Tx, projectID string) (workflowProject, error) {
+	var project workflowProject
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, status, COALESCE(primary_domain, ''), blog_base_path, default_locale
+		FROM projects
+		WHERE id = ?
+	`, projectID).Scan(&project.ID, &project.Status, &project.PrimaryDomain, &project.BlogBasePath, &project.DefaultLocale)
+	return project, err
+}
+
+func loadArticleType(ctx context.Context, tx *sql.Tx, projectID, articleID string) (string, error) {
+	var articleType string
+	err := tx.QueryRowContext(ctx, `
+		SELECT article_type
+		FROM content_items
+		WHERE project_id = ? AND id = ? AND archived_at IS NULL
+	`, projectID, articleID).Scan(&articleType)
+	return articleType, err
+}
+
+func loadRevision(ctx context.Context, tx *sql.Tx, projectID, articleID, revisionID string) (AdminRevision, error) {
+	if strings.TrimSpace(revisionID) == "" {
+		revisionID = latestApprovedRevisionID(ctx, tx, projectID, articleID)
+	}
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, project_id, content_id, revision_number, title,
+		       COALESCE(deck, ''), COALESCE(excerpt, ''), COALESCE(short_answer, ''),
+		       locale, editorial_state, content_hash, created_at
+		FROM content_revisions
+		WHERE project_id = ? AND content_id = ? AND id = ?
+	`, projectID, articleID, revisionID)
+	return scanAdminRevision(row)
+}
+
+func latestApprovedRevisionID(ctx context.Context, tx *sql.Tx, projectID, articleID string) string {
+	var revisionID string
+	_ = tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM content_revisions
+		WHERE project_id = ? AND content_id = ? AND editorial_state = 'approved'
+		ORDER BY revision_number DESC
+		LIMIT 1
+	`, projectID, articleID).Scan(&revisionID)
+	return revisionID
+}
+
+func loadCategory(ctx context.Context, tx *sql.Tx, projectID, categoryID string) (TaxonomyTerm, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, type, slug, name, COALESCE(description, ''), COALESCE(parent_id, ''), indexability
+		FROM taxonomy_terms
+		WHERE project_id = ? AND id = ? AND type = 'category' AND status = 'active'
+	`, projectID, categoryID)
+	return scanTerm(row)
+}
+
+func loadPrimaryCategoryID(ctx context.Context, tx *sql.Tx, projectID, articleID string) (string, error) {
+	var categoryID string
+	err := tx.QueryRowContext(ctx, `
+		SELECT taxonomy_term_id
+		FROM article_taxonomy
+		WHERE project_id = ? AND content_id = ? AND is_primary = 1
+	`, projectID, articleID).Scan(&categoryID)
+	return categoryID, err
+}
+
+func replacePrimaryCategory(ctx context.Context, tx *sql.Tx, projectID, articleID, categoryID string) error {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM article_taxonomy
+		WHERE project_id = ? AND content_id = ? AND is_primary = 1
+	`, projectID, articleID); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO article_taxonomy(project_id, content_id, taxonomy_term_id, is_primary)
+		VALUES (?, ?, ?, 1)
+	`, projectID, articleID, categoryID)
+	return err
+}
+
+func nextRevisionNumber(ctx context.Context, tx *sql.Tx, projectID, articleID string) (int64, error) {
+	var current int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(revision_number), 0)
+		FROM content_revisions
+		WHERE project_id = ? AND content_id = ?
+	`, projectID, articleID).Scan(&current)
+	return current + 1, err
+}
+
+func ensurePublishableTaxonomy(ctx context.Context, tx *sql.Tx, projectID, articleID string) error {
+	var count int
+	err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM article_taxonomy assignment
+		JOIN taxonomy_terms term
+		  ON term.project_id = assignment.project_id
+		 AND term.id = assignment.taxonomy_term_id
+		WHERE assignment.project_id = ?
+		  AND assignment.content_id = ?
+		  AND assignment.is_primary = 1
+		  AND term.type = 'category'
+	`, projectID, articleID).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return fmt.Errorf("%w: article requires exactly one primary category", ErrInvalidWorkflow)
+	}
+	return nil
+}
+
+func upsertPublication(ctx context.Context, tx *sql.Tx, projectID, articleID, revisionID, locale, slug, canonicalURL, scheduledForUTC, state string) (string, error) {
+	if locale == "" {
+		var defaultLocale string
+		if err := tx.QueryRowContext(ctx, `SELECT default_locale FROM projects WHERE id = ?`, projectID).Scan(&defaultLocale); err != nil {
+			return "", err
+		}
+		locale = defaultLocale
+	}
+	publicationID, err := securityRandomID("pubn")
+	if err != nil {
+		return "", err
+	}
+	if state == "scheduled" {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO project_publications(
+			  id, project_id, content_id, locale, slug, canonical_url,
+			  published_revision_id, publication_state, scheduled_for_utc
+			) VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', ?)
+			ON CONFLICT(project_id, content_id, locale) DO UPDATE SET
+			  slug = excluded.slug,
+			  canonical_url = excluded.canonical_url,
+			  published_revision_id = excluded.published_revision_id,
+			  publication_state = 'scheduled',
+			  scheduled_for_utc = excluded.scheduled_for_utc,
+			  updated_at = CURRENT_TIMESTAMP
+		`, publicationID, projectID, articleID, locale, slug, canonicalURL, revisionID, scheduledForUTC)
+	} else {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO project_publications(
+			  id, project_id, content_id, locale, slug, canonical_url,
+			  published_revision_id, publication_state, first_published_at,
+			  materially_modified_at, publication_version
+			) VALUES (?, ?, ?, ?, ?, ?, ?, 'published', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
+			ON CONFLICT(project_id, content_id, locale) DO UPDATE SET
+			  slug = excluded.slug,
+			  canonical_url = excluded.canonical_url,
+			  published_revision_id = excluded.published_revision_id,
+			  publication_state = 'published',
+			  scheduled_for_utc = NULL,
+			  first_published_at = COALESCE(project_publications.first_published_at, CURRENT_TIMESTAMP),
+			  materially_modified_at = CURRENT_TIMESTAMP,
+			  publication_version = project_publications.publication_version + 1,
+			  updated_at = CURRENT_TIMESTAMP
+		`, publicationID, projectID, articleID, locale, slug, canonicalURL, revisionID)
+	}
+	if err != nil {
+		return "", err
+	}
+	var storedID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM project_publications
+		WHERE project_id = ? AND content_id = ? AND locale = ?
+	`, projectID, articleID, locale).Scan(&storedID)
+	return storedID, err
+}
+
+func loadPublicationVersion(ctx context.Context, tx *sql.Tx, projectID, articleID, locale string) (int64, error) {
+	var version int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT publication_version
+		FROM project_publications
+		WHERE project_id = ? AND content_id = ? AND (? = '' OR locale = ?)
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`, projectID, articleID, locale, locale).Scan(&version)
+	return version, err
+}
+
+func incrementProjectGeneration(ctx context.Context, tx *sql.Tx, projectID string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE projects
+		SET content_generation = content_generation + 1,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, projectID)
+	return err
+}
+
+func insertPublicationOutbox(ctx context.Context, tx *sql.Tx, projectID, articleID, revisionID, eventType, canonicalURL string, version int64) error {
+	payload, _ := json.Marshal(map[string]any{
+		"project_id":          projectID,
+		"content_id":          articleID,
+		"revision_id":         revisionID,
+		"publication_version": version,
+		"canonical_url":       canonicalURL,
+	})
+	eventID, err := securityRandomID("event")
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO outbox_events(
+		  id, project_id, event_type, aggregate_type, aggregate_id,
+		  payload_json, idempotency_key
+		) VALUES (?, ?, ?, 'content', ?, ?, ?)
+	`, eventID, projectID, eventType, articleID, string(payload), fmt.Sprintf("%s:%s:%s:%d", eventType, articleID, revisionID, version))
+	return err
+}
+
+func applyArticleDefaults(input ArticleInput) ArticleInput {
+	input.ArticleType = strings.TrimSpace(input.ArticleType)
+	if input.ArticleType == "" {
+		input.ArticleType = "standard"
+	}
+	input.Title = strings.TrimSpace(input.Title)
+	input.Slug = slugify(input.Slug)
+	if input.Slug == "" {
+		input.Slug = slugify(input.Title)
+	}
+	input.Locale = strings.TrimSpace(input.Locale)
+	input.PrimaryCategoryID = strings.TrimSpace(input.PrimaryCategoryID)
+	input.Deck = strings.TrimSpace(input.Deck)
+	input.Excerpt = strings.TrimSpace(input.Excerpt)
+	input.ShortAnswer = strings.TrimSpace(input.ShortAnswer)
+	input.HTML = strings.TrimSpace(input.HTML)
+	return input
+}
+
+func validateArticleInput(input ArticleInput) error {
+	if input.Title == "" {
+		return fmt.Errorf("%w: title is required", ErrValidation)
+	}
+	if input.Slug == "" {
+		return fmt.Errorf("%w: slug is required", ErrValidation)
+	}
+	if input.PrimaryCategoryID == "" {
+		return fmt.Errorf("%w: primaryCategoryId is required", ErrValidation)
+	}
+	switch input.ArticleType {
+	case "standard", "guide", "tutorial", "comparison", "case_study", "research", "listicle", "news_update", "opinion", "reference", "glossary", "release_note":
+		return nil
+	default:
+		return fmt.Errorf("%w: unsupported article type", ErrValidation)
+	}
+}
+
+func renderRevisionBody(document any, html, title string) (string, string, string, error) {
+	if document == nil {
+		document = map[string]any{
+			"type":    "doc",
+			"content": []any{},
+		}
+	}
+	bodyJSONBytes, err := json.Marshal(document)
+	if err != nil {
+		return "", "", "", err
+	}
+	if strings.TrimSpace(html) == "" {
+		html = "<p>" + htmlpkg.EscapeString(title) + "</p>"
+	}
+	plainText := strings.TrimSpace(stripTags(html))
+	return string(bodyJSONBytes), html, plainText, nil
+}
+
+func taxonomySnapshotJSON(primary TaxonomyTerm) (string, error) {
+	raw, err := json.Marshal(PublishedTaxonomy{
+		PrimaryCategory: &primary,
+		Categories:      []TaxonomyTerm{primary},
+		Tags:            []TaxonomyTerm{},
+		Topics:          []TaxonomyTerm{},
+	})
+	return string(raw), err
+}
+
+func seoSnapshotJSON(title, description, canonicalURL string) (string, error) {
+	raw, err := json.Marshal(map[string]any{
+		"title":          title,
+		"description":    description,
+		"canonicalUrl":   canonicalURL,
+		"openGraph":      map[string]any{},
+		"structuredData": []any{},
+		"hreflang":       []any{},
+	})
+	return string(raw), err
+}
+
+func revisionContentHash(title, html, bodyJSON, taxonomyJSON, seoJSON string) (string, error) {
+	raw, err := json.Marshal(map[string]string{
+		"title":    title,
+		"html":     html,
+		"body":     bodyJSON,
+		"taxonomy": taxonomyJSON,
+		"seo":      seoJSON,
+	})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+var tagPattern = regexp.MustCompile(`<[^>]+>`)
+
+func stripTags(value string) string {
+	return tagPattern.ReplaceAllString(value, " ")
+}
+
+func wordCount(value string) int {
+	return len(strings.Fields(value))
+}
+
+func readingTimeSeconds(value string) int {
+	words := wordCount(value)
+	if words == 0 {
+		return 0
+	}
+	seconds := (words * 60) / 225
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
+}
+
+func canonicalURL(project workflowProject, slug string) string {
+	domain := strings.TrimSpace(project.PrimaryDomain)
+	if domain == "" {
+		domain = project.ID + ".invalid"
+	}
+	if !strings.HasPrefix(domain, "http://") && !strings.HasPrefix(domain, "https://") {
+		domain = "https://" + domain
+	}
+	basePath := strings.TrimRight(project.BlogBasePath, "/")
+	if basePath == "" {
+		basePath = "/blog"
+	}
+	return strings.TrimRight(domain, "/") + basePath + "/" + slug
+}
+
+func securityRandomID(prefix string) (string, error) {
+	return security.RandomID(prefix)
+}

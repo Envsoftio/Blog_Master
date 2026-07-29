@@ -1,0 +1,60 @@
+version: "3"
+
+tasks:
+  dev:
+    desc: Start the local development stack
+    cmds:
+      - docker compose up --build
+
+  dev:down:
+    desc: Stop the local development stack and preserve volumes
+    cmds:
+      - docker compose down
+
+  dev:logs:
+    desc: Follow application logs
+    cmds:
+      - docker compose logs --follow api worker admin nginx
+
+  dev:reset:
+    desc: Recreate local development data after explicit confirmation
+    prompt: This removes the local SEO Blog SQLite and Redis volumes. Continue?
+    cmds:
+      - docker compose down --volumes
+      - docker compose up --build
+
+  test:integration:
+    desc: Run integration checks in an isolated Compose project
+    cmds:
+      - docker compose --project-name seoblog-integration config --quiet
+      - task backend:test
+
+  backend:dev:
+    desc: Run the Go API locally
+    dir: apps/backend
+    cmds:
+      - go run ./cmd/api
+
+  backend:worker:
+    desc: Run the Go worker locally
+    dir: apps/backend
+    cmds:
+      - go run ./cmd/worker
+
+  backend:test:
+    desc: Run backend tests
+    dir: apps/backend
+    cmds:
+      - go test ./...
+
+  backend:migrate:
+    desc: Apply backend SQLite migrations
+    dir: apps/backend
+    cmds:
+      - go run ./cmd/admincli migrate
+
+  contracts:generate:
+    desc: Generate the OpenAPI contract from the backend route registry
+    dir: apps/backend
+    cmds:
+      - go run ./cmd/admincli openapi

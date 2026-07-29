@@ -1,0 +1,3469 @@
+components:
+  schemas:
+    ErrorDetail:
+      additionalProperties: false
+      properties:
+        location:
+          description: Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'
+          type: string
+        message:
+          description: Error message text
+          type: string
+        value:
+          description: The value at the given location
+      type: object
+    ErrorModel:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ErrorModel.json
+          format: uri
+          readOnly: true
+          type: string
+        detail:
+          description: A human-readable explanation specific to this occurrence of the problem.
+          examples:
+            - Property foo is required but is missing.
+          type: string
+        errors:
+          description: Optional list of individual error details
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+          type:
+            - array
+            - "null"
+        instance:
+          description: A URI reference that identifies the specific occurrence of the problem.
+          examples:
+            - https://example.com/error-log/abc123
+          format: uri
+          type: string
+        status:
+          description: HTTP status code
+          examples:
+            - 400
+          format: int64
+          type: integer
+        title:
+          description: A short, human-readable summary of the problem type. This value should not change between occurrences of the error.
+          examples:
+            - Bad Request
+          type: string
+        type:
+          default: about:blank
+          description: A URI reference to human-readable documentation for the error.
+          examples:
+            - https://example.com/errors/example
+          format: uri
+          type: string
+      type: object
+    HealthResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/HealthResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        service:
+          type: string
+        status:
+          type: string
+        version:
+          type: string
+      required:
+        - status
+        - service
+        - version
+      type: object
+info:
+  title: SEO Blog CMS API
+  version: 0.1.0
+openapi: 3.1.0
+paths:
+  /:
+    delete:
+      operationId: delete
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: DELETE /
+      tags:
+        - Operations
+    get:
+      operationId: get
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /
+      tags:
+        - Operations
+    options:
+      operationId: options
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: OPTIONS /
+      tags:
+        - Operations
+    patch:
+      operationId: patch
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: PATCH /
+      tags:
+        - Operations
+    post:
+      operationId: post
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: POST /
+      tags:
+        - Operations
+    put:
+      operationId: put
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: PUT /
+      tags:
+        - Operations
+  /api/v1/auth/csrf:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_auth_csrf
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/auth/csrf
+      tags:
+        - Authentication
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_auth_csrf
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/auth/csrf
+      tags:
+        - Authentication
+  /api/v1/auth/forgot-password:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_auth_forgot_password
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/auth/forgot-password
+      tags:
+        - Authentication
+  /api/v1/auth/login:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_auth_login
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/auth/login
+      tags:
+        - Authentication
+  /api/v1/auth/logout:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_auth_logout
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/auth/logout
+      tags:
+        - Authentication
+  /api/v1/auth/me:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_auth_me
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/auth/me
+      tags:
+        - Authentication
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_auth_me
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/auth/me
+      tags:
+        - Authentication
+  /api/v1/auth/reauthenticate:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_auth_reauthenticate
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/auth/reauthenticate
+      tags:
+        - Authentication
+  /api/v1/auth/reset-password:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_auth_reset_password
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/auth/reset-password
+      tags:
+        - Authentication
+  /api/v1/invitations/{token}/accept:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_invitations_token_accept
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/invitations/{token}/accept
+      tags:
+        - Administration
+  /api/v1/projects:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}:
+    delete:
+      description: Administrative API route.
+      operationId: delete_api_v1_projects_projectid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: DELETE /api/v1/projects/{projectID}
+      tags:
+        - Administration
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}
+      tags:
+        - Administration
+    patch:
+      description: Administrative API route.
+      operationId: patch_api_v1_projects_projectid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: PATCH /api/v1/projects/{projectID}
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/ai/jobs:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_ai_jobs
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/ai/jobs
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/ai/jobs/{jobID}:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_ai_jobs_jobid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/ai/jobs/{jobID}
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_ai_jobs_jobid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/ai/jobs/{jobID}
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/ai/jobs/{jobID}/cancel:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_ai_jobs_jobid_cancel
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/ai/jobs/{jobID}/cancel
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/ai/jobs/{jobID}/events:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_ai_jobs_jobid_events
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/ai/jobs/{jobID}/events
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_ai_jobs_jobid_events
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/ai/jobs/{jobID}/events
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/ai/runs:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_ai_runs
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/ai/runs
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_ai_runs
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/ai/runs
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/api-keys:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_api_keys
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/api-keys
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_api_keys
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/api-keys
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_api_keys
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/api-keys
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/api-keys/{keyID}/revoke:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_api_keys_keyid_revoke
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/api-keys/{keyID}/revoke
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/api-keys/{keyID}/rotate:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_api_keys_keyid_rotate
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/api-keys/{keyID}/rotate
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/archive:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_archive
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/archive
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_articles
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/articles
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_articles
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/articles
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_articles
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/articles
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_articles_articleid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/articles/{articleID}
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_articles_articleid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/articles/{articleID}
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}/assignments:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_articles_articleid_assignments
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/articles/{articleID}/assignments
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_articles_articleid_assignments
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/articles/{articleID}/assignments
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_articles_articleid_assignments
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/assignments
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}/comments:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_articles_articleid_comments
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/articles/{articleID}/comments
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_articles_articleid_comments
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/articles/{articleID}/comments
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_articles_articleid_comments
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/comments
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}/copy-to-project:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_articles_articleid_copy_to_project
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/copy-to-project
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}/corrections:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_articles_articleid_corrections
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/articles/{articleID}/corrections
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_articles_articleid_corrections
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/articles/{articleID}/corrections
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_articles_articleid_corrections
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/corrections
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}/disclosures:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_articles_articleid_disclosures
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/articles/{articleID}/disclosures
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_articles_articleid_disclosures
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/articles/{articleID}/disclosures
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_articles_articleid_disclosures
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/disclosures
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}/publish:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_articles_articleid_publish
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/publish
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}/revisions:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_articles_articleid_revisions
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/revisions
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}/rollback:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_articles_articleid_rollback
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/rollback
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}/schedule:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_articles_articleid_schedule
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/schedule
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}/unpublish:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_articles_articleid_unpublish
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/unpublish
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/audit-events:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_audit_events
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/audit-events
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_audit_events
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/audit-events
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/authors:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_authors
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/authors
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_authors
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/authors
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_authors
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/authors
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/categories:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_categories
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/categories
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_categories
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/categories
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_categories
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/categories
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/categories/{termID}:
+    patch:
+      description: Administrative API route.
+      operationId: patch_api_v1_projects_projectid_categories_termid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: PATCH /api/v1/projects/{projectID}/categories/{termID}
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/claims/{claimID}/verify:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_claims_claimid_verify
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/claims/{claimID}/verify
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/comments/{commentID}/reopen:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_comments_commentid_reopen
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/comments/{commentID}/reopen
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/comments/{commentID}/resolve:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_comments_commentid_resolve
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/comments/{commentID}/resolve
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/deletion-impact:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_deletion_impact
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/deletion-impact
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_deletion_impact
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/deletion-impact
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/delivery/status:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_delivery_status
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/delivery/status
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_delivery_status
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/delivery/status
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/evidence-packets:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_evidence_packets
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/evidence-packets
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_evidence_packets
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/evidence-packets
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_evidence_packets
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/evidence-packets
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/evidence-packets/{packetID}/approve:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_evidence_packets_packetid_approve
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/evidence-packets/{packetID}/approve
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/invitations:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_invitations
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/invitations
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/media:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_media
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/media
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_media
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/media
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/media/uploads:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_media_uploads
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/media/uploads
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/media/{assetID}:
+    delete:
+      description: Administrative API route.
+      operationId: delete_api_v1_projects_projectid_media_assetid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: DELETE /api/v1/projects/{projectID}/media/{assetID}
+      tags:
+        - Administration
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_media_assetid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/media/{assetID}
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_media_assetid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/media/{assetID}
+      tags:
+        - Administration
+    patch:
+      description: Administrative API route.
+      operationId: patch_api_v1_projects_projectid_media_assetid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: PATCH /api/v1/projects/{projectID}/media/{assetID}
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/members:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_members
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/members
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_members
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/members
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/members/{userID}:
+    delete:
+      description: Administrative API route.
+      operationId: delete_api_v1_projects_projectid_members_userid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: DELETE /api/v1/projects/{projectID}/members/{userID}
+      tags:
+        - Administration
+    patch:
+      description: Administrative API route.
+      operationId: patch_api_v1_projects_projectid_members_userid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: PATCH /api/v1/projects/{projectID}/members/{userID}
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/preview-tokens:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_preview_tokens
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/preview-tokens
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/quality-checks:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_quality_checks
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/quality-checks
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_quality_checks
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/quality-checks
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/revisions/{revisionID}/approve:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_revisions_revisionid_approve
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/revisions/{revisionID}/approve
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/revisions/{revisionID}/claims:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_revisions_revisionid_claims
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/revisions/{revisionID}/claims
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_revisions_revisionid_claims
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/revisions/{revisionID}/claims
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_revisions_revisionid_claims
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/revisions/{revisionID}/claims
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/revisions/{revisionID}/request-changes:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_revisions_revisionid_request_changes
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/revisions/{revisionID}/request-changes
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/revisions/{revisionID}/submit:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_revisions_revisionid_submit
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/revisions/{revisionID}/submit
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/series:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_series
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/series
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_series
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/series
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_series
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/series
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/sources:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_sources
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/sources
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_sources
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/sources
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_sources
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/sources
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/sources/{sourceID}:
+    patch:
+      description: Administrative API route.
+      operationId: patch_api_v1_projects_projectid_sources_sourceid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: PATCH /api/v1/projects/{projectID}/sources/{sourceID}
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/suspend:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_suspend
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/suspend
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/tags:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_tags
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/tags
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_tags
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/tags
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_tags
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/tags
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/voice-profile:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_voice_profile
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/voice-profile
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_voice_profile
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/voice-profile
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_voice_profile
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/voice-profile
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/webhook-attempts:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_webhook_attempts
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/webhook-attempts
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_webhook_attempts
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/webhook-attempts
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/webhook-attempts/{attemptID}/replay:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_webhook_attempts_attemptid_replay
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/webhook-attempts/{attemptID}/replay
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/webhooks:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_webhooks
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/webhooks
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_webhooks
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: HEAD /api/v1/projects/{projectID}/webhooks
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_webhooks
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/webhooks
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/webhooks/{endpointID}/revoke:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_webhooks_endpointid_revoke
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+        "501":
+          description: Administrative workflow is not implemented yet
+      summary: POST /api/v1/projects/{projectID}/webhooks/{endpointID}/revoke
+      tags:
+        - Administration
+  /content/v1:
+    delete:
+      operationId: delete_content_v1
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: DELETE /content/v1
+      tags:
+        - Content API
+    get:
+      operationId: get_content_v1
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1
+      tags:
+        - Content API
+    options:
+      operationId: options_content_v1
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: OPTIONS /content/v1
+      tags:
+        - Content API
+    patch:
+      operationId: patch_content_v1
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: PATCH /content/v1
+      tags:
+        - Content API
+    post:
+      operationId: post_content_v1
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: POST /content/v1
+      tags:
+        - Content API
+    put:
+      operationId: put_content_v1
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: PUT /content/v1
+      tags:
+        - Content API
+  /content/v1/authors:
+    get:
+      operationId: get_content_v1_authors
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/authors
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_authors
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/authors
+      tags:
+        - Content API
+  /content/v1/authors/{slug}:
+    get:
+      operationId: get_content_v1_authors_slug
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/authors/{slug}
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_authors_slug
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/authors/{slug}
+      tags:
+        - Content API
+  /content/v1/categories:
+    get:
+      operationId: get_content_v1_categories
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/categories
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_categories
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/categories
+      tags:
+        - Content API
+  /content/v1/categories/{slug}:
+    get:
+      operationId: get_content_v1_categories_slug
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/categories/{slug}
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_categories_slug
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/categories/{slug}
+      tags:
+        - Content API
+  /content/v1/changes:
+    get:
+      operationId: get_content_v1_changes
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/changes
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_changes
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/changes
+      tags:
+        - Content API
+  /content/v1/discovery-manifest:
+    get:
+      operationId: get_content_v1_discovery_manifest
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/discovery-manifest
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_discovery_manifest
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/discovery-manifest
+      tags:
+        - Content API
+  /content/v1/feed-data:
+    get:
+      operationId: get_content_v1_feed_data
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/feed-data
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_feed_data
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/feed-data
+      tags:
+        - Content API
+  /content/v1/posts:
+    get:
+      operationId: get_content_v1_posts
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/posts
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_posts
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/posts
+      tags:
+        - Content API
+  /content/v1/posts/by-id/{contentID}:
+    get:
+      operationId: get_content_v1_posts_by_id_contentid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/posts/by-id/{contentID}
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_posts_by_id_contentid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/posts/by-id/{contentID}
+      tags:
+        - Content API
+  /content/v1/posts/{slug}:
+    get:
+      operationId: get_content_v1_posts_slug
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/posts/{slug}
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_posts_slug
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/posts/{slug}
+      tags:
+        - Content API
+  /content/v1/posts/{slug}/related:
+    get:
+      operationId: get_content_v1_posts_slug_related
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/posts/{slug}/related
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_posts_slug_related
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/posts/{slug}/related
+      tags:
+        - Content API
+  /content/v1/redirects:
+    get:
+      operationId: get_content_v1_redirects
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/redirects
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_redirects
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/redirects
+      tags:
+        - Content API
+  /content/v1/series:
+    get:
+      operationId: get_content_v1_series
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/series
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_series
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/series
+      tags:
+        - Content API
+  /content/v1/series/{slug}:
+    get:
+      operationId: get_content_v1_series_slug
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/series/{slug}
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_series_slug
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/series/{slug}
+      tags:
+        - Content API
+  /content/v1/tags:
+    get:
+      operationId: get_content_v1_tags
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/tags
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_tags
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/tags
+      tags:
+        - Content API
+  /content/v1/tags/{slug}:
+    get:
+      operationId: get_content_v1_tags_slug
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/tags/{slug}
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_tags_slug
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/tags/{slug}
+      tags:
+        - Content API
+  /healthz:
+    get:
+      operationId: health
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Service health check
+  /readyz:
+    get:
+      operationId: get_readyz
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /readyz
+      tags:
+        - Operations
+    head:
+      operationId: head_readyz
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /readyz
+      tags:
+        - Operations

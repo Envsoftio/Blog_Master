@@ -1,0 +1,5 @@
+-- Canonical initial schema lives at:
+-- apps/backend/internal/platform/database/migrations/0001_initial.sql
+--
+-- It is embedded into the Go binary so `go run ./cmd/api` can migrate a fresh
+-- SQLite database without an external migration path.

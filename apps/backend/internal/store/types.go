@@ -1,0 +1,113 @@
+package store
+
+type PublishedPost struct {
+	ID            string            `json:"id"`
+	ArticleType   string            `json:"articleType"`
+	Slug          string            `json:"slug"`
+	Locale        string            `json:"locale"`
+	Revision      int64             `json:"revision"`
+	Title         string            `json:"title"`
+	Deck          string            `json:"deck,omitempty"`
+	Excerpt       string            `json:"excerpt,omitempty"`
+	ShortAnswer   string            `json:"shortAnswer,omitempty"`
+	Content       PublishedContent  `json:"content"`
+	Taxonomy      PublishedTaxonomy `json:"taxonomy"`
+	Authors       []Author          `json:"authors"`
+	Contributors  []Contributor     `json:"contributors"`
+	Media         any               `json:"media"`
+	Sources       any               `json:"sources"`
+	Claims        any               `json:"claims"`
+	Disclosures   any               `json:"disclosures"`
+	Corrections   any               `json:"corrections"`
+	SEO           PublishedSEO      `json:"seo"`
+	PublishedAt   string            `json:"publishedAt,omitempty"`
+	ModifiedAt    string            `json:"modifiedAt,omitempty"`
+	ContentHash   string            `json:"-"`
+	PaginationKey string            `json:"-"`
+}
+
+type PublishedContent struct {
+	Format          string `json:"format"`
+	Document        any    `json:"document"`
+	HTML            string `json:"html"`
+	TableOfContents any    `json:"tableOfContents"`
+}
+
+type PublishedTaxonomy struct {
+	PrimaryCategory *TaxonomyTerm  `json:"primaryCategory"`
+	Categories      []TaxonomyTerm `json:"categories"`
+	Tags            []TaxonomyTerm `json:"tags"`
+	Series          *Series        `json:"series,omitempty"`
+	Topics          []TaxonomyTerm `json:"topics"`
+}
+
+type PublishedSEO struct {
+	Title          string `json:"title"`
+	Description    string `json:"description,omitempty"`
+	CanonicalURL   string `json:"canonicalUrl"`
+	Robots         string `json:"robots"`
+	Index          bool   `json:"index"`
+	OpenGraph      any    `json:"openGraph"`
+	StructuredData any    `json:"structuredData"`
+	Hreflang       any    `json:"hreflang"`
+}
+
+type TaxonomyTerm struct {
+	ID          string         `json:"id"`
+	Type        string         `json:"type"`
+	Slug        string         `json:"slug"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	ParentID    string         `json:"parentId,omitempty"`
+	Ancestors   []TaxonomyTerm `json:"ancestors,omitempty"`
+	Children    []TaxonomyTerm `json:"children,omitempty"`
+	Indexable   bool           `json:"indexable"`
+}
+
+type Author struct {
+	ID           string `json:"id"`
+	Slug         string `json:"slug"`
+	DisplayName  string `json:"displayName"`
+	ShortBio     string `json:"shortBio,omitempty"`
+	FullBio      string `json:"fullBio,omitempty"`
+	JobTitle     string `json:"jobTitle,omitempty"`
+	Organization string `json:"organization,omitempty"`
+}
+
+type Contributor struct {
+	Author Author `json:"author"`
+	Role   string `json:"role"`
+}
+
+type Series struct {
+	ID          string `json:"id"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Indexable   bool   `json:"indexable"`
+}
+
+type RelatedPost struct {
+	Post   PublishedPost `json:"post"`
+	Origin string        `json:"origin"`
+}
+
+type RedirectRecord struct {
+	SourcePath string `json:"sourcePath"`
+	TargetPath string `json:"targetPath"`
+	StatusCode int    `json:"statusCode"`
+}
+
+type ChangeRecord struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	AggregateID string `json:"aggregateId"`
+	CreatedAt   string `json:"createdAt"`
+}
+
+type DiscoveryEntry struct {
+	ID           string `json:"id"`
+	Locale       string `json:"locale"`
+	CanonicalURL string `json:"canonicalUrl"`
+	LastModified string `json:"lastModified"`
+}
