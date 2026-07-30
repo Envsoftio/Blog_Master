@@ -74,7 +74,7 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/projects/:projectID/articles/:articleID/schedule", s.requireAdminSession, s.requireAdminCSRF, s.scheduleArticle)
 	api.Post("/projects/:projectID/articles/:articleID/unpublish", s.requireAdminSession, s.requireAdminCSRF, s.unpublishArticle)
 	api.Post("/projects/:projectID/articles/:articleID/rollback", s.requireAdminSession, s.requireAdminCSRF, s.rollbackArticle)
-	api.Post("/projects/:projectID/articles/:articleID/copy-to-project", func(c *fiber.Ctx) error { return notImplemented(c, "article copy to project") })
+	api.Post("/projects/:projectID/articles/:articleID/copy-to-project", s.requireAdminSession, s.requireAdminCSRF, s.copyArticleToProject)
 
 	api.Get("/projects/:projectID/categories", s.requireAdminSession, s.listAdminCategories)
 	api.Post("/projects/:projectID/categories", s.requireAdminSession, s.requireAdminCSRF, s.createCategory)
@@ -242,6 +242,16 @@ type publicationRequest struct {
 type rollbackRequest struct {
 	RevisionID string `json:"revisionId"`
 	Locale     string `json:"locale,omitempty"`
+}
+
+type copyArticleRequest struct {
+	DestinationProjectID string `json:"destinationProjectId"`
+	SourceRevisionID     string `json:"sourceRevisionId"`
+	PrimaryCategoryID    string `json:"primaryCategoryId"`
+	Slug                 string `json:"slug"`
+	Locale               string `json:"locale,omitempty"`
+	CanonicalDecision    string `json:"canonicalDecision"`
+	CanonicalOriginalURL string `json:"canonicalOriginalUrl,omitempty"`
 }
 
 type apiKeyRequest struct {
@@ -950,6 +960,28 @@ func (s *Server) rollbackArticle(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
 }
 
+func (s *Server) copyArticleToProject(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input copyArticleRequest
+	if err := decodeStrictRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
+	}
+	article, err := s.store.CopyArticleToProject(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("articleID"),
+		input.toStoreInput(),
+	)
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not copy article")
+	}
+	return writeJSON(c, fiber.StatusCreated, Envelope[store.AdminArticle]{Data: article})
+}
+
 func (s *Server) listAdminCategories(c *fiber.Ctx) error {
 	return s.listAdminTerms(c, "category")
 }
@@ -1438,6 +1470,18 @@ func (input revisionRequest) toStoreInput() store.RevisionInput {
 		ShortAnswer:       input.ShortAnswer,
 		BodyDocument:      input.BodyDocument,
 		HTML:              input.HTML,
+	}
+}
+
+func (input copyArticleRequest) toStoreInput() store.CopyArticleInput {
+	return store.CopyArticleInput{
+		DestinationProjectID: input.DestinationProjectID,
+		SourceRevisionID:     input.SourceRevisionID,
+		PrimaryCategoryID:    input.PrimaryCategoryID,
+		Slug:                 input.Slug,
+		Locale:               input.Locale,
+		CanonicalDecision:    input.CanonicalDecision,
+		CanonicalOriginalURL: input.CanonicalOriginalURL,
 	}
 }
 

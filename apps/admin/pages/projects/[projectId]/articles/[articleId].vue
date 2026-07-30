@@ -492,6 +492,86 @@
               </button>
             </form>
 
+            <form
+              v-if="copyDestinations.length"
+              class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]"
+              @submit.prevent="copyArticle"
+            >
+              <div class="flex items-start gap-3">
+                <CopyPlus class="mt-1 h-4 w-4 text-[#6b5797]" />
+                <div>
+                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Reuse</p>
+                  <h2 class="mt-1 text-lg font-semibold tracking-normal">Copy to project</h2>
+                </div>
+              </div>
+
+              <label class="block space-y-2">
+                <span class="text-sm font-medium">Destination project</span>
+                <select v-model="copyForm.destinationProjectId" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" required>
+                  <option value="">Select a project</option>
+                  <option v-for="destination in copyDestinations" :key="destination.id" :value="destination.id">
+                    {{ destination.name }}
+                  </option>
+                </select>
+              </label>
+              <label class="block space-y-2">
+                <span class="text-sm font-medium">Source revision</span>
+                <select v-model="copyForm.sourceRevisionId" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" required>
+                  <option v-for="revision in revisions" :key="revision.id" :value="revision.id">
+                    #{{ revision.revisionNumber }} · {{ revision.title }}
+                  </option>
+                </select>
+              </label>
+              <label class="block space-y-2">
+                <span class="text-sm font-medium">Destination category</span>
+                <select
+                  v-model="copyForm.primaryCategoryId"
+                  class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]"
+                  :disabled="loadingCopyCategories || !copyForm.destinationProjectId"
+                  required
+                >
+                  <option value="">{{ loadingCopyCategories ? 'Loading categories…' : 'Select a category' }}</option>
+                  <option v-for="category in copyDestinationCategories" :key="category.id" :value="category.id">
+                    {{ category.name }}
+                  </option>
+                </select>
+              </label>
+              <label class="block space-y-2">
+                <span class="text-sm font-medium">Destination slug</span>
+                <input v-model.trim="copyForm.slug" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
+              </label>
+              <label class="block space-y-2">
+                <span class="text-sm font-medium">Locale</span>
+                <input v-model.trim="copyForm.locale" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
+              </label>
+              <label class="block space-y-2">
+                <span class="text-sm font-medium">Canonical decision</span>
+                <select v-model="copyForm.canonicalDecision" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]">
+                  <option value="material_adaptation">Material adaptation</option>
+                  <option value="canonical_original">Canonical to original</option>
+                </select>
+              </label>
+              <p
+                v-if="copyForm.canonicalDecision === 'canonical_original'"
+                class="rounded-md border border-[#d8d0e8] bg-[#f7f4fc] px-3 py-2 text-xs text-[#5e4b86] dark:border-[#4f4565] dark:bg-[#211d2a] dark:text-[#cbbfe2]"
+              >
+                The canonical URL is resolved by the server from the selected source revision’s locale. It cannot be redirected to another URL.
+              </p>
+              <p class="rounded-md bg-[#f2f5f3] px-3 py-2 text-xs text-[#5d6a61] dark:bg-[#171b18] dark:text-[#aeb8b0]">
+                The destination gets a new unpublished draft and revision history. Choose destination taxonomy; copies containing project-owned body references are blocked until those references are removed or remapped.
+              </p>
+
+              <button
+                class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
+                type="submit"
+                :disabled="copyingArticle || !canCopyArticle"
+              >
+                <LoaderCircle v-if="copyingArticle" class="h-4 w-4 animate-spin" />
+                <CopyPlus v-else class="h-4 w-4" />
+                Create destination draft
+              </button>
+            </form>
+
             <form class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="publishArticle">
               <div class="flex items-start gap-3">
                 <UploadCloud class="mt-1 h-4 w-4 text-[#165a4a]" />
@@ -593,6 +673,7 @@ import {
   ArrowLeft,
   CalendarClock,
   CheckCircle2,
+  CopyPlus,
   FilePenLine,
   GitCompareArrows,
   Hash,
@@ -691,12 +772,15 @@ type ComparisonDiffLine = {
 type AdminArticle = {
   id: string
   projectId: string
+  originProjectId?: string
+  originArticleId?: string
   articleType: string
   slug: string
   locale: string
   title: string
   editorialState: string
   publicationState: string
+  canonicalPolicy: string
   scheduledForUtc?: string
   publishedAt?: string
   canonicalUrl?: string
@@ -739,14 +823,18 @@ const articleID = computed(() => {
 })
 
 const project = ref<AdminProject | null>(null)
+const projects = ref<AdminProject[]>([])
 const article = ref<AdminArticle | null>(null)
 const categories = ref<TaxonomyTerm[]>([])
+const copyDestinationCategories = ref<TaxonomyTerm[]>([])
 const comments = ref<ReviewComment[]>([])
 const revisions = ref<AdminRevisionSummary[]>([])
 const comparisonBefore = ref<AdminRevisionDetail | null>(null)
 const comparisonAfter = ref<AdminRevisionDetail | null>(null)
 const pending = ref(true)
 const creatingRevision = ref(false)
+const copyingArticle = ref(false)
+const loadingCopyCategories = ref(false)
 const creatingComment = ref(false)
 const loadingMoreComments = ref(false)
 const loadingMoreRevisions = ref(false)
@@ -758,6 +846,7 @@ const errorMessage = ref('')
 const successMessage = ref('')
 const commentPending = reactive<Record<string, string>>({})
 let comparisonRequestVersion = 0
+let copyCategoryRequestVersion = 0
 
 const revisionForm = reactive({
   title: '',
@@ -777,6 +866,15 @@ const rollbackForm = reactive({
   revisionId: ''
 })
 
+const copyForm = reactive({
+  destinationProjectId: '',
+  sourceRevisionId: '',
+  primaryCategoryId: '',
+  slug: '',
+  locale: '',
+  canonicalDecision: 'material_adaptation'
+})
+
 const comparisonForm = reactive({
   beforeRevisionId: '',
   afterRevisionId: ''
@@ -790,6 +888,19 @@ const commentForm = reactive({
 
 const scheduleDraft = ref('')
 const canCreateRevision = computed(() => Boolean(revisionForm.title.trim()))
+const copyDestinations = computed(() => projects.value.filter(candidate =>
+  candidate.id !== projectID.value
+  && candidate.status === 'active'
+  && ['project_owner', 'project_admin', 'editor', 'writer'].includes(candidate.role)
+))
+const canCopyArticle = computed(() => Boolean(
+  copyForm.destinationProjectId
+  && copyForm.sourceRevisionId
+  && copyForm.primaryCategoryId
+  && copyForm.slug.trim()
+  && copyForm.locale.trim()
+  && ['canonical_original', 'material_adaptation'].includes(copyForm.canonicalDecision)
+))
 const openCommentCount = computed(() => comments.value.filter(comment => comment.status !== 'resolved').length)
 const approvedRevisions = computed(() => revisions.value.filter(revision => revision.editorialState === 'approved'))
 const canCompareRevisions = computed(() => Boolean(
@@ -854,14 +965,20 @@ watch(
   () => invalidateComparison()
 )
 
+watch(
+  () => copyForm.destinationProjectId,
+  destinationProjectId => loadCopyDestinationCategories(destinationProjectId)
+)
+
 onMounted(refresh)
 
 async function refresh() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, categoryResponse, articleResponse, commentResponse, revisionResponse] = await Promise.all([
+    const [projectResponse, projectListResponse, categoryResponse, articleResponse, commentResponse, revisionResponse] = await Promise.all([
       $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
+      fetchAllCopyProjects(),
       $fetch<APIListEnvelope<TaxonomyTerm>>(`/api/v1/projects/${projectID.value}/categories`, {
         credentials: 'include',
         query: { limit: 100 }
@@ -877,6 +994,7 @@ async function refresh() {
       })
     ])
     project.value = projectResponse.data
+    projects.value = projectListResponse
     categories.value = sortCategories(categoryResponse.data)
     setArticle(articleResponse.data)
     comments.value = commentResponse.data
@@ -887,6 +1005,30 @@ async function refresh() {
   } finally {
     pending.value = false
   }
+}
+
+async function fetchAllCopyProjects() {
+  const allProjects = new Map<string, AdminProject>()
+  const seenCursors = new Set<string>()
+  let cursor = ''
+
+  do {
+    const response = await $fetch<APIListEnvelope<AdminProject>>('/api/v1/projects', {
+      credentials: 'include',
+      query: {
+        limit: 100,
+        ...(cursor ? { cursor } : {})
+      }
+    })
+    for (const candidate of response.data) allProjects.set(candidate.id, candidate)
+
+    const nextCursor = response.meta?.nextCursor || ''
+    if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Project pagination returned a repeated cursor')
+    if (nextCursor) seenCursors.add(nextCursor)
+    cursor = nextCursor
+  } while (cursor)
+
+  return [...allProjects.values()]
 }
 
 async function createRevision() {
@@ -921,6 +1063,81 @@ async function createRevision() {
     errorMessage.value = normalizeAPIError(error, 'Could not create revision.')
   } finally {
     creatingRevision.value = false
+  }
+}
+
+async function copyArticle() {
+  if (!article.value || !canCopyArticle.value) return
+  copyingArticle.value = true
+  clearMessages()
+  try {
+    const csrfToken = await getCSRFToken()
+    const response = await $fetch<APIEnvelope<AdminArticle>>(
+      `/api/v1/projects/${projectID.value}/articles/${article.value.id}/copy-to-project`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': csrfToken },
+        body: {
+          destinationProjectId: copyForm.destinationProjectId,
+          sourceRevisionId: copyForm.sourceRevisionId,
+          primaryCategoryId: copyForm.primaryCategoryId,
+          slug: copyForm.slug,
+          locale: copyForm.locale,
+          canonicalDecision: copyForm.canonicalDecision
+        }
+      }
+    )
+    await navigateTo(`/projects/${response.data.projectId}/articles/${response.data.id}`)
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, 'Could not copy article.')
+  } finally {
+    copyingArticle.value = false
+  }
+}
+
+async function loadCopyDestinationCategories(destinationProjectId: string) {
+  const requestVersion = ++copyCategoryRequestVersion
+  copyDestinationCategories.value = []
+  copyForm.primaryCategoryId = ''
+  if (!destinationProjectId) return
+  loadingCopyCategories.value = true
+  try {
+    const allCategories = new Map<string, TaxonomyTerm>()
+    const seenCursors = new Set<string>()
+    let cursor = ''
+
+    do {
+      const response = await $fetch<APIListEnvelope<TaxonomyTerm>>(
+        `/api/v1/projects/${destinationProjectId}/categories`,
+        {
+          credentials: 'include',
+          query: {
+            limit: 100,
+            ...(cursor ? { cursor } : {})
+          }
+        }
+      )
+      if (requestVersion !== copyCategoryRequestVersion) return
+      for (const category of response.data) allCategories.set(category.id, category)
+
+      const nextCursor = response.meta?.nextCursor || ''
+      if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Category pagination returned a repeated cursor')
+      if (nextCursor) seenCursors.add(nextCursor)
+      cursor = nextCursor
+    } while (cursor)
+
+    if (requestVersion !== copyCategoryRequestVersion) return
+    copyDestinationCategories.value = sortCategories([...allCategories.values()])
+    const destination = projects.value.find(candidate => candidate.id === destinationProjectId)
+    copyForm.locale = destination?.defaultLocale || 'en'
+  } catch (error) {
+    if (requestVersion !== copyCategoryRequestVersion) return
+    errorMessage.value = normalizeAPIError(error, 'Could not load destination categories.')
+  } finally {
+    if (requestVersion === copyCategoryRequestVersion) {
+      loadingCopyCategories.value = false
+    }
   }
 }
 
@@ -1196,6 +1413,9 @@ function setArticle(value: AdminArticle) {
   publicationForm.slug = value.slug
   publicationForm.canonicalUrl = value.canonicalUrl || ''
   revisionForm.title = revisionForm.title || value.title
+  copyForm.sourceRevisionId = copyForm.sourceRevisionId || value.latestRevision?.id || ''
+  copyForm.slug = copyForm.slug || `${value.slug}-copy`
+  copyForm.locale = copyForm.locale || value.locale || project.value?.defaultLocale || 'en'
   commentForm.revisionId = value.latestRevision?.id || ''
   if (!scheduleDraft.value) {
     const scheduledAt = value.scheduledForUtc ? parseBackendUTC(value.scheduledForUtc) : new Date(Date.now() + 15 * 60 * 1000)
@@ -1215,6 +1435,9 @@ function setRevisions(values: AdminRevisionSummary[], nextCursor: string) {
   }
   if (!values.some(revision => revision.id === comparisonForm.afterRevisionId)) {
     comparisonForm.afterRevisionId = latest.id
+  }
+  if (!values.some(revision => revision.id === copyForm.sourceRevisionId)) {
+    copyForm.sourceRevisionId = latest.id
   }
   if (!values.some(revision => revision.id === comparisonForm.beforeRevisionId)) {
     comparisonForm.beforeRevisionId = latest.baseRevisionId || values[1]?.id || ''

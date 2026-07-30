@@ -3,6 +3,8 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -75,6 +77,83 @@ func TestRollbackOpenAPIContract(t *testing.T) {
 	success := operation.Responses["200"]
 	if success == nil || success.Content["application/json"] == nil || success.Content["application/json"].Schema == nil {
 		t.Fatal("expected rollback success response schema")
+	}
+}
+
+func TestCopyArticleOpenAPIContract(t *testing.T) {
+	server, _ := newAdminTestServer(t)
+	assertAdminSessionSecurityScheme(t, server)
+
+	item := server.openAPI.Paths["/api/v1/projects/{projectID}/articles/{articleID}/copy-to-project"]
+	if item == nil || item.Post == nil {
+		t.Fatal("expected copy-to-project POST operation")
+	}
+	operation := item.Post
+	if operation.OperationID != "copyArticleToProject" {
+		t.Fatalf("expected explicit copy operation ID, got %q", operation.OperationID)
+	}
+	if _, ok := operation.Responses["501"]; ok {
+		t.Fatal("implemented copy operation must not advertise 501")
+	}
+	assertAdminSessionSecurity(t, operation)
+	assertRequiredParameter(t, operation, "projectID", "path")
+	assertRequiredParameter(t, operation, "articleID", "path")
+	assertRequiredParameter(t, operation, "X-CSRF-Token", "header")
+	if operation.RequestBody == nil || !operation.RequestBody.Required {
+		t.Fatal("expected required copy request body")
+	}
+	mediaType := operation.RequestBody.Content["application/json"]
+	if mediaType == nil || mediaType.Schema == nil {
+		t.Fatal("expected copy JSON request schema")
+	}
+	requestSchema := resolveContractSchema(t, server, mediaType.Schema)
+	for _, property := range []string{
+		"destinationProjectId",
+		"sourceRevisionId",
+		"primaryCategoryId",
+		"slug",
+		"locale",
+		"canonicalDecision",
+		"canonicalOriginalUrl",
+	} {
+		contractProperty(t, requestSchema, property)
+	}
+	for _, property := range []string{
+		"destinationProjectId",
+		"sourceRevisionId",
+		"primaryCategoryId",
+		"slug",
+		"canonicalDecision",
+	} {
+		if !containsString(requestSchema.Required, property) {
+			t.Fatalf("expected copy property %q to be required", property)
+		}
+	}
+	decisionSchema := contractProperty(t, requestSchema, "canonicalDecision")
+	if !reflect.DeepEqual(decisionSchema.Enum, []any{"canonical_original", "material_adaptation"}) {
+		t.Fatalf("unexpected canonical decision enum %#v", decisionSchema.Enum)
+	}
+	originalURLSchema := contractProperty(t, requestSchema, "canonicalOriginalUrl")
+	if originalURLSchema.Format != "uri" || !strings.Contains(originalURLSchema.Description, "must match") {
+		t.Fatalf("expected source-bound canonical URL documentation, got %#v", originalURLSchema)
+	}
+	assertProblemResponseMediaTypes(t, server, operation, "400", "401", "403", "404", "409", "500")
+	success := operation.Responses["201"]
+	if success == nil || success.Content["application/json"] == nil || success.Content["application/json"].Schema == nil {
+		t.Fatal("expected copy success response schema")
+	}
+	responseEnvelopeSchema := resolveContractSchema(t, server, success.Content["application/json"].Schema)
+	articleSchema := resolveContractSchema(t, server, contractProperty(t, responseEnvelopeSchema, "data"))
+	for _, property := range []string{
+		"id",
+		"projectId",
+		"originProjectId",
+		"originArticleId",
+		"canonicalPolicy",
+		"canonicalUrl",
+		"latestRevision",
+	} {
+		contractProperty(t, articleSchema, property)
 	}
 }
 

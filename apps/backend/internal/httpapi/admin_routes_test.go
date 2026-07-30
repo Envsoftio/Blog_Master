@@ -2548,6 +2548,373 @@ func TestReviewCommentLifecycleAndScoping(t *testing.T) {
 	}
 }
 
+func TestCopyArticleToProjectCreatesIndependentAuditedDraft(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "copy-owner@example.test", "correct horse battery staple")
+	sourceProject := createTestProject(t, server, login, `{"slug":"copy-source","name":"Copy Source","primaryDomain":"source.example.test"}`)
+	destinationProject := createTestProject(t, server, login, `{"slug":"copy-destination","name":"Copy Destination","primaryDomain":"destination.example.test"}`)
+	sourceCategory := createTestCategory(t, server, login, sourceProject.ID, `{"slug":"source","name":"Source"}`)
+	destinationCategory := createTestCategory(t, server, login, destinationProject.ID, `{"slug":"destination","name":"Destination"}`)
+	sourceArticle := createTestArticle(t, server, login, sourceProject.ID, `{
+		"articleType":"guide",
+		"title":"Original draft",
+		"slug":"copy-me",
+		"primaryCategoryId":"`+sourceCategory.ID+`",
+		"html":"<p>Original body</p>"
+	}`)
+	selectedRevision := createTestRevision(t, server, login, sourceProject.ID, sourceArticle.ID, `{
+		"title":"Selected source revision",
+		"deck":"Selected deck",
+		"excerpt":"Selected excerpt",
+		"shortAnswer":"Selected answer",
+		"bodyDocument":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Selected body"}]}]},
+		"html":"<p>Selected body</p>"
+	}`)
+	newerRevision := createTestRevision(t, server, login, sourceProject.ID, sourceArticle.ID, `{
+		"title":"Newer source revision",
+		"html":"<p>Newer body</p>"
+	}`)
+
+	copyRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+sourceProject.ID+"/articles/"+sourceArticle.ID+"/copy-to-project",
+		`{
+			"destinationProjectId":"`+destinationProject.ID+`",
+			"sourceRevisionId":"`+selectedRevision.ID+`",
+			"primaryCategoryId":"`+destinationCategory.ID+`",
+			"slug":"copied-guide",
+			"locale":"en",
+			"canonicalDecision":"canonical_original",
+			"canonicalOriginalUrl":"https://source.example.test/blog/copy-me"
+		}`,
+		login,
+	)
+	copyResponse := mustTest(t, server, copyRequest)
+	if copyResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected copy 201, got %d: %s", copyResponse.StatusCode, readBody(t, copyResponse))
+	}
+	var copied Envelope[store.AdminArticle]
+	decodeJSONResponse(t, copyResponse, &copied)
+	if copied.Data.ID == sourceArticle.ID {
+		t.Fatal("expected a new destination article ID")
+	}
+	if copied.Data.ProjectID != destinationProject.ID ||
+		copied.Data.OriginProjectID != sourceProject.ID ||
+		copied.Data.OriginArticleID != sourceArticle.ID {
+		t.Fatalf("unexpected copied ownership and origin %#v", copied.Data)
+	}
+	if copied.Data.Title != selectedRevision.Title || copied.Data.Title == newerRevision.Title {
+		t.Fatalf("expected exact selected revision to be copied, got title %q", copied.Data.Title)
+	}
+	if copied.Data.EditorialState != "draft" || copied.Data.PublicationState != "unpublished" {
+		t.Fatalf("expected independent unpublished draft, got %#v", copied.Data)
+	}
+	if copied.Data.CanonicalPolicy != "canonical_original" ||
+		copied.Data.CanonicalURL != "https://source.example.test/blog/copy-me" {
+		t.Fatalf("unexpected canonical-original decision %#v", copied.Data)
+	}
+	if copied.Data.LatestRevision == nil || copied.Data.LatestRevision.ID == selectedRevision.ID ||
+		copied.Data.LatestRevision.RevisionNumber != 1 {
+		t.Fatalf("expected independent first revision, got %#v", copied.Data.LatestRevision)
+	}
+
+	var copiedBody, copiedDeck, copiedExcerpt, copiedShortAnswer, baseRevisionID string
+	var copiedRevisionCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM content_revisions
+		WHERE project_id = ? AND content_id = ?
+	`, destinationProject.ID, copied.Data.ID).Scan(&copiedRevisionCount); err != nil {
+		t.Fatal(err)
+	}
+	if copiedRevisionCount != 1 {
+		t.Fatalf("expected one independent destination revision, got %d", copiedRevisionCount)
+	}
+	if err := db.QueryRow(`
+		SELECT sanitized_html, COALESCE(deck, ''), COALESCE(excerpt, ''),
+		       COALESCE(short_answer, ''), COALESCE(base_revision_id, '')
+		FROM content_revisions
+		WHERE project_id = ? AND content_id = ?
+	`, destinationProject.ID, copied.Data.ID).Scan(
+		&copiedBody,
+		&copiedDeck,
+		&copiedExcerpt,
+		&copiedShortAnswer,
+		&baseRevisionID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if copiedBody != "<p>Selected body</p>" ||
+		copiedDeck != "Selected deck" ||
+		copiedExcerpt != "Selected excerpt" ||
+		copiedShortAnswer != "Selected answer" ||
+		baseRevisionID != "" {
+		t.Fatalf("unexpected copied revision data: %q %q %q %q base=%q", copiedBody, copiedDeck, copiedExcerpt, copiedShortAnswer, baseRevisionID)
+	}
+
+	var originProjectID, originArticleID, taxonomyTermID string
+	if err := db.QueryRow(`
+		SELECT origin_project_id, origin_content_id
+		FROM content_items
+		WHERE project_id = ? AND id = ?
+	`, destinationProject.ID, copied.Data.ID).Scan(&originProjectID, &originArticleID); err != nil {
+		t.Fatal(err)
+	}
+	if originProjectID != sourceProject.ID || originArticleID != sourceArticle.ID {
+		t.Fatalf("unexpected stored origin %q/%q", originProjectID, originArticleID)
+	}
+	if err := db.QueryRow(`
+		SELECT taxonomy_term_id
+		FROM article_taxonomy
+		WHERE project_id = ? AND content_id = ? AND is_primary = 1
+	`, destinationProject.ID, copied.Data.ID).Scan(&taxonomyTermID); err != nil {
+		t.Fatal(err)
+	}
+	if taxonomyTermID != destinationCategory.ID {
+		t.Fatalf("expected destination taxonomy %q, got %q", destinationCategory.ID, taxonomyTermID)
+	}
+
+	for _, audit := range []struct {
+		projectID string
+		action    string
+		targetID  string
+	}{
+		{sourceProject.ID, "content.copy_from", sourceArticle.ID},
+		{destinationProject.ID, "content.copy_to", copied.Data.ID},
+	} {
+		var metadataJSON string
+		if err := db.QueryRow(`
+			SELECT metadata_json
+			FROM audit_events
+			WHERE project_id = ? AND action = ? AND target_id = ?
+		`, audit.projectID, audit.action, audit.targetID).Scan(&metadataJSON); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(metadataJSON, `"canonicalDecision":"canonical_original"`) ||
+			!strings.Contains(metadataJSON, selectedRevision.ID) {
+			t.Fatalf("expected origin and canonical decision in audit metadata, got %s", metadataJSON)
+		}
+	}
+
+	createTestRevision(t, server, login, destinationProject.ID, copied.Data.ID, `{
+		"title":"Destination-only adaptation",
+		"html":"<p>Destination-only body</p>"
+	}`)
+	var sourceRevisionCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM content_revisions
+		WHERE project_id = ? AND content_id = ?
+	`, sourceProject.ID, sourceArticle.ID).Scan(&sourceRevisionCount); err != nil {
+		t.Fatal(err)
+	}
+	if sourceRevisionCount != 3 {
+		t.Fatalf("destination edits must not alter source history; got %d source revisions", sourceRevisionCount)
+	}
+
+	adaptationRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+sourceProject.ID+"/articles/"+sourceArticle.ID+"/copy-to-project",
+		`{
+			"destinationProjectId":"`+destinationProject.ID+`",
+			"sourceRevisionId":"`+newerRevision.ID+`",
+			"primaryCategoryId":"`+destinationCategory.ID+`",
+			"slug":"adapted-guide",
+			"canonicalDecision":"material_adaptation"
+		}`,
+		login,
+	)
+	adaptationResponse := mustTest(t, server, adaptationRequest)
+	if adaptationResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected material-adaptation copy 201, got %d: %s", adaptationResponse.StatusCode, readBody(t, adaptationResponse))
+	}
+	var adaptation Envelope[store.AdminArticle]
+	decodeJSONResponse(t, adaptationResponse, &adaptation)
+	if adaptation.Data.CanonicalPolicy != "material_adaptation" ||
+		adaptation.Data.CanonicalURL != "https://destination.example.test/blog/adapted-guide" {
+		t.Fatalf("expected destination self canonical for adaptation, got %#v", adaptation.Data)
+	}
+}
+
+func TestCopyArticleToProjectDerivesCanonicalAndRejectsUnsafeSourceReferences(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "copy-validation-owner@example.test", "correct horse battery staple")
+	sourceProject := createTestProject(t, server, login, `{"slug":"validation-source","name":"Validation Source","primaryDomain":"source-validation.example.test"}`)
+	destinationProject := createTestProject(t, server, login, `{"slug":"validation-destination","name":"Validation Destination","primaryDomain":"destination-validation.example.test"}`)
+	sourceCategory := createTestCategory(t, server, login, sourceProject.ID, `{"slug":"source","name":"Source"}`)
+	destinationCategory := createTestCategory(t, server, login, destinationProject.ID, `{"slug":"destination","name":"Destination"}`)
+	sourceArticle := createTestArticle(t, server, login, sourceProject.ID, `{
+		"title":"Canonical source",
+		"slug":"canonical-source",
+		"primaryCategoryId":"`+sourceCategory.ID+`",
+		"html":"<p>Safe body</p>"
+	}`)
+	copyPath := "/api/v1/projects/" + sourceProject.ID + "/articles/" + sourceArticle.ID + "/copy-to-project"
+	copyBody := func(revisionID, slug, decision, canonicalField string) string {
+		return `{
+			"destinationProjectId":"` + destinationProject.ID + `",
+			"sourceRevisionId":"` + revisionID + `",
+			"primaryCategoryId":"` + destinationCategory.ID + `",
+			"slug":"` + slug + `",
+			"canonicalDecision":"` + decision + `"` + canonicalField + `
+		}`
+	}
+
+	unrelatedCanonical := mustTest(
+		t,
+		server,
+		newMemberMutationRequest(
+			http.MethodPost,
+			copyPath,
+			copyBody(sourceArticle.LatestRevision.ID, "unrelated-canonical", "canonical_original", `,"canonicalOriginalUrl":"https://unrelated.example.test/post"`),
+			login,
+		),
+	)
+	if unrelatedCanonical.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected unrelated canonical to return 400, got %d: %s", unrelatedCanonical.StatusCode, readBody(t, unrelatedCanonical))
+	}
+
+	derivedCanonical := mustTest(
+		t,
+		server,
+		newMemberMutationRequest(
+			http.MethodPost,
+			copyPath,
+			copyBody(sourceArticle.LatestRevision.ID, "derived-canonical", "canonical_original", ""),
+			login,
+		),
+	)
+	if derivedCanonical.StatusCode != http.StatusCreated {
+		t.Fatalf("expected server-derived canonical copy 201, got %d: %s", derivedCanonical.StatusCode, readBody(t, derivedCanonical))
+	}
+	var copied Envelope[store.AdminArticle]
+	decodeJSONResponse(t, derivedCanonical, &copied)
+	if copied.Data.CanonicalURL != "https://source-validation.example.test/blog/canonical-source" {
+		t.Fatalf("expected source canonical to be derived, got %q", copied.Data.CanonicalURL)
+	}
+
+	referencedRevision := createTestRevision(t, server, login, sourceProject.ID, sourceArticle.ID, `{
+		"title":"Body with source asset",
+		"bodyDocument":{
+			"type":"doc",
+			"content":[{
+				"type":"image",
+				"attrs":{"assetId":"asset_source_project"}
+			}]
+		},
+		"html":"<figure data-asset-id=\"asset_source_project\"></figure>"
+	}`)
+	projectScopedReference := mustTest(
+		t,
+		server,
+		newMemberMutationRequest(
+			http.MethodPost,
+			copyPath,
+			copyBody(referencedRevision.ID, "unsafe-reference", "material_adaptation", ""),
+			login,
+		),
+	)
+	if projectScopedReference.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected project-scoped body reference to return 400, got %d: %s", projectScopedReference.StatusCode, readBody(t, projectScopedReference))
+	}
+
+	var destinationArticleCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM content_items
+		WHERE project_id = ?
+	`, destinationProject.ID).Scan(&destinationArticleCount); err != nil {
+		t.Fatal(err)
+	}
+	if destinationArticleCount != 1 {
+		t.Fatalf("expected only the valid derived-canonical copy, got %d destination articles", destinationArticleCount)
+	}
+}
+
+func TestCopyArticleToProjectEnforcesBothProjectPermissionsAndScope(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	owner := seedAndLogin(t, server, db, "copy-scope-owner@example.test", "correct horse battery staple")
+	copier := seedAndLogin(t, server, db, "copy-scope-user@example.test", "another correct horse battery staple")
+	sourceProject := createTestProject(t, server, owner, `{"slug":"scope-source","name":"Scope Source"}`)
+	otherSourceProject := createTestProject(t, server, owner, `{"slug":"other-source","name":"Other Source"}`)
+	destinationProject := createTestProject(t, server, owner, `{"slug":"scope-destination","name":"Scope Destination"}`)
+	sourceCategory := createTestCategory(t, server, owner, sourceProject.ID, `{"slug":"source","name":"Source"}`)
+	otherCategory := createTestCategory(t, server, owner, otherSourceProject.ID, `{"slug":"other","name":"Other"}`)
+	destinationCategory := createTestCategory(t, server, owner, destinationProject.ID, `{"slug":"destination","name":"Destination"}`)
+	sourceArticle := createTestArticle(t, server, owner, sourceProject.ID, `{
+		"title":"Scoped source",
+		"slug":"scoped-source",
+		"primaryCategoryId":"`+sourceCategory.ID+`"
+	}`)
+	otherArticle := createTestArticle(t, server, owner, otherSourceProject.ID, `{
+		"title":"Other source",
+		"slug":"other-source",
+		"primaryCategoryId":"`+otherCategory.ID+`"
+	}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, sourceProject.ID, copier.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	copyBody := func(article store.AdminArticle) string {
+		return `{
+			"destinationProjectId":"` + destinationProject.ID + `",
+			"sourceRevisionId":"` + article.LatestRevision.ID + `",
+			"primaryCategoryId":"` + destinationCategory.ID + `",
+			"slug":"scoped-copy",
+			"canonicalDecision":"material_adaptation"
+		}`
+	}
+	copyPath := "/api/v1/projects/" + sourceProject.ID + "/articles/" + sourceArticle.ID + "/copy-to-project"
+
+	noDestinationAccess := mustTest(t, server, newMemberMutationRequest(http.MethodPost, copyPath, copyBody(sourceArticle), copier))
+	if noDestinationAccess.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected missing destination membership to return 404, got %d: %s", noDestinationAccess.StatusCode, readBody(t, noDestinationAccess))
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'reviewer', 'active', CURRENT_TIMESTAMP)
+	`, destinationProject.ID, copier.userID); err != nil {
+		t.Fatal(err)
+	}
+	reviewerDestination := mustTest(t, server, newMemberMutationRequest(http.MethodPost, copyPath, copyBody(sourceArticle), copier))
+	if reviewerDestination.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected destination reviewer to be denied with 403, got %d: %s", reviewerDestination.StatusCode, readBody(t, reviewerDestination))
+	}
+
+	if _, err := db.Exec(`
+		UPDATE project_memberships SET role = 'writer' WHERE project_id = ? AND user_id = ?
+	`, destinationProject.ID, copier.userID); err != nil {
+		t.Fatal(err)
+	}
+	crossProjectArticle := mustTest(
+		t,
+		server,
+		newMemberMutationRequest(
+			http.MethodPost,
+			"/api/v1/projects/"+sourceProject.ID+"/articles/"+otherArticle.ID+"/copy-to-project",
+			copyBody(otherArticle),
+			copier,
+		),
+	)
+	if crossProjectArticle.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project article/revision lookup to return 404, got %d: %s", crossProjectArticle.StatusCode, readBody(t, crossProjectArticle))
+	}
+
+	if _, err := db.Exec(`
+		UPDATE project_memberships SET status = 'removed' WHERE project_id = ? AND user_id = ?
+	`, sourceProject.ID, copier.userID); err != nil {
+		t.Fatal(err)
+	}
+	noSourceAccess := mustTest(t, server, newMemberMutationRequest(http.MethodPost, copyPath, copyBody(sourceArticle), copier))
+	if noSourceAccess.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected missing source membership to return 404, got %d: %s", noSourceAccess.StatusCode, readBody(t, noSourceAccess))
+	}
+}
+
 type adminLoginResult struct {
 	cookies   []*http.Cookie
 	csrfToken string

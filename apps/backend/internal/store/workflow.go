@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	htmlpkg "html"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -19,6 +20,42 @@ var (
 	ErrValidation      = errors.New("validation failed")
 	ErrInvalidWorkflow = errors.New("invalid workflow transition")
 )
+
+var projectScopedBodyReferenceKeys = map[string]struct{}{
+	"articleid":         {},
+	"articleids":        {},
+	"assetid":           {},
+	"assetids":          {},
+	"authorid":          {},
+	"authorids":         {},
+	"categoryid":        {},
+	"categoryids":       {},
+	"claimid":           {},
+	"claimids":          {},
+	"contentid":         {},
+	"contentids":        {},
+	"ctaid":             {},
+	"ctaids":            {},
+	"mediaid":           {},
+	"mediaids":          {},
+	"projectid":         {},
+	"relatedarticleid":  {},
+	"relatedarticleids": {},
+	"revisionid":        {},
+	"revisionids":       {},
+	"seriesid":          {},
+	"seriesids":         {},
+	"sourceid":          {},
+	"sourceids":         {},
+	"tagid":             {},
+	"tagids":            {},
+	"taxonomytermid":    {},
+	"taxonomytermids":   {},
+	"targetcontentid":   {},
+	"targetcontentids":  {},
+}
+
+var projectScopedHTMLReferencePattern = regexp.MustCompile(`(?i)\bdata-(?:article|asset|author|category|claim|content|cta|media|project|related-article|revision|series|source|tag|taxonomy-term|target-content)-ids?\s*=`)
 
 type AdminRevision struct {
 	ID             string `json:"id"`
@@ -67,12 +104,15 @@ type AdminRevisionDetail struct {
 type AdminArticle struct {
 	ID               string         `json:"id"`
 	ProjectID        string         `json:"projectId"`
+	OriginProjectID  string         `json:"originProjectId,omitempty"`
+	OriginArticleID  string         `json:"originArticleId,omitempty"`
 	ArticleType      string         `json:"articleType"`
 	Slug             string         `json:"slug"`
 	Locale           string         `json:"locale"`
 	Title            string         `json:"title"`
 	EditorialState   string         `json:"editorialState"`
 	PublicationState string         `json:"publicationState"`
+	CanonicalPolicy  string         `json:"canonicalPolicy"`
 	ScheduledForUTC  string         `json:"scheduledForUtc,omitempty"`
 	PublishedAt      string         `json:"publishedAt,omitempty"`
 	CanonicalURL     string         `json:"canonicalUrl,omitempty"`
@@ -115,6 +155,16 @@ type PublicationInput struct {
 type RollbackInput struct {
 	RevisionID string
 	Locale     string
+}
+
+type CopyArticleInput struct {
+	DestinationProjectID string
+	SourceRevisionID     string
+	PrimaryCategoryID    string
+	Slug                 string
+	Locale               string
+	CanonicalDecision    string
+	CanonicalOriginalURL string
 }
 
 type TermInput struct {
@@ -402,6 +452,165 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 		return AdminRevision{}, err
 	}
 	return s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
+}
+
+func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourceProjectID, sourceArticleID string, input CopyArticleInput) (AdminArticle, error) {
+	input = applyCopyArticleDefaults(input)
+	if err := validateCopyArticleInput(sourceProjectID, input); err != nil {
+		return AdminArticle{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	defer tx.Rollback()
+
+	if _, err := projectRoleTx(ctx, tx, actorUserID, sourceProjectID); err != nil {
+		return AdminArticle{}, err
+	}
+	destinationRole, err := projectRoleTx(ctx, tx, actorUserID, input.DestinationProjectID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if !canWriteContent(destinationRole) {
+		return AdminArticle{}, ErrForbidden
+	}
+
+	sourceProject, err := loadWorkflowProject(ctx, tx, sourceProjectID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if sourceProject.Status != "active" {
+		return AdminArticle{}, fmt.Errorf("%w: source project must be active", ErrInvalidWorkflow)
+	}
+	destinationProject, err := loadWorkflowProject(ctx, tx, input.DestinationProjectID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if destinationProject.Status != "active" {
+		return AdminArticle{}, fmt.Errorf("%w: destination project must be active", ErrInvalidWorkflow)
+	}
+	if input.Locale == "" {
+		input.Locale = destinationProject.DefaultLocale
+	}
+	destinationCategory, err := loadCategory(ctx, tx, input.DestinationProjectID, input.PrimaryCategoryID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	source, err := loadCopySourceRevision(ctx, tx, sourceProjectID, sourceArticleID, input.SourceRevisionID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if err := validateCopyBodyReferences(source.BodyDocumentJSON, source.SanitizedHTML, source.MarkdownExport); err != nil {
+		return AdminArticle{}, err
+	}
+	if input.CanonicalDecision == "canonical_original" {
+		if strings.TrimSpace(source.CanonicalURL) == "" {
+			return AdminArticle{}, fmt.Errorf("%w: selected source revision has no canonical URL", ErrInvalidWorkflow)
+		}
+		if input.CanonicalOriginalURL != "" && !canonicalURLsEqual(input.CanonicalOriginalURL, source.CanonicalURL) {
+			return AdminArticle{}, fmt.Errorf("%w: canonicalOriginalUrl must match the selected source revision's canonical URL", ErrValidation)
+		}
+	}
+
+	articleID, err := securityRandomID("art")
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	revisionID, err := securityRandomID("rev")
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	publicationID, err := securityRandomID("pubn")
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	taxonomyJSON, err := taxonomySnapshotJSON(destinationCategory)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	destinationCanonicalURL := canonicalURL(destinationProject, input.Slug)
+	if input.CanonicalDecision == "canonical_original" {
+		destinationCanonicalURL = source.CanonicalURL
+	}
+	seoJSON, err := seoSnapshotJSON(source.Title, source.Excerpt, destinationCanonicalURL)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	contentHash, err := revisionContentHash(source.Title, source.SanitizedHTML, source.BodyDocumentJSON, taxonomyJSON, seoJSON)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO content_items(
+		  id, project_id, article_type, origin_project_id, origin_content_id, created_by
+		) VALUES (?, ?, ?, ?, ?, ?)
+	`, articleID, input.DestinationProjectID, source.ArticleType, sourceProjectID, sourceArticleID, actorUserID); err != nil {
+		return AdminArticle{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO article_taxonomy(project_id, content_id, taxonomy_term_id, is_primary)
+		VALUES (?, ?, ?, 1)
+	`, input.DestinationProjectID, articleID, destinationCategory.ID); err != nil {
+		return AdminArticle{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO content_revisions(
+		  id, project_id, content_id, revision_number, created_by_type, created_by_user_id,
+		  title, alternate_title, deck, excerpt, short_answer, body_document_json,
+		  sanitized_html, plain_text, markdown_export, table_of_contents_json,
+		  word_count, reading_time_seconds, locale, taxonomy_snapshot_json, seo_snapshot_json,
+		  change_summary, content_hash, ai_assistance_level, ai_provenance_summary_json,
+		  editorial_state
+		) VALUES (
+		  ?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft'
+		)
+	`, revisionID, input.DestinationProjectID, articleID, actorUserID,
+		source.Title, nullIfEmpty(source.AlternateTitle), nullIfEmpty(source.Deck),
+		nullIfEmpty(source.Excerpt), nullIfEmpty(source.ShortAnswer), source.BodyDocumentJSON,
+		source.SanitizedHTML, source.PlainText, source.MarkdownExport, source.TableOfContentsJSON,
+		source.WordCount, source.ReadingTimeSeconds, input.Locale, taxonomyJSON, seoJSON,
+		fmt.Sprintf("Copied from %s/%s revision %s", sourceProjectID, sourceArticleID, input.SourceRevisionID),
+		contentHash, source.AIAssistanceLevel, source.AIProvenanceSummaryJSON,
+	); err != nil {
+		return AdminArticle{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO project_publications(
+		  id, project_id, content_id, locale, slug, canonical_url, canonical_policy, publication_state
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 'unpublished')
+	`, publicationID, input.DestinationProjectID, articleID, input.Locale, input.Slug,
+		destinationCanonicalURL, input.CanonicalDecision); err != nil {
+		return AdminArticle{}, err
+	}
+
+	auditMetadata := map[string]string{
+		"sourceProjectId":      sourceProjectID,
+		"sourceArticleId":      sourceArticleID,
+		"sourceRevisionId":     input.SourceRevisionID,
+		"destinationProjectId": input.DestinationProjectID,
+		"destinationArticleId": articleID,
+		"canonicalDecision":    input.CanonicalDecision,
+		"canonicalUrl":         destinationCanonicalURL,
+	}
+	if err := insertAuditEventTx(
+		ctx, tx, sourceProjectID, "user", actorUserID, "content.copy_from",
+		"content", sourceArticleID, "success", auditMetadata,
+	); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := insertAuditEventTx(
+		ctx, tx, input.DestinationProjectID, "user", actorUserID, "content.copy_to",
+		"content", articleID, "success", auditMetadata,
+	); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminArticle{}, err
+	}
+	return s.GetArticleForUser(ctx, actorUserID, input.DestinationProjectID, articleID)
 }
 
 func (s *Store) SubmitRevision(ctx context.Context, actorUserID, projectID, revisionID string) (AdminRevision, error) {
@@ -1089,10 +1298,14 @@ func (s *Store) requireContentWrite(ctx context.Context, userID, projectID strin
 	if err != nil {
 		return err
 	}
-	if role == "project_owner" || role == "project_admin" || role == "editor" || role == "writer" {
+	if canWriteContent(role) {
 		return nil
 	}
 	return ErrForbidden
+}
+
+func canWriteContent(role string) bool {
+	return role == "project_owner" || role == "project_admin" || role == "editor" || role == "writer"
 }
 
 func (s *Store) requireContentReview(ctx context.Context, userID, projectID string) error {
@@ -1168,10 +1381,12 @@ func (s *Store) getSeriesByID(ctx context.Context, projectID, seriesID string) (
 }
 
 const adminArticleColumns = `
-	item.id, item.project_id, item.article_type,
+	item.id, item.project_id, COALESCE(item.origin_project_id, ''),
+	COALESCE(item.origin_content_id, ''), item.article_type,
 	COALESCE(publication.slug, ''), COALESCE(publication.locale, revision.locale),
 	revision.title, revision.editorial_state,
 	COALESCE(publication.publication_state, 'unpublished'),
+	COALESCE(publication.canonical_policy, 'self'),
 	COALESCE(publication.scheduled_for_utc, ''),
 	COALESCE(publication.first_published_at, ''),
 	COALESCE(publication.canonical_url, ''),
@@ -1188,12 +1403,15 @@ func scanAdminArticle(row rowScanner) (AdminArticle, error) {
 	err := row.Scan(
 		&article.ID,
 		&article.ProjectID,
+		&article.OriginProjectID,
+		&article.OriginArticleID,
 		&article.ArticleType,
 		&article.Slug,
 		&article.Locale,
 		&article.Title,
 		&article.EditorialState,
 		&article.PublicationState,
+		&article.CanonicalPolicy,
 		&article.ScheduledForUTC,
 		&article.PublishedAt,
 		&article.CanonicalURL,
@@ -1333,6 +1551,77 @@ type publicationRecord struct {
 	CanonicalURL        string
 	PublicationState    string
 	PublicationVersion  int64
+}
+
+type copySourceRevision struct {
+	ArticleType             string
+	Title                   string
+	AlternateTitle          string
+	Deck                    string
+	Excerpt                 string
+	ShortAnswer             string
+	BodyDocumentJSON        string
+	SanitizedHTML           string
+	PlainText               string
+	MarkdownExport          string
+	TableOfContentsJSON     string
+	WordCount               int64
+	ReadingTimeSeconds      int64
+	CanonicalURL            string
+	AIAssistanceLevel       string
+	AIProvenanceSummaryJSON string
+}
+
+func loadCopySourceRevision(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID,
+	articleID,
+	revisionID string,
+) (copySourceRevision, error) {
+	var revision copySourceRevision
+	err := tx.QueryRowContext(ctx, `
+		SELECT item.article_type, revision.title, COALESCE(revision.alternate_title, ''),
+		       COALESCE(revision.deck, ''), COALESCE(revision.excerpt, ''),
+		       COALESCE(revision.short_answer, ''), revision.body_document_json,
+		       revision.sanitized_html, revision.plain_text, revision.markdown_export,
+		       revision.table_of_contents_json, revision.word_count,
+		       revision.reading_time_seconds, COALESCE((
+		         SELECT publication.canonical_url
+		         FROM project_publications publication
+		         WHERE publication.project_id = revision.project_id
+		           AND publication.content_id = revision.content_id
+		           AND publication.locale = revision.locale
+		         LIMIT 1
+		       ), ''), revision.ai_assistance_level,
+		       revision.ai_provenance_summary_json
+		FROM content_items item
+		JOIN content_revisions revision
+		  ON revision.project_id = item.project_id
+		 AND revision.content_id = item.id
+		WHERE item.project_id = ?
+		  AND item.id = ?
+		  AND item.archived_at IS NULL
+		  AND revision.id = ?
+	`, projectID, articleID, revisionID).Scan(
+		&revision.ArticleType,
+		&revision.Title,
+		&revision.AlternateTitle,
+		&revision.Deck,
+		&revision.Excerpt,
+		&revision.ShortAnswer,
+		&revision.BodyDocumentJSON,
+		&revision.SanitizedHTML,
+		&revision.PlainText,
+		&revision.MarkdownExport,
+		&revision.TableOfContentsJSON,
+		&revision.WordCount,
+		&revision.ReadingTimeSeconds,
+		&revision.CanonicalURL,
+		&revision.AIAssistanceLevel,
+		&revision.AIProvenanceSummaryJSON,
+	)
+	return revision, err
 }
 
 func loadPublication(ctx context.Context, tx *sql.Tx, projectID, articleID string) (publicationRecord, error) {
@@ -1652,6 +1941,137 @@ func applyArticleDefaults(input ArticleInput) ArticleInput {
 	input.ShortAnswer = strings.TrimSpace(input.ShortAnswer)
 	input.HTML = strings.TrimSpace(input.HTML)
 	return input
+}
+
+func applyCopyArticleDefaults(input CopyArticleInput) CopyArticleInput {
+	input.DestinationProjectID = strings.TrimSpace(input.DestinationProjectID)
+	input.SourceRevisionID = strings.TrimSpace(input.SourceRevisionID)
+	input.PrimaryCategoryID = strings.TrimSpace(input.PrimaryCategoryID)
+	input.Slug = slugify(input.Slug)
+	input.Locale = strings.TrimSpace(input.Locale)
+	input.CanonicalDecision = strings.ToLower(strings.TrimSpace(input.CanonicalDecision))
+	input.CanonicalOriginalURL = strings.TrimSpace(input.CanonicalOriginalURL)
+	return input
+}
+
+func validateCopyArticleInput(sourceProjectID string, input CopyArticleInput) error {
+	if input.DestinationProjectID == "" {
+		return fmt.Errorf("%w: destinationProjectId is required", ErrValidation)
+	}
+	if input.DestinationProjectID == sourceProjectID {
+		return fmt.Errorf("%w: destinationProjectId must identify another project", ErrValidation)
+	}
+	if input.SourceRevisionID == "" {
+		return fmt.Errorf("%w: sourceRevisionId is required", ErrValidation)
+	}
+	if input.PrimaryCategoryID == "" {
+		return fmt.Errorf("%w: primaryCategoryId is required", ErrValidation)
+	}
+	if input.Slug == "" {
+		return fmt.Errorf("%w: slug is required", ErrValidation)
+	}
+	switch input.CanonicalDecision {
+	case "canonical_original":
+		if input.CanonicalOriginalURL != "" {
+			if _, err := normalizeCanonicalURL(input.CanonicalOriginalURL); err != nil {
+				return fmt.Errorf("%w: canonicalOriginalUrl must be an absolute HTTP or HTTPS URL for canonical_original", ErrValidation)
+			}
+		}
+	case "material_adaptation":
+		if input.CanonicalOriginalURL != "" {
+			return fmt.Errorf("%w: canonicalOriginalUrl is only allowed for canonical_original", ErrValidation)
+		}
+	default:
+		return fmt.Errorf("%w: canonicalDecision must be canonical_original or material_adaptation", ErrValidation)
+	}
+	return nil
+}
+
+func validateCopyBodyReferences(bodyDocumentJSON, sanitizedHTML, markdownExport string) error {
+	var document any
+	if err := json.Unmarshal([]byte(bodyDocumentJSON), &document); err != nil {
+		return fmt.Errorf("%w: selected source revision has an invalid structured body", ErrInvalidWorkflow)
+	}
+	if reference := findProjectScopedBodyReference(document); reference != "" {
+		return fmt.Errorf(
+			"%w: source revision body contains project-scoped reference %q; remove or remap it before copying",
+			ErrValidation,
+			reference,
+		)
+	}
+	for _, rendered := range []string{sanitizedHTML, markdownExport} {
+		if match := projectScopedHTMLReferencePattern.FindString(rendered); match != "" {
+			return fmt.Errorf(
+				"%w: source revision body contains project-scoped reference %q; remove or remap it before copying",
+				ErrValidation,
+				strings.TrimSpace(match),
+			)
+		}
+	}
+	return nil
+}
+
+func findProjectScopedBodyReference(value any) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			normalizedKey := strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(key))
+			if _, scoped := projectScopedBodyReferenceKeys[normalizedKey]; scoped && hasReferenceValue(child) {
+				return key
+			}
+			if reference := findProjectScopedBodyReference(child); reference != "" {
+				return reference
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if reference := findProjectScopedBodyReference(child); reference != "" {
+				return reference
+			}
+		}
+	}
+	return ""
+}
+
+func hasReferenceValue(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []any:
+		return len(typed) > 0
+	case map[string]any:
+		return len(typed) > 0
+	case nil:
+		return false
+	default:
+		return true
+	}
+}
+
+func canonicalURLsEqual(left, right string) bool {
+	normalizedLeft, leftErr := normalizeCanonicalURL(left)
+	normalizedRight, rightErr := normalizeCanonicalURL(right)
+	return leftErr == nil && rightErr == nil && normalizedLeft == normalizedRight
+}
+
+func normalizeCanonicalURL(raw string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", ErrValidation
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if parsed.Host == "" ||
+		(scheme != "http" && scheme != "https") ||
+		parsed.User != nil ||
+		parsed.Fragment != "" {
+		return "", ErrValidation
+	}
+	parsed.Scheme = scheme
+	parsed.Host = strings.ToLower(parsed.Host)
+	if parsed.Path == "" {
+		parsed.Path = "/"
+	}
+	return parsed.String(), nil
 }
 
 func validateArticleInput(input ArticleInput) error {

@@ -22,6 +22,7 @@ const adminSessionSecuritySchemeName = "adminSession"
 // contract stays complete and available at /openapi.json and /openapi.yaml.
 func documentFiberRoutes(api huma.API, app *fiber.App) {
 	documentRollbackRoute(api)
+	documentCopyArticleRoute(api)
 	documentRevisionHistoryRoutes(api)
 
 	for _, methodRoutes := range app.Stack() {
@@ -347,6 +348,96 @@ func documentRollbackRoute(api huma.API) {
 			"403": problemResponse("Insufficient permission"),
 			"404": problemResponse("Project, article, or revision not found"),
 			"409": problemResponse("Article or revision is not in a rollback-compatible state"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
+}
+
+func documentCopyArticleRoute(api huma.API) {
+	openAPI := api.OpenAPI()
+	documentAdminSessionSecurity(openAPI)
+	registry := openAPI.Components.Schemas
+	requestSchema := registry.Schema(reflect.TypeOf(copyArticleRequest{}), true, "CopyArticleRequest")
+	responseSchema := registry.Schema(reflect.TypeOf(Envelope[store.AdminArticle]{}), true, "CopyArticleResponse")
+	problemSchema := registry.Schema(reflect.TypeOf(Problem{}), true, "Problem")
+	resolvedRequestSchema := requestSchema
+	if requestSchema.Ref != "" {
+		resolvedRequestSchema = registry.SchemaFromRef(requestSchema.Ref)
+	}
+	resolvedRequestSchema.Required = []string{
+		"destinationProjectId",
+		"sourceRevisionId",
+		"primaryCategoryId",
+		"slug",
+		"canonicalDecision",
+	}
+	if decision := resolvedRequestSchema.Properties["canonicalDecision"]; decision != nil {
+		decision.Enum = []any{"canonical_original", "material_adaptation"}
+		decision.Description = "Use the selected source revision's canonical URL, or create a destination-owned material adaptation."
+	}
+	if originalURL := resolvedRequestSchema.Properties["canonicalOriginalUrl"]; originalURL != nil {
+		originalURL.Format = "uri"
+		originalURL.Description = "Optional assertion for canonical_original. When supplied, it must match the selected source revision's source canonical URL; the server always derives the stored canonical from the source publication."
+	}
+
+	problemResponse := func(description string) *huma.Response {
+		return &huma.Response{
+			Description: description,
+			Content: map[string]*huma.MediaType{
+				problemMediaType: {Schema: problemSchema},
+			},
+		}
+	}
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodPost,
+		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/copy-to-project",
+		OperationID: "copyArticleToProject",
+		Summary:     "Copy an article to another project",
+		Description: "Creates an independent destination draft from an exact source revision. The caller needs source access and destination content-create permission, and must record a canonical-original or material-adaptation decision. Canonical-original URLs are derived from the selected source revision's publication.",
+		Tags:        []string{"Administration"},
+		Security:    adminSessionSecurityRequirement(),
+		Parameters: []*huma.Param{
+			{
+				Name:        "projectID",
+				In:          "path",
+				Description: "Source project identifier",
+				Required:    true,
+				Schema:      &huma.Schema{Type: "string"},
+			},
+			{
+				Name:        "articleID",
+				In:          "path",
+				Description: "Source article identifier",
+				Required:    true,
+				Schema:      &huma.Schema{Type: "string"},
+			},
+			{
+				Name:        "X-CSRF-Token",
+				In:          "header",
+				Description: "Administrative session CSRF token",
+				Required:    true,
+				Schema:      &huma.Schema{Type: "string"},
+			},
+		},
+		RequestBody: &huma.RequestBody{
+			Description: "Destination ownership, taxonomy, routing and canonical/adaptation decision.",
+			Required:    true,
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: requestSchema},
+			},
+		},
+		Responses: map[string]*huma.Response{
+			"201": {
+				Description: "Independent destination article draft created",
+				Content: map[string]*huma.MediaType{
+					"application/json": {Schema: responseSchema},
+				},
+			},
+			"400": problemResponse("Invalid copy input or destination routing conflict"),
+			"401": problemResponse("Authentication required"),
+			"403": problemResponse("Insufficient destination permission"),
+			"404": problemResponse("Source, destination, revision, or taxonomy not found"),
+			"409": problemResponse("Source or destination project is not active"),
 			"500": problemResponse("Internal server error"),
 		},
 	})

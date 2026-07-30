@@ -5,6 +5,8 @@ components:
       properties:
         articleType:
           type: string
+        canonicalPolicy:
+          type: string
         canonicalUrl:
           type: string
         createdAt:
@@ -16,6 +18,10 @@ components:
         latestRevision:
           $ref: "#/components/schemas/AdminRevision"
         locale:
+          type: string
+        originArticleId:
+          type: string
+        originProjectId:
           type: string
         projectId:
           type: string
@@ -38,6 +44,7 @@ components:
         - title
         - editorialState
         - publicationState
+        - canonicalPolicy
         - createdAt
       type: object
     AdminRevision:
@@ -215,6 +222,43 @@ components:
         - editorialState
         - contentHash
         - createdAt
+      type: object
+    CopyArticleRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CopyArticleRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        canonicalDecision:
+          description: Use the selected source revision's canonical URL, or create a destination-owned material adaptation.
+          enum:
+            - canonical_original
+            - material_adaptation
+          type: string
+        canonicalOriginalUrl:
+          description: Optional assertion for canonical_original. When supplied, it must match the selected source revision's source canonical URL; the server always derives the stored canonical from the source publication.
+          format: uri
+          type: string
+        destinationProjectId:
+          type: string
+        locale:
+          type: string
+        primaryCategoryId:
+          type: string
+        slug:
+          type: string
+        sourceRevisionId:
+          type: string
+      required:
+        - destinationProjectId
+        - sourceRevisionId
+        - primaryCategoryId
+        - slug
+        - canonicalDecision
       type: object
     EnvelopeAdminArticle:
       additionalProperties: false
@@ -1490,24 +1534,80 @@ paths:
         - Administration
   /api/v1/projects/{projectID}/articles/{articleID}/copy-to-project:
     post:
-      description: Administrative API route.
-      operationId: post_api_v1_projects_projectid_articles_articleid_copy_to_project
+      description: Creates an independent destination draft from an exact source revision. The caller needs source access and destination content-create permission, and must record a canonical-original or material-adaptation decision. Canonical-original URLs are derived from the selected source revision's publication.
+      operationId: copyArticleToProject
+      parameters:
+        - description: Source project identifier
+          in: path
+          name: projectID
+          required: true
+          schema:
+            type: string
+        - description: Source article identifier
+          in: path
+          name: articleID
+          required: true
+          schema:
+            type: string
+        - description: Administrative session CSRF token
+          in: header
+          name: X-CSRF-Token
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CopyArticleRequest"
+        description: Destination ownership, taxonomy, routing and canonical/adaptation decision.
+        required: true
       responses:
-        "200":
-          description: Successful response
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeAdminArticle"
+          description: Independent destination article draft created
         "400":
-          description: Invalid request
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Invalid copy input or destination routing conflict
         "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Authentication required
         "403":
-          description: Insufficient permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Insufficient destination permission
         "404":
-          description: Resource not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Source, destination, revision, or taxonomy not found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Source or destination project is not active
         "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
-      summary: POST /api/v1/projects/{projectID}/articles/{articleID}/copy-to-project
+      security:
+        - adminSession: []
+      summary: Copy an article to another project
       tags:
         - Administration
   /api/v1/projects/{projectID}/articles/{articleID}/corrections:
