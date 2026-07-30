@@ -2887,6 +2887,26 @@ paths:
       description: Administrative API route.
       operationId: post_api_v1_projects_projectid_preview_tokens
       responses:
+        "201":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: POST /api/v1/projects/{projectID}/preview-tokens
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/preview-tokens/{tokenID}/revoke:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_preview_tokens_tokenid_revoke
+      responses:
         "200":
           description: Successful response
         "400":
@@ -2899,9 +2919,7 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
-      summary: POST /api/v1/projects/{projectID}/preview-tokens
+      summary: POST /api/v1/projects/{projectID}/preview-tokens/{tokenID}/revoke
       tags:
         - Administration
   /api/v1/projects/{projectID}/quality-checks:
@@ -4038,6 +4056,170 @@ paths:
         "500":
           description: Internal server error
       summary: HEAD /content/v1/posts/{slug}/related
+      tags:
+        - Content API
+  /content/v1/preview:
+    delete:
+      operationId: delete_content_v1_preview
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: DELETE /content/v1/preview
+      tags:
+        - Content API
+    get:
+      operationId: get_content_v1_preview
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/preview
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_preview
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/preview
+      tags:
+        - Content API
+    options:
+      operationId: options_content_v1_preview
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: OPTIONS /content/v1/preview
+      tags:
+        - Content API
+    patch:
+      operationId: patch_content_v1_preview
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: PATCH /content/v1/preview
+      tags:
+        - Content API
+    post:
+      operationId: post_content_v1_preview
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: POST /content/v1/preview
+      tags:
+        - Content API
+    put:
+      operationId: put_content_v1_preview
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: PUT /content/v1/preview
+      tags:
+        - Content API
+  /content/v1/preview/revisions/{revisionID}:
+    get:
+      operationId: get_content_v1_preview_revisions_revisionid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /content/v1/preview/revisions/{revisionID}
+      tags:
+        - Content API
+    head:
+      operationId: head_content_v1_preview_revisions_revisionid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /content/v1/preview/revisions/{revisionID}
       tags:
         - Content API
   /content/v1/redirects:

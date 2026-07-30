@@ -193,8 +193,8 @@ async function refresh() {
       $fetch<APIListEnvelope<AuditEvent>>(`/api/v1/projects/${projectID.value}/audit-events`, { credentials: 'include' })
     ])
     project.value = projectResponse.data
-    events.value = auditResponse.data
-    nextCursor.value = auditResponse.meta.nextCursor || ''
+    events.value = apiListData(auditResponse)
+    nextCursor.value = auditResponse.meta?.nextCursor || ''
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load audit events. Sign in again if your session has expired.')
   } finally {
@@ -214,8 +214,8 @@ async function loadMore() {
         limit: 50
       }
     })
-    events.value = [...events.value, ...response.data]
-    nextCursor.value = response.meta.nextCursor || ''
+    events.value = [...events.value, ...apiListData(response)]
+    nextCursor.value = response.meta?.nextCursor || ''
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load more audit events.')
   } finally {

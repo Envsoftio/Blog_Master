@@ -181,7 +181,7 @@ import type { AdminArticle, AdminProject } from '~/composables/useAdminApi'
 type ProjectArticle = { project: AdminProject, article: AdminArticle }
 
 const api = useAdminApi()
-const projects = useState<AdminProject[]>('admin-projects', () => [])
+const projects = useAdminProjectsState()
 const projectArticles = ref<ProjectArticle[]>([])
 const selectedProjectID = ref('all')
 const pending = ref(true)

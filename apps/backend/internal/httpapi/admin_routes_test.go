@@ -1878,6 +1878,156 @@ func TestDisclosuresAndCorrectionsReachPublishedJSON(t *testing.T) {
 	}
 }
 
+func TestPreviewTokensExposeDraftRevisionOnly(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "owner correct password")
+	project := createTestProject(t, server, login, `{"slug":"preview","name":"Preview Project"}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"drafts","name":"Drafts"}`)
+	article := createTestArticle(
+		t,
+		server,
+		login,
+		project.ID,
+		`{"articleType":"standard","title":"Draft Preview","slug":"draft-preview","primaryCategoryId":"`+category.ID+`","html":"<p>Draft only.</p>"}`,
+	)
+	revisionID := article.LatestRevision.ID
+
+	publicDraftRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts/draft-preview?locale=en", nil)
+	publicDraftRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	publicDraftResponse := mustTest(t, server, publicDraftRequest)
+	if publicDraftResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected unpublished draft to be hidden from published content API, got %d: %s", publicDraftResponse.StatusCode, readBody(t, publicDraftResponse))
+	}
+
+	badTTL := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/preview-tokens",
+		`{"articleId":"`+article.ID+`","revisionId":"`+revisionID+`","ttlMinutes":14}`,
+		login,
+	)
+	badTTLResponse := mustTest(t, server, badTTL)
+	if badTTLResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected too-short preview token ttl to fail with 400, got %d: %s", badTTLResponse.StatusCode, readBody(t, badTTLResponse))
+	}
+
+	createRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/preview-tokens",
+		`{"articleId":"`+article.ID+`","revisionId":"`+revisionID+`","ttlMinutes":15}`,
+		login,
+	)
+	createResponse := mustTest(t, server, createRequest)
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected preview token create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.PreviewTokenWithSecret]
+	decodeJSONResponse(t, createResponse, &created)
+	if created.Data.Token.ID == "" || created.Data.Token.RevisionID != revisionID || !strings.HasPrefix(created.Data.Secret, "sbprev_") {
+		t.Fatalf("unexpected preview token response %#v", created.Data)
+	}
+
+	var storedHashMatches int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM preview_tokens WHERE token_hash = ?`, security.TokenHash(created.Data.Secret)).Scan(&storedHashMatches); err != nil {
+		t.Fatal(err)
+	}
+	if storedHashMatches != 1 {
+		t.Fatalf("expected preview token hash to be stored once, got %d", storedHashMatches)
+	}
+	var rawSecretMatches int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM preview_tokens WHERE token_hash = ?`, created.Data.Secret).Scan(&rawSecretMatches); err != nil {
+		t.Fatal(err)
+	}
+	if rawSecretMatches != 0 {
+		t.Fatal("expected raw preview secret not to be stored")
+	}
+	var auditSecretMatches int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ? AND metadata_json LIKE '%' || ? || '%'
+	`, project.ID, created.Data.Secret).Scan(&auditSecretMatches); err != nil {
+		t.Fatal(err)
+	}
+	if auditSecretMatches != 0 {
+		t.Fatal("expected raw preview secret not to appear in audit metadata")
+	}
+
+	previewTokenAsContentKey := httptest.NewRequest(http.MethodGet, "/content/v1/posts/draft-preview?locale=en", nil)
+	previewTokenAsContentKey.Header.Set("Authorization", "Bearer "+created.Data.Secret)
+	previewTokenAsContentKeyResponse := mustTest(t, server, previewTokenAsContentKey)
+	if previewTokenAsContentKeyResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected preview token not to work as content API key, got %d: %s", previewTokenAsContentKeyResponse.StatusCode, readBody(t, previewTokenAsContentKeyResponse))
+	}
+
+	previewRequest := httptest.NewRequest(http.MethodGet, "/content/v1/preview/revisions/"+revisionID, nil)
+	previewRequest.Header.Set("Authorization", "Bearer "+created.Data.Secret)
+	previewResponse := mustTest(t, server, previewRequest)
+	if previewResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected preview revision 200, got %d: %s", previewResponse.StatusCode, readBody(t, previewResponse))
+	}
+	if cacheControl := previewResponse.Header.Get("Cache-Control"); cacheControl != "private, no-store" {
+		t.Fatalf("expected no-store preview cache control, got %q", cacheControl)
+	}
+	if robots := previewResponse.Header.Get("X-Robots-Tag"); robots != "noindex, nofollow" {
+		t.Fatalf("expected preview robots header, got %q", robots)
+	}
+	var preview Envelope[store.PublishedPost]
+	decodeJSONResponse(t, previewResponse, &preview)
+	if preview.Data.Title != "Draft Preview" || !strings.Contains(preview.Data.Content.HTML, "Draft only.") {
+		t.Fatalf("unexpected preview payload %#v", preview.Data)
+	}
+	if preview.Data.SEO.Index || preview.Data.SEO.Robots != "noindex,nofollow" {
+		t.Fatalf("expected preview SEO to be noindex, got %#v", preview.Data.SEO)
+	}
+
+	wrongRevisionRequest := httptest.NewRequest(http.MethodGet, "/content/v1/preview/revisions/not-this-revision", nil)
+	wrongRevisionRequest.Header.Set("Authorization", "Bearer "+created.Data.Secret)
+	wrongRevisionResponse := mustTest(t, server, wrongRevisionRequest)
+	if wrongRevisionResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected preview token to be bound to one revision, got %d: %s", wrongRevisionResponse.StatusCode, readBody(t, wrongRevisionResponse))
+	}
+
+	if _, err := db.Exec(`UPDATE preview_tokens SET expires_at = datetime(CURRENT_TIMESTAMP, '-1 minute') WHERE id = ?`, created.Data.Token.ID); err != nil {
+		t.Fatal(err)
+	}
+	expiredRequest := httptest.NewRequest(http.MethodGet, "/content/v1/preview/revisions/"+revisionID, nil)
+	expiredRequest.Header.Set("Authorization", "Bearer "+created.Data.Secret)
+	expiredResponse := mustTest(t, server, expiredRequest)
+	if expiredResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected expired preview token to fail with 401, got %d: %s", expiredResponse.StatusCode, readBody(t, expiredResponse))
+	}
+
+	revokeCreate := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/preview-tokens",
+		`{"articleId":"`+article.ID+`","revisionId":"`+revisionID+`"}`,
+		login,
+	)
+	revokeCreateResponse := mustTest(t, server, revokeCreate)
+	if revokeCreateResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected second preview token create 201, got %d: %s", revokeCreateResponse.StatusCode, readBody(t, revokeCreateResponse))
+	}
+	var revocable Envelope[store.PreviewTokenWithSecret]
+	decodeJSONResponse(t, revokeCreateResponse, &revocable)
+
+	revokeRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/preview-tokens/"+revocable.Data.Token.ID+"/revoke",
+		`{}`,
+		login,
+	)
+	revokeResponse := mustTest(t, server, revokeRequest)
+	if revokeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected preview token revoke 200, got %d: %s", revokeResponse.StatusCode, readBody(t, revokeResponse))
+	}
+	revokedRequest := httptest.NewRequest(http.MethodGet, "/content/v1/preview/revisions/"+revisionID, nil)
+	revokedRequest.Header.Set("Authorization", "Bearer "+revocable.Data.Secret)
+	revokedResponse := mustTest(t, server, revokedRequest)
+	if revokedResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected revoked preview token to fail with 401, got %d: %s", revokedResponse.StatusCode, readBody(t, revokedResponse))
+	}
+}
+
 func TestAuthorManagementAuthorizationAndCrossProjectScoping(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerALogin := seedAndLogin(t, server, db, "owner-a@example.test", "owner a correct password")

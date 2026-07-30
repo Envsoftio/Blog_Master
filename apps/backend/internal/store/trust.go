@@ -567,8 +567,8 @@ func ensureRevisionClaimsApproved(ctx context.Context, tx *sql.Tx, projectID, re
 	return nil
 }
 
-func buildRevisionTrustSnapshots(ctx context.Context, tx *sql.Tx, projectID, revisionID string) (string, string, error) {
-	claims, err := listRevisionClaims(ctx, tx, projectID, revisionID)
+func buildRevisionTrustSnapshots(ctx context.Context, queryer trustQueryer, projectID, revisionID string) (string, string, error) {
+	claims, err := listRevisionClaims(ctx, queryer, projectID, revisionID)
 	if err != nil {
 		return "", "", err
 	}
@@ -585,7 +585,7 @@ func buildRevisionTrustSnapshots(ctx context.Context, tx *sql.Tx, projectID, rev
 	sort.Strings(orderedSourceIDs)
 	sources := make([]Source, 0, len(orderedSourceIDs))
 	for _, sourceID := range orderedSourceIDs {
-		source, err := getSourceTx(ctx, tx, projectID, sourceID)
+		source, err := getSourceTx(ctx, queryer, projectID, sourceID)
 		if err != nil {
 			return "", "", err
 		}

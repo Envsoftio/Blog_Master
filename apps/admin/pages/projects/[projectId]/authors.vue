@@ -359,7 +359,7 @@ async function refresh() {
       })
     ])
     project.value = projectResponse.data
-    authors.value = sortAuthors(authorResponse.data)
+    authors.value = sortAuthors(apiListData(authorResponse))
     nextCursor.value = authorResponse.meta?.nextCursor || ''
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load authors. Sign in again if your session has expired.')
@@ -381,7 +381,7 @@ async function loadMoreAuthors() {
       }
     })
     const merged = new Map(authors.value.map(author => [author.id, author]))
-    for (const author of response.data) merged.set(author.id, author)
+    for (const author of apiListData(response)) merged.set(author.id, author)
     authors.value = sortAuthors([...merged.values()])
     nextCursor.value = response.meta?.nextCursor || ''
   } catch (error) {

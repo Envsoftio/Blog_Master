@@ -293,8 +293,8 @@ async function refresh() {
       })
     ])
     project.value = projectResponse.data
-    seriesItems.value = sortByName(seriesResponse.data)
-    tags.value = sortByName(tagResponse.data)
+    seriesItems.value = sortByName(apiListData(seriesResponse))
+    tags.value = sortByName(apiListData(tagResponse))
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load series and tags. Sign in again if your session has expired.')
   } finally {

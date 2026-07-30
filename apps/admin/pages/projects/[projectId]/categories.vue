@@ -309,7 +309,7 @@ async function fetchAllCategories() {
         ...(cursor ? { cursor } : {})
       }
     })
-    for (const category of response.data) allCategories.set(category.id, category)
+    for (const category of apiListData(response)) allCategories.set(category.id, category)
 
     const nextCursor = response.meta?.nextCursor || ''
     if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Category pagination returned a repeated cursor')

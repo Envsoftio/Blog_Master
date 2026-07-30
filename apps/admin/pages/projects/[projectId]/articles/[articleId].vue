@@ -995,11 +995,11 @@ async function refresh() {
     ])
     project.value = projectResponse.data
     projects.value = projectListResponse
-    categories.value = sortCategories(categoryResponse.data)
+    categories.value = sortCategories(apiListData(categoryResponse))
     setArticle(articleResponse.data)
-    comments.value = commentResponse.data
+    comments.value = apiListData(commentResponse)
     nextCommentCursor.value = commentResponse.meta?.nextCursor || ''
-    setRevisions(revisionResponse.data, revisionResponse.meta?.nextCursor || '')
+    setRevisions(apiListData(revisionResponse), revisionResponse.meta?.nextCursor || '')
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load article. Sign in again if your session has expired.')
   } finally {
@@ -1020,7 +1020,7 @@ async function fetchAllCopyProjects() {
         ...(cursor ? { cursor } : {})
       }
     })
-    for (const candidate of response.data) allProjects.set(candidate.id, candidate)
+    for (const candidate of apiListData(response)) allProjects.set(candidate.id, candidate)
 
     const nextCursor = response.meta?.nextCursor || ''
     if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Project pagination returned a repeated cursor')
@@ -1119,7 +1119,7 @@ async function loadCopyDestinationCategories(destinationProjectId: string) {
         }
       )
       if (requestVersion !== copyCategoryRequestVersion) return
-      for (const category of response.data) allCategories.set(category.id, category)
+      for (const category of apiListData(response)) allCategories.set(category.id, category)
 
       const nextCursor = response.meta?.nextCursor || ''
       if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Category pagination returned a repeated cursor')
@@ -1313,7 +1313,7 @@ async function loadMoreComments() {
       }
     })
     const merged = new Map(comments.value.map(comment => [comment.id, comment]))
-    for (const comment of response.data) merged.set(comment.id, comment)
+    for (const comment of apiListData(response)) merged.set(comment.id, comment)
     comments.value = [...merged.values()]
     nextCommentCursor.value = response.meta?.nextCursor || ''
   } catch (error) {
@@ -1336,7 +1336,7 @@ async function loadMoreRevisions() {
       }
     })
     const merged = new Map(revisions.value.map(revision => [revision.id, revision]))
-    for (const revision of response.data) merged.set(revision.id, revision)
+    for (const revision of apiListData(response)) merged.set(revision.id, revision)
     setRevisions([...merged.values()].sort((left, right) => right.revisionNumber - left.revisionNumber), response.meta?.nextCursor || '')
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load older revisions.')
@@ -1405,7 +1405,7 @@ async function fetchArticle() {
     })
   ])
   setArticle(articleResponse.data)
-  setRevisions(revisionResponse.data, revisionResponse.meta?.nextCursor || '')
+  setRevisions(apiListData(revisionResponse), revisionResponse.meta?.nextCursor || '')
 }
 
 function setArticle(value: AdminArticle) {

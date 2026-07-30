@@ -11,6 +11,10 @@ export type APIListEnvelope<T> = {
   }
 }
 
+type NullableAPIListEnvelope<T> = Omit<APIListEnvelope<T>, 'data'> & {
+  data?: T[] | null
+}
+
 export type AdminProject = {
   id: string
   slug: string
@@ -279,6 +283,27 @@ export const ARTICLE_TYPES = [
 
 type AdminFetchOptions = Parameters<typeof $fetch>[1]
 
+export function apiListData<T>(response: NullableAPIListEnvelope<T> | null | undefined): T[] {
+  return Array.isArray(response?.data) ? response.data : []
+}
+
+function normalizeAPIListEnvelope<T>(response: NullableAPIListEnvelope<T> | null | undefined): APIListEnvelope<T> {
+  return {
+    ...(response || {}),
+    data: apiListData(response)
+  }
+}
+
+export function useAdminProjectsState() {
+  const state = useState<AdminProject[] | null>('admin-projects', () => [])
+  return computed<AdminProject[]>({
+    get: () => apiListData({ data: state.value }),
+    set: value => {
+      state.value = apiListData({ data: value })
+    }
+  })
+}
+
 export function useAdminApi() {
   async function request<T>(path: string, options?: AdminFetchOptions) {
     return await $fetch<T>(path, {
@@ -340,9 +365,9 @@ export function useAdminApi() {
   }
 
   async function listProjects(limit = 100) {
-    return await request<APIListEnvelope<AdminProject>>('/api/v1/projects', {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminProject>>('/api/v1/projects', {
       query: { limit }
-    })
+    }))
   }
 
   async function getProject(projectID: string) {
@@ -374,7 +399,7 @@ export function useAdminApi() {
   }
 
   async function listMembers(projectID: string) {
-    return await request<APIListEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID}/members`)
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID}/members`))
   }
 
   async function inviteMember(projectID: string, payload: { email: string, role: string, expiresAt?: string }) {
@@ -396,7 +421,7 @@ export function useAdminApi() {
   }
 
   async function listAPIKeys(projectID: string) {
-    return await request<APIListEnvelope<AdminAPIKey>>(`/api/v1/projects/${projectID}/api-keys`)
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminAPIKey>>(`/api/v1/projects/${projectID}/api-keys`))
   }
 
   async function createAPIKey(projectID: string, payload: { environment: string, name: string, scopes: string[], expiresAt?: string }) {
@@ -414,7 +439,7 @@ export function useAdminApi() {
   }
 
   async function listTaxonomy(projectID: string, type: 'categories' | 'tags') {
-    return await request<APIListEnvelope<TaxonomyTerm>>(`/api/v1/projects/${projectID}/${type}`)
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<TaxonomyTerm>>(`/api/v1/projects/${projectID}/${type}`))
   }
 
   async function createTaxonomy(projectID: string, type: 'categories' | 'tags', payload: TaxonomyCreatePayload) {
@@ -433,17 +458,17 @@ export function useAdminApi() {
   }
 
   async function listAuthors(projectID: string) {
-    return await request<APIListEnvelope<AdminAuthor>>(`/api/v1/projects/${projectID}/authors`)
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminAuthor>>(`/api/v1/projects/${projectID}/authors`))
   }
 
   async function listSeries(projectID: string) {
-    return await request<APIListEnvelope<AdminSeries>>(`/api/v1/projects/${projectID}/series`)
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminSeries>>(`/api/v1/projects/${projectID}/series`))
   }
 
   async function listArticles(projectID: string, limit = 100) {
-    return await request<APIListEnvelope<AdminArticle>>(`/api/v1/projects/${projectID}/articles`, {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminArticle>>(`/api/v1/projects/${projectID}/articles`, {
       query: { limit }
-    })
+    }))
   }
 
   async function createArticle(projectID: string, payload: ArticleCreatePayload) {
@@ -458,9 +483,9 @@ export function useAdminApi() {
   }
 
   async function listRevisions(projectID: string, articleID: string, limit = 100) {
-    return await request<APIListEnvelope<AdminRevision>>(`/api/v1/projects/${projectID}/articles/${articleID}/revisions`, {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminRevision>>(`/api/v1/projects/${projectID}/articles/${articleID}/revisions`, {
       query: { limit }
-    })
+    }))
   }
 
   async function articleAction(
@@ -483,7 +508,7 @@ export function useAdminApi() {
   }
 
   async function listComments(projectID: string, articleID: string) {
-    return await request<APIListEnvelope<ReviewComment>>(`/api/v1/projects/${projectID}/articles/${articleID}/comments`)
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<ReviewComment>>(`/api/v1/projects/${projectID}/articles/${articleID}/comments`))
   }
 
   async function createComment(projectID: string, articleID: string, payload: { revisionId: string, blockId?: string, body: string }) {
@@ -500,13 +525,13 @@ export function useAdminApi() {
   }
 
   async function listAuditEvents(projectID: string, limit = 100) {
-    return await request<APIListEnvelope<AuditEvent>>(`/api/v1/projects/${projectID}/audit-events`, {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AuditEvent>>(`/api/v1/projects/${projectID}/audit-events`, {
       query: { limit }
-    })
+    }))
   }
 
   async function listMedia(projectID: string) {
-    return await request<APIListEnvelope<AdminMediaAsset>>(`/api/v1/projects/${projectID}/media`)
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminMediaAsset>>(`/api/v1/projects/${projectID}/media`))
   }
 
   async function initiateMediaUpload(projectID: string, payload: { filename: string, contentType: string, bytes: number }) {
@@ -517,7 +542,7 @@ export function useAdminApi() {
   }
 
   async function listWebhooks(projectID: string) {
-    return await request<APIListEnvelope<WebhookEndpoint>>(`/api/v1/projects/${projectID}/webhooks`)
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<WebhookEndpoint>>(`/api/v1/projects/${projectID}/webhooks`))
   }
 
   async function createWebhook(projectID: string, payload: { name: string, url: string, events: string[] }) {
@@ -532,7 +557,7 @@ export function useAdminApi() {
   }
 
   async function listAIJobs(projectID: string) {
-    return await request<APIListEnvelope<AIJob>>(`/api/v1/projects/${projectID}/ai/jobs`)
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AIJob>>(`/api/v1/projects/${projectID}/ai/jobs`))
   }
 
   async function createAIJob(projectID: string, payload: Record<string, unknown>) {

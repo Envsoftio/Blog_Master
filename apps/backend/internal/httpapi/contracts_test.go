@@ -62,6 +62,8 @@ func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "200"},
 		{http.MethodHead, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "201"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/preview-tokens", "201"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/preview-tokens/{tokenID}/revoke", "200"},
 	}
 
 	for _, route := range routes {

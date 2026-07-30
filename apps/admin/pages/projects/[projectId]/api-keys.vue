@@ -360,7 +360,7 @@ async function refresh() {
       $fetch<APIListEnvelope<AdminAPIKey>>(`/api/v1/projects/${projectID.value}/api-keys`, { credentials: 'include' })
     ])
     project.value = projectResponse.data
-    apiKeys.value = keyResponse.data
+    apiKeys.value = apiListData(keyResponse)
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load API keys. Sign in again if your session has expired.')
   } finally {

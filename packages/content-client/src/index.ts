@@ -96,6 +96,13 @@ export class ContentClient {
     return this.request<APIEnvelope<PublishedPost>>(`/content/v1/posts/by-id/${encodeURIComponent(contentID)}?locale=${encodeURIComponent(locale)}`)
   }
 
+  getPreviewRevision(revisionID: string, previewToken: string) {
+    return this.requestWithBearer<APIEnvelope<PublishedPost>>(
+      `/content/v1/preview/revisions/${encodeURIComponent(revisionID)}`,
+      previewToken
+    )
+  }
+
   listPosts(params: ListPostsParams = {}) {
     return this.request<APIListEnvelope<PublishedPost>>(`/content/v1/posts${query(params)}`)
   }
@@ -135,9 +142,13 @@ export class ContentClient {
   }
 
   private async request<T>(path: string): Promise<T> {
+    return this.requestWithBearer<T>(path, this.apiKey)
+  }
+
+  private async requestWithBearer<T>(path: string, bearerToken: string): Promise<T> {
     const response = await this.fetcher(`${this.baseUrl}${path}`, {
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
+        Authorization: `Bearer ${bearerToken}`,
         Accept: 'application/json'
       }
     })

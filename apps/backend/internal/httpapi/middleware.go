@@ -11,7 +11,10 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 )
 
-const projectContextKey = "projectContext"
+const (
+	projectContextKey = "projectContext"
+	previewContextKey = "previewContext"
+)
 
 func (s *Server) requireContentKey(c *fiber.Ctx) error {
 	auth := c.Get("Authorization")

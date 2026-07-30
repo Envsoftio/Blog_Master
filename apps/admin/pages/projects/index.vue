@@ -134,7 +134,7 @@ import type { AdminProject } from '~/composables/useAdminApi'
 
 const route = useRoute()
 const api = useAdminApi()
-const projects = useState<AdminProject[]>('admin-projects', () => [])
+const projects = useAdminProjectsState()
 const pending = ref(true)
 const creating = ref(false)
 const formOpen = ref(false)

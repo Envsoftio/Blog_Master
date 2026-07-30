@@ -1,5 +1,7 @@
 package httpapi
 
+import "encoding/json"
+
 type Envelope[T any] struct {
 	Data T        `json:"data"`
 	Meta MetaData `json:"meta,omitempty"`
@@ -8,6 +10,21 @@ type Envelope[T any] struct {
 type ListEnvelope[T any] struct {
 	Data []T      `json:"data"`
 	Meta PageMeta `json:"meta"`
+}
+
+func (e ListEnvelope[T]) MarshalJSON() ([]byte, error) {
+	type listEnvelope struct {
+		Data []T      `json:"data"`
+		Meta PageMeta `json:"meta"`
+	}
+	data := e.Data
+	if data == nil {
+		data = []T{}
+	}
+	return json.Marshal(listEnvelope{
+		Data: data,
+		Meta: e.Meta,
+	})
 }
 
 type MetaData struct {

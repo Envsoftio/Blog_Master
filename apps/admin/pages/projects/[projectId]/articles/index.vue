@@ -402,8 +402,8 @@ async function refresh() {
       $fetch<APIListEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles`, { credentials: 'include' })
     ])
     project.value = projectResponse.data
-    categories.value = categoryResponse.data
-    articles.value = articleResponse.data
+    categories.value = apiListData(categoryResponse)
+    articles.value = apiListData(articleResponse)
     seedScheduleDrafts()
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load this project. Sign in again if your session has expired.')
@@ -531,7 +531,7 @@ async function fetchArticles() {
   const response = await $fetch<APIListEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles`, {
     credentials: 'include'
   })
-  articles.value = response.data
+  articles.value = apiListData(response)
   seedScheduleDrafts()
 }
 

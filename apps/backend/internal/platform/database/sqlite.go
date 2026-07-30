@@ -34,6 +34,9 @@ var revisionBaseGuardMigration string
 //go:embed migrations/0008_admin_frontend_services.sql
 var adminFrontendServicesMigration string
 
+//go:embed migrations/0009_preview_tokens.sql
+var previewTokensMigration string
+
 type migration struct {
 	version    string
 	statements string
@@ -78,6 +81,7 @@ func Migrate(db *sql.DB) error {
 		{version: "0006_review_comments_index", statements: reviewCommentsIndexMigration},
 		{version: "0007_revision_base_guard", statements: revisionBaseGuardMigration},
 		{version: "0008_admin_frontend_services", statements: adminFrontendServicesMigration},
+		{version: "0009_preview_tokens", statements: previewTokensMigration},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {

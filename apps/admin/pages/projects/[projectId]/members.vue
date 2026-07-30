@@ -382,8 +382,8 @@ async function refresh() {
       $fetch<APIListEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID.value}/members`, { credentials: 'include' })
     ])
     project.value = projectResponse.data
-    members.value = sortMembers(memberResponse.data)
-    nextCursor.value = memberResponse.meta.nextCursor || ''
+    members.value = sortMembers(apiListData(memberResponse))
+    nextCursor.value = memberResponse.meta?.nextCursor || ''
     syncRoleDrafts()
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load members. Sign in again if your session has expired.')
@@ -405,12 +405,12 @@ async function loadMoreMembers() {
       }
     })
     const merged = new Map(members.value.map(member => [member.userId, member]))
-    for (const member of response.data) {
+    for (const member of apiListData(response)) {
       merged.set(member.userId, member)
       roleDrafts[member.userId] = member.role
     }
     members.value = sortMembers([...merged.values()])
-    nextCursor.value = response.meta.nextCursor || ''
+    nextCursor.value = response.meta?.nextCursor || ''
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load more members.')
   } finally {

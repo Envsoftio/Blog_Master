@@ -107,7 +107,7 @@ async function fetchProjects() {
       credentials: 'include',
       query: { limit: 100 }
     })
-    projects.value = response.data
+    projects.value = apiListData(response)
   } catch {
     projects.value = []
   }

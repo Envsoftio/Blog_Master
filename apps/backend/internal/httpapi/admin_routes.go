@@ -134,7 +134,8 @@ func (s *Server) registerAdminRoutes() {
 
 	api.Get("/projects/:projectID/audit-events", s.requireAdminSession, s.listAuditEvents)
 	api.Get("/projects/:projectID/delivery/status", s.requireAdminSession, s.deliveryStatus)
-	api.Post("/projects/:projectID/preview-tokens", func(c *fiber.Ctx) error { return notImplemented(c, "preview token creation") })
+	api.Post("/projects/:projectID/preview-tokens", s.requireAdminSession, s.requireAdminCSRF, s.createPreviewToken)
+	api.Post("/projects/:projectID/preview-tokens/:tokenID/revoke", s.requireAdminSession, s.requireAdminCSRF, s.revokePreviewToken)
 }
 
 type loginRequest struct {
@@ -371,6 +372,12 @@ type correctionRequest struct {
 	AffectedRevisionID string `json:"affectedRevisionId"`
 	PublicNote         string `json:"publicNote"`
 	SupersedesNoticeID string `json:"supersedesNoticeId"`
+}
+
+type previewTokenRequest struct {
+	ArticleID  string `json:"articleId"`
+	RevisionID string `json:"revisionId"`
+	TTLMinutes int    `json:"ttlMinutes"`
 }
 
 func (s *Server) login(c *fiber.Ctx) error {
@@ -1346,6 +1353,38 @@ func (s *Server) createCorrection(c *fiber.Ctx) error {
 		return s.adminMutationError(c, err, "Could not create correction")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.CorrectionNotice]{Data: correction})
+}
+
+func (s *Server) createPreviewToken(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input previewTokenRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	token, err := s.store.CreatePreviewToken(c.UserContext(), user.ID, c.Params("projectID"), store.PreviewTokenInput{
+		ArticleID:  input.ArticleID,
+		RevisionID: input.RevisionID,
+		TTLMinutes: input.TTLMinutes,
+	})
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not create preview token")
+	}
+	return writeJSON(c, fiber.StatusCreated, Envelope[store.PreviewTokenWithSecret]{Data: token})
+}
+
+func (s *Server) revokePreviewToken(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	token, err := s.store.RevokePreviewToken(c.UserContext(), user.ID, c.Params("projectID"), c.Params("tokenID"))
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not revoke preview token")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.PreviewToken]{Data: token})
 }
 
 func (s *Server) listReviewComments(c *fiber.Ctx) error {

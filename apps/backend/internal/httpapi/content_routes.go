@@ -15,6 +15,12 @@ import (
 )
 
 func (s *Server) registerContentRoutes() {
+	preview := s.app.Group(
+		"/content/v1/preview",
+		contentSourceRateLimiter(),
+	)
+	preview.Get("/revisions/:revisionID", s.requirePreviewToken, previewTokenRateLimiter(), s.getPreviewRevision)
+
 	content := s.app.Group(
 		"/content/v1",
 		contentSourceRateLimiter(),
@@ -40,6 +46,57 @@ func (s *Server) registerContentRoutes() {
 	content.Get("/discovery-manifest", requireContentScope("discovery:read"), s.discoveryManifest)
 	content.Get("/redirects", requireContentScope("redirects:read"), s.redirects)
 	content.Get("/changes", requireContentScope("discovery:read"), s.changes)
+}
+
+func (s *Server) requirePreviewToken(c *fiber.Ctx) error {
+	auth := c.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return problem(c, fiber.StatusUnauthorized, "Missing preview token", "Use Authorization: Bearer <preview-token>")
+	}
+	secret := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+	if secret == "" {
+		return problem(c, fiber.StatusUnauthorized, "Missing preview token", "The bearer token is empty")
+	}
+	token, err := s.store.FindPreviewToken(c.UserContext(), secret, c.Params("revisionID"))
+	if err != nil {
+		s.logger.Warn("preview token rejected", "error", err)
+		return problem(c, fiber.StatusUnauthorized, "Invalid preview token", "The preview token is invalid, expired or revoked")
+	}
+	c.Locals(previewContextKey, token)
+	return c.Next()
+}
+
+func previewTokenRateLimiter() fiber.Handler {
+	return newContentRateLimiter(300, func(c *fiber.Ctx) string {
+		preview, _ := previewContext(c)
+		return "preview-token:" + preview.ID
+	})
+}
+
+func previewContext(c *fiber.Ctx) (store.PreviewTokenContext, bool) {
+	value := c.Locals(previewContextKey)
+	if value == nil {
+		return store.PreviewTokenContext{}, false
+	}
+	ctx, ok := value.(store.PreviewTokenContext)
+	return ctx, ok
+}
+
+func (s *Server) getPreviewRevision(c *fiber.Ctx) error {
+	preview, ok := previewContext(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing preview context", "")
+	}
+	post, err := s.store.GetPreviewPost(c.UserContext(), preview.ProjectID, preview.ArticleID, preview.RevisionID)
+	if err != nil {
+		return s.publishedReadError(c, err, "Preview not found", "Could not load preview")
+	}
+	c.Set(fiber.HeaderCacheControl, "private, no-store")
+	c.Set("X-Robots-Tag", "noindex, nofollow")
+	return writeJSON(c, fiber.StatusOK, Envelope[store.PublishedPost]{
+		Data: post,
+		Meta: MetaData{ProjectID: preview.ProjectID, ETag: quotedETag(post.ContentHash)},
+	})
 }
 
 func (s *Server) listPublishedPosts(c *fiber.Ctx) error {

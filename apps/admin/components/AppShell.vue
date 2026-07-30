@@ -211,7 +211,7 @@ const route = useRoute()
 const api = useAdminApi()
 const colorMode = useColorMode()
 const mobileOpen = ref(false)
-const projects = useState<AdminProject[]>('admin-projects', () => [])
+const projects = useAdminProjectsState()
 const currentUser = useState<AdminUser | null>('admin-user', () => null)
 const selectedProjectID = ref('')
 

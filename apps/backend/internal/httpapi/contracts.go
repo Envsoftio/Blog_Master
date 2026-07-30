@@ -45,6 +45,8 @@ var implementedAdminRouteStatuses = map[string]string{
 	"GET /api/v1/projects/{projectID}/articles/{articleID}/corrections":  "200",
 	"HEAD /api/v1/projects/{projectID}/articles/{articleID}/corrections": "200",
 	"POST /api/v1/projects/{projectID}/articles/{articleID}/corrections": "201",
+	"POST /api/v1/projects/{projectID}/preview-tokens":                   "201",
+	"POST /api/v1/projects/{projectID}/preview-tokens/{tokenID}/revoke":  "200",
 	"GET /api/v1/projects/{projectID}/webhooks":                          "200",
 	"HEAD /api/v1/projects/{projectID}/webhooks":                         "200",
 	"POST /api/v1/projects/{projectID}/webhooks":                         "201",
