@@ -230,6 +230,7 @@ type AuthorInput struct {
 	ProfileURL       string
 	ExternalProfiles []string
 	SameAs           []string
+	LoginUserID      string
 	Status           string
 }
 
@@ -246,6 +247,7 @@ type AuthorPatch struct {
 	ProfileURL       *string
 	ExternalProfiles *[]string
 	SameAs           *[]string
+	LoginUserID      *string
 	Status           *string
 }
 
@@ -796,14 +798,20 @@ func (s *Store) ListAuditEventsForUser(ctx context.Context, actorUserID, project
 }
 
 func (s *Store) ListAuthorsForUser(ctx context.Context, actorUserID, projectID string) ([]Author, error) {
-	if _, err := s.projectRole(ctx, actorUserID, projectID); err != nil {
+	role, err := s.projectRole(ctx, actorUserID, projectID)
+	if err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT `+authorColumns+`
-		FROM authors
-		WHERE project_id = ?
-		ORDER BY display_name, id
+		SELECT `+adminAuthorColumns+`
+		FROM authors author
+		LEFT JOIN project_memberships membership
+		  ON membership.project_id = author.project_id
+		 AND membership.user_id = author.login_user_id
+		LEFT JOIN users user
+		  ON user.id = author.login_user_id
+		WHERE author.project_id = ?
+		ORDER BY author.display_name, author.id
 	`, projectID)
 	if err != nil {
 		return nil, err
@@ -812,22 +820,47 @@ func (s *Store) ListAuthorsForUser(ctx context.Context, actorUserID, projectID s
 
 	var authors []Author
 	for rows.Next() {
-		author, err := scanAuthor(rows)
+		author, err := scanAdminAuthor(rows)
 		if err != nil {
 			return nil, err
+		}
+		if !canManageProjectRole(role) {
+			clearAuthorLoginMetadata(&author)
 		}
 		authors = append(authors, author)
 	}
 	return authors, rows.Err()
 }
 
-func (s *Store) CreateAuthor(ctx context.Context, actorUserID, projectID string, input AuthorInput) (Author, error) {
-	if err := s.requireAuthorManage(ctx, actorUserID, projectID); err != nil {
+func (s *Store) GetAuthorForUser(ctx context.Context, actorUserID, projectID, authorID string) (Author, error) {
+	role, err := s.projectRole(ctx, actorUserID, projectID)
+	if err != nil {
 		return Author{}, err
+	}
+	author, err := s.getAdminAuthorByID(ctx, projectID, authorID)
+	if err != nil {
+		return Author{}, err
+	}
+	if !canManageProjectRole(role) {
+		clearAuthorLoginMetadata(&author)
+	}
+	return author, nil
+}
+
+func (s *Store) CreateAuthor(ctx context.Context, actorUserID, projectID string, input AuthorInput) (Author, error) {
+	actorRole, err := s.projectRole(ctx, actorUserID, projectID)
+	if err != nil {
+		return Author{}, err
+	}
+	if !canManageAuthorsRole(actorRole) {
+		return Author{}, ErrForbidden
 	}
 	input = applyAuthorDefaults(input)
 	if err := validateAuthorInput(input); err != nil {
 		return Author{}, err
+	}
+	if input.LoginUserID != "" && !canManageProjectRole(actorRole) {
+		return Author{}, ErrForbidden
 	}
 	authorID, err := security.RandomID("auth")
 	if err != nil {
@@ -854,16 +887,19 @@ func (s *Store) CreateAuthor(ctx context.Context, actorUserID, projectID string,
 	if err := validateAuthorPhotoAsset(ctx, tx, projectID, input.PhotoAssetID); err != nil {
 		return Author{}, err
 	}
+	if err := validateAuthorLoginUser(ctx, tx, projectID, input.LoginUserID); err != nil {
+		return Author{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO authors(
 		  id, project_id, slug, display_name, short_bio, full_bio,
 		  photo_asset_id, job_title, organization, credentials_json,
-		  expertise_json, profile_url, external_profiles_json, same_as_json, status
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		  expertise_json, profile_url, external_profiles_json, same_as_json, login_user_id, status
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, authorID, projectID, input.Slug, input.DisplayName, nullIfEmpty(input.ShortBio),
 		nullIfEmpty(input.FullBio), nullIfEmpty(input.PhotoAssetID), nullIfEmpty(input.JobTitle),
 		nullIfEmpty(input.Organization), credentialsJSON, expertiseJSON, nullIfEmpty(input.ProfileURL),
-		externalProfilesJSON, sameAsJSON, input.Status); err != nil {
+		externalProfilesJSON, sameAsJSON, nullIfEmpty(input.LoginUserID), input.Status); err != nil {
 		return Author{}, err
 	}
 	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
@@ -878,14 +914,25 @@ func (s *Store) CreateAuthor(ctx context.Context, actorUserID, projectID string,
 	if err := tx.Commit(); err != nil {
 		return Author{}, err
 	}
-	return s.getAuthorByID(ctx, projectID, authorID)
+	author, err := s.getAdminAuthorByID(ctx, projectID, authorID)
+	if err != nil {
+		return Author{}, err
+	}
+	if !canManageProjectRole(actorRole) {
+		clearAuthorLoginMetadata(&author)
+	}
+	return author, nil
 }
 
 func (s *Store) UpdateAuthor(ctx context.Context, actorUserID, projectID, authorID string, patch AuthorPatch) (Author, error) {
-	if err := s.requireAuthorManage(ctx, actorUserID, projectID); err != nil {
+	actorRole, err := s.projectRole(ctx, actorUserID, projectID)
+	if err != nil {
 		return Author{}, err
 	}
-	current, err := s.getAuthorByID(ctx, projectID, authorID)
+	if !canManageAuthorsRole(actorRole) {
+		return Author{}, ErrForbidden
+	}
+	current, err := s.getAdminAuthorByID(ctx, projectID, authorID)
 	if err != nil {
 		return Author{}, err
 	}
@@ -902,6 +949,7 @@ func (s *Store) UpdateAuthor(ctx context.Context, actorUserID, projectID, author
 		ProfileURL:       current.ProfileURL,
 		ExternalProfiles: current.ExternalProfiles,
 		SameAs:           current.SameAs,
+		LoginUserID:      current.LoginUserID,
 		Status:           current.Status,
 	}
 	if patch.Slug != nil {
@@ -940,6 +988,13 @@ func (s *Store) UpdateAuthor(ctx context.Context, actorUserID, projectID, author
 	if patch.SameAs != nil {
 		next.SameAs = *patch.SameAs
 	}
+	loginPatched := patch.LoginUserID != nil
+	if patch.LoginUserID != nil {
+		if !canManageProjectRole(actorRole) {
+			return Author{}, ErrForbidden
+		}
+		next.LoginUserID = *patch.LoginUserID
+	}
 	if patch.Status != nil {
 		next.Status = strings.ToLower(strings.TrimSpace(*patch.Status))
 		if next.Status == "" {
@@ -971,27 +1026,58 @@ func (s *Store) UpdateAuthor(ctx context.Context, actorUserID, projectID, author
 	if err := validateAuthorPhotoAsset(ctx, tx, projectID, next.PhotoAssetID); err != nil {
 		return Author{}, err
 	}
-	result, err := tx.ExecContext(ctx, `
-		UPDATE authors
-		SET slug = ?,
-		    display_name = ?,
-		    short_bio = ?,
-		    full_bio = ?,
-		    photo_asset_id = ?,
-		    job_title = ?,
-		    organization = ?,
-		    credentials_json = ?,
-		    expertise_json = ?,
-		    profile_url = ?,
-		    external_profiles_json = ?,
-		    same_as_json = ?,
-		    status = ?,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE project_id = ? AND id = ?
-	`, next.Slug, next.DisplayName, nullIfEmpty(next.ShortBio), nullIfEmpty(next.FullBio),
-		nullIfEmpty(next.PhotoAssetID), nullIfEmpty(next.JobTitle), nullIfEmpty(next.Organization),
-		credentialsJSON, expertiseJSON, nullIfEmpty(next.ProfileURL), externalProfilesJSON,
-		sameAsJSON, next.Status, projectID, authorID)
+	if loginPatched {
+		if err := validateAuthorLoginUser(ctx, tx, projectID, next.LoginUserID); err != nil {
+			return Author{}, err
+		}
+	}
+	var result sql.Result
+	if loginPatched {
+		result, err = tx.ExecContext(ctx, `
+			UPDATE authors
+			SET slug = ?,
+			    display_name = ?,
+			    short_bio = ?,
+			    full_bio = ?,
+			    photo_asset_id = ?,
+			    job_title = ?,
+			    organization = ?,
+			    credentials_json = ?,
+			    expertise_json = ?,
+			    profile_url = ?,
+			    external_profiles_json = ?,
+			    same_as_json = ?,
+			    login_user_id = ?,
+			    status = ?,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE project_id = ? AND id = ?
+		`, next.Slug, next.DisplayName, nullIfEmpty(next.ShortBio), nullIfEmpty(next.FullBio),
+			nullIfEmpty(next.PhotoAssetID), nullIfEmpty(next.JobTitle), nullIfEmpty(next.Organization),
+			credentialsJSON, expertiseJSON, nullIfEmpty(next.ProfileURL), externalProfilesJSON,
+			sameAsJSON, nullIfEmpty(next.LoginUserID), next.Status, projectID, authorID)
+	} else {
+		result, err = tx.ExecContext(ctx, `
+			UPDATE authors
+			SET slug = ?,
+			    display_name = ?,
+			    short_bio = ?,
+			    full_bio = ?,
+			    photo_asset_id = ?,
+			    job_title = ?,
+			    organization = ?,
+			    credentials_json = ?,
+			    expertise_json = ?,
+			    profile_url = ?,
+			    external_profiles_json = ?,
+			    same_as_json = ?,
+			    status = ?,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE project_id = ? AND id = ?
+		`, next.Slug, next.DisplayName, nullIfEmpty(next.ShortBio), nullIfEmpty(next.FullBio),
+			nullIfEmpty(next.PhotoAssetID), nullIfEmpty(next.JobTitle), nullIfEmpty(next.Organization),
+			credentialsJSON, expertiseJSON, nullIfEmpty(next.ProfileURL), externalProfilesJSON,
+			sameAsJSON, next.Status, projectID, authorID)
+	}
 	if err != nil {
 		return Author{}, err
 	}
@@ -1012,7 +1098,96 @@ func (s *Store) UpdateAuthor(ctx context.Context, actorUserID, projectID, author
 	if err := tx.Commit(); err != nil {
 		return Author{}, err
 	}
-	return s.getAuthorByID(ctx, projectID, authorID)
+	author, err := s.getAdminAuthorByID(ctx, projectID, authorID)
+	if err != nil {
+		return Author{}, err
+	}
+	if !canManageProjectRole(actorRole) {
+		clearAuthorLoginMetadata(&author)
+	}
+	return author, nil
+}
+
+func (s *Store) DeleteAuthor(ctx context.Context, actorUserID, projectID, authorID string) (Author, error) {
+	actorRole, err := s.projectRole(ctx, actorUserID, projectID)
+	if err != nil {
+		return Author{}, err
+	}
+	if !canManageAuthorsRole(actorRole) {
+		return Author{}, ErrForbidden
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Author{}, err
+	}
+	defer tx.Rollback()
+
+	status, err := projectStatus(ctx, tx, projectID)
+	if err != nil {
+		return Author{}, err
+	}
+	if status != "active" {
+		return Author{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	var slug, authorStatus string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT slug, status
+		FROM authors
+		WHERE project_id = ? AND id = ?
+	`, projectID, authorID).Scan(&slug, &authorStatus); err != nil {
+		return Author{}, err
+	}
+	if authorStatus == "inactive" {
+		if err := tx.Commit(); err != nil {
+			return Author{}, err
+		}
+		author, err := s.getAdminAuthorByID(ctx, projectID, authorID)
+		if err != nil {
+			return Author{}, err
+		}
+		if !canManageProjectRole(actorRole) {
+			clearAuthorLoginMetadata(&author)
+		}
+		return author, nil
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE authors
+		SET status = 'inactive',
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND id = ?
+	`, projectID, authorID)
+	if err != nil {
+		return Author{}, err
+	}
+	if changed, err := result.RowsAffected(); err != nil {
+		return Author{}, err
+	} else if changed != 1 {
+		return Author{}, sql.ErrNoRows
+	}
+	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+		return Author{}, err
+	}
+	if err := insertAuthorOutbox(ctx, tx, projectID, authorID, "author.deleted", AuthorInput{
+		Slug:   slug,
+		Status: "inactive",
+	}); err != nil {
+		return Author{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "author.delete", "author", authorID, "success", nil); err != nil {
+		return Author{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Author{}, err
+	}
+	author, err := s.getAdminAuthorByID(ctx, projectID, authorID)
+	if err != nil {
+		return Author{}, err
+	}
+	if !canManageProjectRole(actorRole) {
+		clearAuthorLoginMetadata(&author)
+	}
+	return author, nil
 }
 
 func (s *Store) ListProjectMembers(ctx context.Context, actorUserID, projectID, cursor string, limit int) ([]AdminProjectMember, error) {
@@ -1670,7 +1845,7 @@ func (s *Store) requireProjectManagement(ctx context.Context, userID, projectID 
 	if err != nil {
 		return err
 	}
-	if role == "project_owner" || role == "project_admin" {
+	if canManageProjectRole(role) {
 		return nil
 	}
 	return ErrForbidden
@@ -1681,10 +1856,18 @@ func (s *Store) requireAuthorManage(ctx context.Context, userID, projectID strin
 	if err != nil {
 		return err
 	}
-	if role == "project_owner" || role == "project_admin" || role == "editor" {
+	if canManageAuthorsRole(role) {
 		return nil
 	}
 	return ErrForbidden
+}
+
+func canManageProjectRole(role string) bool {
+	return role == "project_owner" || role == "project_admin"
+}
+
+func canManageAuthorsRole(role string) bool {
+	return canManageProjectRole(role) || role == "editor"
 }
 
 func (s *Store) requireProjectOwner(ctx context.Context, userID, projectID string) error {
@@ -1716,6 +1899,15 @@ const adminProjectColumns = `
 	project.timezone, COALESCE(project.publisher_name, ''),
 	COALESCE(project.publisher_url, ''), project.default_robots_policy,
 	membership.role, project.created_at, project.updated_at
+`
+
+const adminAuthorColumns = `
+	author.id, author.slug, author.display_name, COALESCE(author.short_bio, ''), COALESCE(author.full_bio, ''),
+	COALESCE(author.photo_asset_id, ''), COALESCE(author.job_title, ''), COALESCE(author.organization, ''),
+	author.credentials_json, author.expertise_json, COALESCE(author.profile_url, ''),
+	author.external_profiles_json, author.same_as_json, author.status, author.created_at, author.updated_at,
+	COALESCE(author.login_user_id, ''), COALESCE(user.email_normalized, ''), COALESCE(membership.role, ''),
+	COALESCE(membership.status, '')
 `
 
 func scanAdminProject(row rowScanner) (AdminProject, error) {
@@ -1848,6 +2040,62 @@ func (s *Store) getAuthorByID(ctx context.Context, projectID, authorID string) (
 		WHERE project_id = ? AND id = ?
 	`, projectID, authorID)
 	return scanAuthor(row)
+}
+
+func (s *Store) getAdminAuthorByID(ctx context.Context, projectID, authorID string) (Author, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT `+adminAuthorColumns+`
+		FROM authors author
+		LEFT JOIN project_memberships membership
+		  ON membership.project_id = author.project_id
+		 AND membership.user_id = author.login_user_id
+		LEFT JOIN users user
+		  ON user.id = author.login_user_id
+		WHERE author.project_id = ? AND author.id = ?
+	`, projectID, authorID)
+	return scanAdminAuthor(row)
+}
+
+func scanAdminAuthor(row rowScanner) (Author, error) {
+	var author Author
+	var credentialsJSON, expertiseJSON, externalProfilesJSON, sameAsJSON string
+	err := row.Scan(
+		&author.ID,
+		&author.Slug,
+		&author.DisplayName,
+		&author.ShortBio,
+		&author.FullBio,
+		&author.PhotoAssetID,
+		&author.JobTitle,
+		&author.Organization,
+		&credentialsJSON,
+		&expertiseJSON,
+		&author.ProfileURL,
+		&externalProfilesJSON,
+		&sameAsJSON,
+		&author.Status,
+		&author.CreatedAt,
+		&author.UpdatedAt,
+		&author.LoginUserID,
+		&author.LoginEmail,
+		&author.LoginRole,
+		&author.LoginStatus,
+	)
+	if err != nil {
+		return Author{}, err
+	}
+	decodeInto(credentialsJSON, &author.Credentials)
+	decodeInto(expertiseJSON, &author.Expertise)
+	decodeInto(externalProfilesJSON, &author.ExternalProfiles)
+	decodeInto(sameAsJSON, &author.SameAs)
+	return author, nil
+}
+
+func clearAuthorLoginMetadata(author *Author) {
+	author.LoginUserID = ""
+	author.LoginEmail = ""
+	author.LoginRole = ""
+	author.LoginStatus = ""
 }
 
 func ensureWorkspace(ctx context.Context, tx *sql.Tx, slug, name string) (string, error) {
@@ -2030,6 +2278,7 @@ func applyAuthorDefaults(input AuthorInput) AuthorInput {
 	input.ProfileURL = strings.TrimSpace(input.ProfileURL)
 	input.ExternalProfiles = cleanStringSlice(input.ExternalProfiles)
 	input.SameAs = cleanStringSlice(input.SameAs)
+	input.LoginUserID = strings.TrimSpace(input.LoginUserID)
 	input.Status = strings.ToLower(strings.TrimSpace(input.Status))
 	if input.Status == "" {
 		input.Status = "active"
@@ -2086,6 +2335,26 @@ func validateAuthorPhotoAsset(ctx context.Context, tx *sql.Tx, projectID, photoA
 	`, projectID, photoAssetID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: photoAssetId must reference an asset in this project", ErrValidation)
+	}
+	return err
+}
+
+func validateAuthorLoginUser(ctx context.Context, tx *sql.Tx, projectID, loginUserID string) error {
+	if loginUserID == "" {
+		return nil
+	}
+	var exists int
+	err := tx.QueryRowContext(ctx, `
+		SELECT 1
+		FROM project_memberships membership
+		JOIN users user ON user.id = membership.user_id
+		WHERE membership.project_id = ?
+		  AND membership.user_id = ?
+		  AND membership.status IN ('active','invited')
+		  AND user.status IN ('active','invited')
+	`, projectID, loginUserID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: loginUserId must reference an invited or active member of this project", ErrValidation)
 	}
 	return err
 }

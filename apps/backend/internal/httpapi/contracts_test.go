@@ -40,6 +40,7 @@ func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
 		{http.MethodGet, "/api/v1/projects/{projectID}/media", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/media/uploads", "201"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/media/{assetID}", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/media/{assetID}/complete", "200"},
 		{http.MethodPatch, "/api/v1/projects/{projectID}/media/{assetID}", "200"},
 		{http.MethodDelete, "/api/v1/projects/{projectID}/media/{assetID}", "204"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/ai/jobs", "200"},

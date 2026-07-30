@@ -1488,6 +1488,7 @@ func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 	author := createTestAuthor(t, server, login, project.ID, `{
 		"displayName":"Priya Shah",
 		"slug":"Priya Shah",
+		"loginUserId":"`+login.userID+`",
 		"shortBio":"Search strategist",
 		"fullBio":"Priya leads evidence-backed search programs.",
 		"photoAssetId":"asset-priya",
@@ -1511,6 +1512,21 @@ func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 	if author.PhotoAssetID != "asset-priya" {
 		t.Fatalf("expected author photo asset to round-trip, got %q", author.PhotoAssetID)
 	}
+	if author.LoginUserID != login.userID || author.LoginEmail != "owner@example.test" || author.LoginRole != "project_owner" || author.LoginStatus != "active" {
+		t.Fatalf("expected author to link owner login metadata, got %#v", author)
+	}
+
+	getRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/authors/"+author.ID, nil)
+	addCookies(getRequest, login.cookies)
+	getResponse := mustTest(t, server, getRequest)
+	if getResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected author detail 200, got %d: %s", getResponse.StatusCode, readBody(t, getResponse))
+	}
+	var detail Envelope[store.Author]
+	decodeJSONResponse(t, getResponse, &detail)
+	if detail.Data.ID != author.ID || detail.Data.LoginUserID != login.userID {
+		t.Fatalf("expected author detail with linked login, got %#v", detail.Data)
+	}
 
 	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/authors", nil)
 	addCookies(listRequest, login.cookies)
@@ -1520,7 +1536,7 @@ func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 	}
 	var list ListEnvelope[store.Author]
 	decodeJSONResponse(t, listResponse, &list)
-	if len(list.Data) != 1 || list.Data[0].ID != author.ID {
+	if len(list.Data) != 1 || list.Data[0].ID != author.ID || list.Data[0].LoginEmail != "owner@example.test" {
 		t.Fatalf("expected author list to include created author, got %#v", list.Data)
 	}
 
@@ -1534,14 +1550,16 @@ func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 	decodeJSONResponse(t, publishedResponse, &published)
 	if len(published.Data) != 1 ||
 		published.Data[0].ProfileURL != "https://example.test/authors/priya" ||
-		published.Data[0].PhotoAssetID != "asset-priya" {
+		published.Data[0].PhotoAssetID != "asset-priya" ||
+		published.Data[0].LoginUserID != "" ||
+		published.Data[0].LoginEmail != "" {
 		t.Fatalf("expected active author in content API, got %#v", published.Data)
 	}
 
 	patchRequest := newMemberMutationRequest(
 		http.MethodPatch,
 		"/api/v1/projects/"+project.ID+"/authors/"+author.ID,
-		`{"displayName":"Priya S.","photoAssetId":"","status":"inactive","sameAs":["https://example.test/people/priya"]}`,
+		`{"displayName":"Priya S.","photoAssetId":"","sameAs":["https://example.test/people/priya"]}`,
 		login,
 	)
 	patchResponse := mustTest(t, server, patchRequest)
@@ -1550,8 +1568,30 @@ func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 	}
 	var patched Envelope[store.Author]
 	decodeJSONResponse(t, patchResponse, &patched)
-	if patched.Data.DisplayName != "Priya S." || patched.Data.Status != "inactive" || patched.Data.PhotoAssetID != "" {
-		t.Fatalf("expected patched inactive author, got %#v", patched.Data)
+	if patched.Data.DisplayName != "Priya S." || patched.Data.Status != "active" || patched.Data.PhotoAssetID != "" || patched.Data.LoginUserID != login.userID {
+		t.Fatalf("expected patched active author, got %#v", patched.Data)
+	}
+
+	deleteRequest := newMemberMutationRequest(http.MethodDelete, "/api/v1/projects/"+project.ID+"/authors/"+author.ID, `{}`, login)
+	deleteResponse := mustTest(t, server, deleteRequest)
+	if deleteResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected author delete 200, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+	var deleted Envelope[store.Author]
+	decodeJSONResponse(t, deleteResponse, &deleted)
+	if deleted.Data.ID != author.ID || deleted.Data.Status != "inactive" {
+		t.Fatalf("expected delete to soft-inactivate author, got %#v", deleted.Data)
+	}
+
+	duplicateDeleteRequest := newMemberMutationRequest(http.MethodDelete, "/api/v1/projects/"+project.ID+"/authors/"+author.ID, `{}`, login)
+	duplicateDeleteResponse := mustTest(t, server, duplicateDeleteRequest)
+	if duplicateDeleteResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected duplicate author delete 200, got %d: %s", duplicateDeleteResponse.StatusCode, readBody(t, duplicateDeleteResponse))
+	}
+	var duplicateDeleted Envelope[store.Author]
+	decodeJSONResponse(t, duplicateDeleteResponse, &duplicateDeleted)
+	if duplicateDeleted.Data.ID != author.ID || duplicateDeleted.Data.Status != "inactive" {
+		t.Fatalf("expected duplicate delete to return inactive author without another state change, got %#v", duplicateDeleted.Data)
 	}
 
 	inactivePublishedRequest := httptest.NewRequest(http.MethodGet, "/content/v1/authors", nil)
@@ -1592,8 +1632,8 @@ func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 			changeTypes[change.Type] = true
 		}
 	}
-	if !changeTypes["author.created"] || !changeTypes["author.updated"] {
-		t.Fatalf("expected author create and update change events, got %#v", changes.Data)
+	if !changeTypes["author.created"] || !changeTypes["author.updated"] || !changeTypes["author.deleted"] {
+		t.Fatalf("expected author create, update, and delete change events, got %#v", changes.Data)
 	}
 
 	var contentGeneration int64
@@ -1604,8 +1644,8 @@ func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 	`, project.ID).Scan(&contentGeneration); err != nil {
 		t.Fatal(err)
 	}
-	if contentGeneration != 3 {
-		t.Fatalf("expected author writes to advance content generation to 3, got %d", contentGeneration)
+	if contentGeneration != 4 {
+		t.Fatalf("expected author writes to advance content generation to 4, got %d", contentGeneration)
 	}
 
 	var auditCount int
@@ -1614,12 +1654,12 @@ func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 		FROM audit_events
 		WHERE project_id = ?
 		  AND target_id = ?
-		  AND action IN ('author.create', 'author.update')
+		  AND action IN ('author.create', 'author.update', 'author.delete')
 	`, project.ID, author.ID).Scan(&auditCount); err != nil {
 		t.Fatal(err)
 	}
-	if auditCount != 2 {
-		t.Fatalf("expected author create and update audit events, got %d", auditCount)
+	if auditCount != 3 {
+		t.Fatalf("expected author create, update, and delete audit events, got %d", auditCount)
 	}
 }
 
@@ -2125,6 +2165,7 @@ func TestAuthorManagementAuthorizationAndCrossProjectScoping(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerALogin := seedAndLogin(t, server, db, "owner-a@example.test", "owner a correct password")
 	ownerBLogin := seedAndLogin(t, server, db, "owner-b@example.test", "owner b correct password")
+	editorLogin := seedAndLogin(t, server, db, "editor@example.test", "editor correct password")
 	writerLogin := seedAndLogin(t, server, db, "writer@example.test", "writer correct password")
 	projectA := createTestProject(t, server, ownerALogin, `{"slug":"authors-a","name":"Authors A"}`)
 	projectB := createTestProject(t, server, ownerBLogin, `{"slug":"authors-b","name":"Authors B"}`)
@@ -2137,8 +2178,10 @@ func TestAuthorManagementAuthorizationAndCrossProjectScoping(t *testing.T) {
 	}
 	if _, err := db.Exec(`
 		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
-		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
-	`, projectA.ID, writerLogin.userID); err != nil {
+		VALUES
+		  (?, ?, 'editor', 'active', CURRENT_TIMESTAMP),
+		  (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, projectA.ID, editorLogin.userID, projectA.ID, writerLogin.userID); err != nil {
 		t.Fatal(err)
 	}
 	authorB := createTestAuthor(t, server, ownerBLogin, projectB.ID, `{"displayName":"Project B Author"}`)
@@ -2159,6 +2202,79 @@ func TestAuthorManagementAuthorizationAndCrossProjectScoping(t *testing.T) {
 	writerCreateResponse := mustTest(t, server, writerCreate)
 	if writerCreateResponse.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected writer author creation to fail with 403, got %d: %s", writerCreateResponse.StatusCode, readBody(t, writerCreateResponse))
+	}
+
+	editorCreate := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectA.ID+"/authors",
+		`{"displayName":"Editor Managed","loginUserId":"`+ownerALogin.userID+`"}`,
+		editorLogin,
+	)
+	editorCreateResponse := mustTest(t, server, editorCreate)
+	if editorCreateResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected editor login-linked author creation to fail with 403, got %d: %s", editorCreateResponse.StatusCode, readBody(t, editorCreateResponse))
+	}
+
+	crossProjectLogin := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectA.ID+"/authors",
+		`{"displayName":"Wrong Login","loginUserId":"`+ownerBLogin.userID+`"}`,
+		ownerALogin,
+	)
+	crossProjectLoginResponse := mustTest(t, server, crossProjectLogin)
+	if crossProjectLoginResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected cross-project login link to fail with 400, got %d: %s", crossProjectLoginResponse.StatusCode, readBody(t, crossProjectLoginResponse))
+	}
+
+	linkedAuthor := createTestAuthor(t, server, ownerALogin, projectA.ID, `{"displayName":"Linked Author","loginUserId":"`+ownerALogin.userID+`"}`)
+	editorGetLinked := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projectA.ID+"/authors/"+linkedAuthor.ID, nil)
+	addCookies(editorGetLinked, editorLogin.cookies)
+	editorGetLinkedResponse := mustTest(t, server, editorGetLinked)
+	if editorGetLinkedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected editor author detail 200, got %d: %s", editorGetLinkedResponse.StatusCode, readBody(t, editorGetLinkedResponse))
+	}
+	var editorLinkedDetail Envelope[store.Author]
+	decodeJSONResponse(t, editorGetLinkedResponse, &editorLinkedDetail)
+	if editorLinkedDetail.Data.LoginUserID != "" || editorLinkedDetail.Data.LoginEmail != "" {
+		t.Fatalf("expected editor author detail to hide login metadata, got %#v", editorLinkedDetail.Data)
+	}
+
+	editorPatchLinked := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+projectA.ID+"/authors/"+linkedAuthor.ID,
+		`{"displayName":"Editor Updated Linked Author"}`,
+		editorLogin,
+	)
+	editorPatchLinkedResponse := mustTest(t, server, editorPatchLinked)
+	if editorPatchLinkedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected editor author update without login metadata 200, got %d: %s", editorPatchLinkedResponse.StatusCode, readBody(t, editorPatchLinkedResponse))
+	}
+	var editorPatchedLinked Envelope[store.Author]
+	decodeJSONResponse(t, editorPatchLinkedResponse, &editorPatchedLinked)
+	if editorPatchedLinked.Data.LoginUserID != "" || editorPatchedLinked.Data.LoginEmail != "" {
+		t.Fatalf("expected editor author update response to hide login metadata, got %#v", editorPatchedLinked.Data)
+	}
+	ownerGetLinked := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projectA.ID+"/authors/"+linkedAuthor.ID, nil)
+	addCookies(ownerGetLinked, ownerALogin.cookies)
+	ownerGetLinkedResponse := mustTest(t, server, ownerGetLinked)
+	if ownerGetLinkedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected owner author detail 200, got %d: %s", ownerGetLinkedResponse.StatusCode, readBody(t, ownerGetLinkedResponse))
+	}
+	var ownerLinkedDetail Envelope[store.Author]
+	decodeJSONResponse(t, ownerGetLinkedResponse, &ownerLinkedDetail)
+	if ownerLinkedDetail.Data.LoginUserID != ownerALogin.userID || ownerLinkedDetail.Data.DisplayName != "Editor Updated Linked Author" {
+		t.Fatalf("expected editor update to preserve hidden login metadata, got %#v", ownerLinkedDetail.Data)
+	}
+
+	editorClearLogin := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+projectA.ID+"/authors/"+linkedAuthor.ID,
+		`{"loginUserId":""}`,
+		editorLogin,
+	)
+	editorClearLoginResponse := mustTest(t, server, editorClearLogin)
+	if editorClearLoginResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected editor login unlink to fail with 403, got %d: %s", editorClearLoginResponse.StatusCode, readBody(t, editorClearLoginResponse))
 	}
 
 	crossProjectPhoto := newMemberMutationRequest(

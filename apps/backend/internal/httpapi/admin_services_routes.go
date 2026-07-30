@@ -1,11 +1,16 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
+	"seoblog/apps/backend/internal/media"
 	"seoblog/apps/backend/internal/store"
 )
 
@@ -21,6 +26,10 @@ type mediaPatchRequest struct {
 	Caption    *string `json:"caption"`
 	Credit     *string `json:"credit"`
 	License    *string `json:"license"`
+}
+
+type mediaCompleteRequest struct {
+	SHA256 string `json:"sha256"`
 }
 
 type aiJobRequest struct {
@@ -47,6 +56,9 @@ func (s *Server) listMediaAssets(c *fiber.Ctx) error {
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list media")
 	}
+	for index := range assets {
+		s.enrichMediaAsset(&assets[index])
+	}
 	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.AdminMediaAsset]{
 		Data: assets,
 		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: len(assets)},
@@ -62,14 +74,42 @@ func (s *Server) createMediaAsset(c *fiber.Ctx) error {
 	if err := decodeStrictRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
 	}
+	now := time.Now().UTC()
+	uploadStatus := "registered"
+	uploadBucket := ""
+	var uploadExpiresAt time.Time
+	if s.mediaStorage != nil {
+		uploadStatus = "uploading"
+		uploadBucket = s.mediaStorage.Bucket()
+		uploadExpiresAt = now.Add(mediaPresignTTL(s.cfg.B2MediaPresignTTL))
+	}
 	asset, err := s.store.CreateMediaAsset(c.UserContext(), user.ID, c.Params("projectID"), store.MediaUploadInput{
-		Filename:    input.Filename,
-		ContentType: input.ContentType,
-		Bytes:       input.Bytes,
+		Filename:        input.Filename,
+		ContentType:     input.ContentType,
+		Bytes:           input.Bytes,
+		Bucket:          uploadBucket,
+		Status:          uploadStatus,
+		UploadExpiresAt: uploadExpiresAt,
 	})
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not register media")
 	}
+	if s.mediaStorage != nil {
+		signed, err := s.mediaStorage.PresignPost(asset.ObjectKey, asset.ContentType, asset.Bytes, now)
+		if err != nil {
+			_, _ = s.store.FailMediaAsset(c.UserContext(), user.ID, c.Params("projectID"), asset.ID, "could not sign B2 upload")
+			return problem(c, fiber.StatusInternalServerError, "Could not sign media upload", "")
+		}
+		asset.Upload = &store.MediaUploadTarget{
+			URL:       signed.URL,
+			Method:    signed.Method,
+			Headers:   signed.Headers,
+			Fields:    signed.Fields,
+			ExpiresAt: signed.ExpiresAt,
+			MaxBytes:  signed.MaxBytes,
+		}
+	}
+	s.enrichMediaAsset(&asset)
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.AdminMediaAsset]{Data: asset})
 }
 
@@ -81,6 +121,33 @@ func (s *Server) getMediaAsset(c *fiber.Ctx) error {
 	asset, err := s.store.GetMediaAsset(c.UserContext(), user.ID, c.Params("projectID"), c.Params("assetID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Media asset not found", "Could not load media")
+	}
+	s.enrichMediaAsset(&asset)
+	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminMediaAsset]{Data: asset})
+}
+
+func (s *Server) completeMediaUpload(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	if s.mediaStorage == nil {
+		return problem(c, fiber.StatusConflict, "Media storage is not configured", "Configure Backblaze B2 media storage before completing uploads")
+	}
+	var input mediaCompleteRequest
+	if len(strings.TrimSpace(string(c.Body()))) > 0 {
+		if err := decodeStrictRequestBody(c, &input); err != nil {
+			return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
+		}
+	}
+	if !validOptionalSHA256(input.SHA256) {
+		return problem(c, fiber.StatusBadRequest, "Invalid media checksum", "sha256 must be a 64-character hexadecimal digest")
+	}
+	projectID := c.Params("projectID")
+	assetID := c.Params("assetID")
+	asset, err := s.store.MarkMediaAssetProcessing(c.UserContext(), user.ID, projectID, assetID, input.SHA256)
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not process media")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminMediaAsset]{Data: asset})
 }
@@ -104,6 +171,7 @@ func (s *Server) updateMediaAsset(c *fiber.Ctx) error {
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not update media")
 	}
+	s.enrichMediaAsset(&asset)
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminMediaAsset]{Data: asset})
 }
 
@@ -112,10 +180,102 @@ func (s *Server) deleteMediaAsset(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	if err := s.store.DeleteMediaAsset(c.UserContext(), user.ID, c.Params("projectID"), c.Params("assetID")); err != nil {
+	projectID := c.Params("projectID")
+	assetID := c.Params("assetID")
+	asset, err := s.store.GetMediaAsset(c.UserContext(), user.ID, projectID, assetID)
+	if err != nil {
+		return s.adminReadError(c, err, "Media asset not found", "Could not delete media")
+	}
+	if err := s.deleteMediaObjects(c.UserContext(), asset); err != nil {
+		s.logger.Error("media object deletion failed", "asset_id", asset.ID, "error", err)
+		return problem(c, fiber.StatusBadGateway, "Could not delete media objects", "")
+	}
+	if err := s.store.DeleteMediaAsset(c.UserContext(), user.ID, projectID, assetID); err != nil {
 		return s.adminMutationError(c, err, "Could not delete media")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (s *Server) deleteMediaObjects(ctx context.Context, asset store.AdminMediaAsset) error {
+	if s.mediaStorage == nil {
+		return nil
+	}
+	keys := []string{asset.ObjectKey}
+	for _, variant := range asset.Variants {
+		keys = append(keys, variant.ObjectKey)
+	}
+	keys = uniqueMediaObjectKeys(keys)
+	for _, key := range keys {
+		if !media.DeletableObjectKeyForAsset(asset.ProjectID, asset.ID, key) {
+			return fmt.Errorf("refusing to delete media object outside asset scope: %q", key)
+		}
+	}
+	var errs []error
+	for _, key := range keys {
+		if err := s.mediaStorage.DeleteObject(ctx, key); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func uniqueMediaObjectKeys(keys []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, key)
+	}
+	return result
+}
+
+func (s *Server) enrichMediaAsset(asset *store.AdminMediaAsset) {
+	if s.mediaStorage == nil || asset == nil || asset.Status != "ready" {
+		return
+	}
+	for index := range asset.Variants {
+		asset.Variants[index].URL = s.mediaStorage.PublicURL(asset.Variants[index].ObjectKey)
+	}
+	if len(asset.Variants) > 0 && asset.Variants[0].URL != "" {
+		asset.URL = asset.Variants[0].URL
+		return
+	}
+	asset.URL = s.mediaStorage.PublicURL(asset.ObjectKey)
+}
+
+func mediaPresignTTL(configured time.Duration) time.Duration {
+	if configured <= 0 {
+		return 15 * time.Minute
+	}
+	if configured > 7*24*time.Hour {
+		return 7 * 24 * time.Hour
+	}
+	return configured
+}
+
+func validOptionalSHA256(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return true
+	}
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') &&
+			(character < 'a' || character > 'f') &&
+			(character < 'A' || character > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) listAIJobs(c *fiber.Ctx) error {

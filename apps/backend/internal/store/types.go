@@ -78,6 +78,10 @@ type Author struct {
 	ProfileURL       string   `json:"profileUrl,omitempty"`
 	ExternalProfiles []string `json:"externalProfiles,omitempty"`
 	SameAs           []string `json:"sameAs,omitempty"`
+	LoginUserID      string   `json:"loginUserId,omitempty"`
+	LoginEmail       string   `json:"loginEmail,omitempty"`
+	LoginRole        string   `json:"loginRole,omitempty"`
+	LoginStatus      string   `json:"loginStatus,omitempty"`
 	Status           string   `json:"status,omitempty"`
 	CreatedAt        string   `json:"createdAt,omitempty"`
 	UpdatedAt        string   `json:"updatedAt,omitempty"`

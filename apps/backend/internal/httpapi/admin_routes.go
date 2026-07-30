@@ -88,13 +88,16 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/projects/:projectID/tags", s.requireAdminSession, s.requireAdminCSRF, s.createTag)
 	api.Get("/projects/:projectID/authors", s.requireAdminSession, s.listAdminAuthors)
 	api.Post("/projects/:projectID/authors", s.requireAdminSession, s.requireAdminCSRF, s.createAuthor)
+	api.Get("/projects/:projectID/authors/:authorID", s.requireAdminSession, s.getAdminAuthor)
 	api.Patch("/projects/:projectID/authors/:authorID", s.requireAdminSession, s.requireAdminCSRF, s.updateAuthor)
+	api.Delete("/projects/:projectID/authors/:authorID", s.requireAdminSession, s.requireAdminCSRF, s.deleteAuthor)
 	api.Get("/projects/:projectID/series", s.requireAdminSession, s.listAdminSeries)
 	api.Post("/projects/:projectID/series", s.requireAdminSession, s.requireAdminCSRF, s.createSeries)
 
 	api.Get("/projects/:projectID/media", s.requireAdminSession, s.listMediaAssets)
 	api.Post("/projects/:projectID/media/uploads", s.requireAdminSession, s.requireAdminCSRF, s.createMediaAsset)
 	api.Get("/projects/:projectID/media/:assetID", s.requireAdminSession, s.getMediaAsset)
+	api.Post("/projects/:projectID/media/:assetID/complete", s.requireAdminSession, s.requireAdminCSRF, s.completeMediaUpload)
 	api.Patch("/projects/:projectID/media/:assetID", s.requireAdminSession, s.requireAdminCSRF, s.updateMediaAsset)
 	api.Delete("/projects/:projectID/media/:assetID", s.requireAdminSession, s.requireAdminCSRF, s.deleteMediaAsset)
 
@@ -320,6 +323,7 @@ type authorRequest struct {
 	ProfileURL       string   `json:"profileUrl"`
 	ExternalProfiles []string `json:"externalProfiles"`
 	SameAs           []string `json:"sameAs"`
+	LoginUserID      string   `json:"loginUserId"`
 	Status           string   `json:"status"`
 }
 
@@ -336,6 +340,7 @@ type authorPatchRequest struct {
 	ProfileURL       *string   `json:"profileUrl"`
 	ExternalProfiles *[]string `json:"externalProfiles"`
 	SameAs           *[]string `json:"sameAs"`
+	LoginUserID      *string   `json:"loginUserId"`
 	Status           *string   `json:"status"`
 }
 
@@ -1314,6 +1319,18 @@ func (s *Server) createAuthor(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.Author]{Data: author})
 }
 
+func (s *Server) getAdminAuthor(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	author, err := s.store.GetAuthorForUser(c.UserContext(), user.ID, c.Params("projectID"), c.Params("authorID"))
+	if err != nil {
+		return s.adminReadError(c, err, "Author not found", "Could not load author")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.Author]{Data: author})
+}
+
 func (s *Server) updateAuthor(c *fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
@@ -1326,6 +1343,18 @@ func (s *Server) updateAuthor(c *fiber.Ctx) error {
 	author, err := s.store.UpdateAuthor(c.UserContext(), user.ID, c.Params("projectID"), c.Params("authorID"), input.toStorePatch())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not update author")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.Author]{Data: author})
+}
+
+func (s *Server) deleteAuthor(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	author, err := s.store.DeleteAuthor(c.UserContext(), user.ID, c.Params("projectID"), c.Params("authorID"))
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not delete author")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.Author]{Data: author})
 }
@@ -2045,6 +2074,7 @@ func (input authorRequest) toStoreInput() store.AuthorInput {
 		ProfileURL:       input.ProfileURL,
 		ExternalProfiles: input.ExternalProfiles,
 		SameAs:           input.SameAs,
+		LoginUserID:      input.LoginUserID,
 		Status:           input.Status,
 	}
 }
@@ -2063,6 +2093,7 @@ func (input authorPatchRequest) toStorePatch() store.AuthorPatch {
 		ProfileURL:       input.ProfileURL,
 		ExternalProfiles: input.ExternalProfiles,
 		SameAs:           input.SameAs,
+		LoginUserID:      input.LoginUserID,
 		Status:           input.Status,
 	}
 }

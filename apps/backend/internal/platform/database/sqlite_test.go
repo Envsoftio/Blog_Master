@@ -583,6 +583,49 @@ func TestAuthorPhotoAssetMustBelongToProject(t *testing.T) {
 	`, "author photo")
 }
 
+func TestAuthorLoginUserMustBelongToProject(t *testing.T) {
+	db := testDatabase(t)
+	seedProjects(t, db)
+	if _, err := db.Exec(`
+		INSERT INTO users(id, email_normalized, status)
+		VALUES
+		  ('member-a', 'member-a@example.test', 'active'),
+		  ('member-b', 'member-b@example.test', 'active'),
+		  ('disabled-a', 'disabled-a@example.test', 'disabled');
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES
+		  ('project-a', 'member-a', 'writer', 'active', CURRENT_TIMESTAMP),
+		  ('project-b', 'member-b', 'writer', 'active', CURRENT_TIMESTAMP),
+		  ('project-a', 'disabled-a', 'writer', 'active', CURRENT_TIMESTAMP);
+		INSERT INTO authors(id, project_id, slug, display_name, login_user_id)
+		VALUES ('author-a', 'project-a', 'author-a', 'Author A', 'member-a');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	assertSQLFails(t, db, `
+		INSERT INTO authors(id, project_id, slug, display_name, login_user_id)
+		VALUES ('author-cross-project', 'project-a', 'cross-project', 'Cross Project', 'member-b')
+	`, "same project")
+	assertSQLFails(t, db, `
+		INSERT INTO authors(id, project_id, slug, display_name, login_user_id)
+		VALUES ('author-missing', 'project-a', 'missing', 'Missing', 'missing-user')
+	`, "same project")
+	assertSQLFails(t, db, `
+		INSERT INTO authors(id, project_id, slug, display_name, login_user_id)
+		VALUES ('author-disabled', 'project-a', 'disabled', 'Disabled', 'disabled-a')
+	`, "same project")
+	assertSQLFails(t, db, `
+		INSERT INTO authors(id, project_id, slug, display_name, login_user_id)
+		VALUES ('author-duplicate', 'project-a', 'duplicate', 'Duplicate', 'member-a')
+	`, "unique")
+	assertSQLFails(t, db, `
+		UPDATE authors
+		SET login_user_id = 'member-b'
+		WHERE id = 'author-a'
+	`, "same project")
+}
+
 func TestAuditEventsGenerateLegacyIDsAndRemainAppendOnly(t *testing.T) {
 	db := testDatabase(t)
 	seedProjects(t, db)

@@ -14,27 +14,39 @@ import (
 
 	"seoblog/apps/backend/internal/config"
 	"seoblog/apps/backend/internal/mailer"
+	"seoblog/apps/backend/internal/platform/b2"
 	"seoblog/apps/backend/internal/store"
 )
 
 type Options struct {
-	Config config.Config
-	Logger *slog.Logger
-	Mailer mailer.Sender
-	Store  *store.Store
-	Cache  ResponseCache
+	Config       config.Config
+	Logger       *slog.Logger
+	Mailer       mailer.Sender
+	Store        *store.Store
+	Cache        ResponseCache
+	MediaStorage mediaStorage
 }
 
 type Server struct {
-	app       *fiber.App
-	openAPI   *huma.OpenAPI
-	cfg       config.Config
-	logger    *slog.Logger
-	mailer    mailer.Sender
-	mailSlots chan struct{}
-	store     *store.Store
-	cache     ResponseCache
-	cacheFill cacheFlightGroup
+	app          *fiber.App
+	openAPI      *huma.OpenAPI
+	cfg          config.Config
+	logger       *slog.Logger
+	mailer       mailer.Sender
+	mailSlots    chan struct{}
+	store        *store.Store
+	cache        ResponseCache
+	cacheFill    cacheFlightGroup
+	mediaStorage mediaStorage
+}
+
+type mediaStorage interface {
+	Bucket() string
+	PublicURL(key string) string
+	PresignPost(key, contentType string, maxBytes int64, now time.Time) (b2.SignedUpload, error)
+	GetObject(ctx context.Context, key string, maxBytes int64) ([]byte, string, error)
+	PutObject(ctx context.Context, key string, body []byte, contentType string) error
+	DeleteObject(ctx context.Context, key string) error
 }
 
 func New(opts Options) *Server {
@@ -72,14 +84,33 @@ func New(opts Options) *Server {
 			RequireStartTLS: opts.Config.SMTPRequireTLS,
 		})
 	}
+	mediaStorage := opts.MediaStorage
+	if mediaStorage == nil && opts.Config.B2MediaEnabled() {
+		client, err := b2.New(b2.Config{
+			Endpoint:             opts.Config.B2MediaEndpoint,
+			Region:               opts.Config.B2MediaRegion,
+			Bucket:               opts.Config.B2MediaBucket,
+			KeyID:                opts.Config.B2MediaKeyID,
+			ApplicationKey:       opts.Config.B2MediaApplicationKey,
+			PublicBaseURL:        opts.Config.B2MediaPublicBaseURL,
+			PresignTTL:           opts.Config.B2MediaPresignTTL,
+			ServerSideEncryption: opts.Config.B2MediaSSE,
+		})
+		if err != nil {
+			opts.Logger.Error("B2 media storage disabled", "error", err)
+		} else {
+			mediaStorage = client
+		}
+	}
 	s := &Server{
-		app:       app,
-		cfg:       opts.Config,
-		logger:    opts.Logger,
-		mailer:    messageSender,
-		mailSlots: make(chan struct{}, 8),
-		store:     opts.Store,
-		cache:     opts.Cache,
+		app:          app,
+		cfg:          opts.Config,
+		logger:       opts.Logger,
+		mailer:       messageSender,
+		mailSlots:    make(chan struct{}, 8),
+		store:        opts.Store,
+		cache:        opts.Cache,
+		mediaStorage: mediaStorage,
 	}
 	s.registerRoutes()
 	return s

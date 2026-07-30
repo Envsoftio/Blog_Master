@@ -41,7 +41,7 @@
           <button class="button button--primary button--compact" type="button" :disabled="uploading" @click="uploadFiles">
             <LoaderCircle v-if="uploading" class="spin" :size="15" />
             <Upload v-else :size="15" />
-            Register files
+            Upload files
           </button>
         </div>
       </div>
@@ -102,7 +102,7 @@
             <h3>{{ asset.filename }}</h3>
             <p>{{ asset.width && asset.height ? `${asset.width} × ${asset.height}` : labelize(asset.contentType) }} · {{ formatBytes(asset.bytes || 0) }}</p>
           </div>
-          <span class="status-pill" :class="{ 'status-pill--success': asset.status === 'ready' }">{{ asset.status }}</span>
+          <span class="status-pill" :class="mediaStatusClass(asset.status)">{{ labelize(asset.status) }}</span>
         </div>
       </article>
     </div>
@@ -194,23 +194,67 @@ async function uploadFiles() {
   errorMessage.value = ''
   successMessage.value = ''
   try {
+    let uploadedCount = 0
+    let registeredCount = 0
     for (const file of selectedFiles.value) {
-      await api.initiateMediaUpload(projectID.value, {
+      const initiated = await api.initiateMediaUpload(projectID.value, {
         filename: file.name,
         contentType: mediaContentType(file) || 'application/octet-stream',
         bytes: file.size
       })
+      if (initiated.data.upload) {
+        const sha256 = await fileSHA256(file)
+        await uploadToSignedTarget(file, initiated.data.upload)
+        await api.completeMediaUpload(projectID.value, initiated.data.id, { sha256 })
+        uploadedCount++
+      } else {
+        registeredCount++
+      }
     }
-    successMessage.value = `${selectedFiles.value.length} media record${selectedFiles.value.length === 1 ? '' : 's'} registered for object-storage upload.`
+    successMessage.value = uploadedCount
+      ? `${uploadedCount} media file${uploadedCount === 1 ? '' : 's'} uploaded and queued for scanning.`
+      : `${registeredCount} media record${registeredCount === 1 ? '' : 's'} registered for object-storage upload.`
     selectedFiles.value = []
     await loadMedia()
   } catch (error) {
     errorMessage.value = apiStatus(error) === 501
       ? 'Media registration is not enabled on this backend.'
-      : normalizeAPIError(error, 'Could not register the media.')
+      : normalizeAPIError(error, 'Could not upload the media.')
   } finally {
     uploading.value = false
   }
+}
+
+async function uploadToSignedTarget(file: File, upload: NonNullable<AdminMediaAsset['upload']>) {
+  if (upload.fields && Object.keys(upload.fields).length > 0) {
+    const form = new FormData()
+    for (const [key, value] of Object.entries(upload.fields)) {
+      form.append(key, value)
+    }
+    form.append('file', file)
+    const response = await fetch(upload.url, {
+      method: upload.method || 'POST',
+      body: form
+    })
+    if (!response.ok) {
+      throw new Error(`Object storage upload failed with status ${response.status}.`)
+    }
+    return
+  }
+  const response = await fetch(upload.url, {
+    method: upload.method || 'PUT',
+    headers: upload.headers,
+    body: file
+  })
+  if (!response.ok) {
+    throw new Error(`Object storage upload failed with status ${response.status}.`)
+  }
+}
+
+async function fileSHA256(file: File) {
+  if (!globalThis.crypto?.subtle) return ''
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+  return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 function mediaContentType(file: File) {
@@ -232,6 +276,14 @@ function formatBytes(bytes: number) {
   const units = ['B', 'KB', 'MB', 'GB']
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
   return `${(bytes / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`
+}
+
+function mediaStatusClass(status: string) {
+  return {
+    'status-pill--success': status === 'ready',
+    'status-pill--warning': status === 'processing' || status === 'uploading',
+    'status-pill--danger': status === 'failed' || status === 'rejected'
+  }
 }
 </script>
 

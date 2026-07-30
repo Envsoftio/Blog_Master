@@ -58,6 +58,15 @@ var reviewAssignmentWorkflowMigration string
 //go:embed migrations/0016_webhook_delivery.sql
 var webhookDeliveryMigration string
 
+//go:embed migrations/0017_author_login_link.sql
+var authorLoginLinkMigration string
+
+//go:embed migrations/0018_media_lifecycle.sql
+var mediaLifecycleMigration string
+
+//go:embed migrations/0019_media_expected_checksum.sql
+var mediaExpectedChecksumMigration string
+
 type migration struct {
 	version    string
 	statements string
@@ -110,6 +119,9 @@ func Migrate(db *sql.DB) error {
 		{version: "0014_review_assignments_integrity", statements: reviewAssignmentsIntegrityMigration},
 		{version: "0015_review_assignment_workflow", statements: reviewAssignmentWorkflowMigration},
 		{version: "0016_webhook_delivery", statements: webhookDeliveryMigration},
+		{version: "0017_author_login_link", statements: authorLoginLinkMigration},
+		{version: "0018_media_lifecycle", statements: mediaLifecycleMigration},
+		{version: "0019_media_expected_checksum", statements: mediaExpectedChecksumMigration},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {

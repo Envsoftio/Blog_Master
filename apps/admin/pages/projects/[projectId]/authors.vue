@@ -98,6 +98,18 @@
                   >
                     <Pencil class="h-4 w-4" />
                   </button>
+                  <button
+                    v-if="canManageAuthors && author.status !== 'inactive'"
+                    class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#e2bbb6] text-[#9b2d23] hover:bg-[#fff4f2] disabled:opacity-60 dark:border-[#6d352f] dark:text-[#ffc4bd] dark:hover:bg-[#2a1c1a]"
+                    type="button"
+                    title="Deactivate author"
+                    aria-label="Deactivate author"
+                    :disabled="deletingAuthorID === author.id"
+                    @click="deleteAuthor(author)"
+                  >
+                    <LoaderCircle v-if="deletingAuthorID === author.id" class="h-4 w-4 animate-spin" />
+                    <Trash2 v-else class="h-4 w-4" />
+                  </button>
                 </div>
               </div>
 
@@ -105,7 +117,7 @@
                 {{ author.shortBio }}
               </p>
 
-              <dl class="mt-5 grid gap-3 text-sm md:grid-cols-3">
+              <dl class="mt-5 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
                 <div class="flex items-center gap-2">
                   <Briefcase class="h-4 w-4 text-[#3162a3]" />
                   <div class="min-w-0">
@@ -125,6 +137,13 @@
                   <div class="min-w-0">
                     <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Profile</dt>
                     <dd class="truncate">{{ author.profileUrl || 'Not set' }}</dd>
+                  </div>
+                </div>
+                <div v-if="canManageProject" class="flex items-center gap-2">
+                  <UserRound class="h-4 w-4 text-[#165a4a]" />
+                  <div class="min-w-0">
+                    <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Login</dt>
+                    <dd class="truncate">{{ author.loginEmail ? `${author.loginEmail} · ${labelize(author.loginRole || '')}` : 'Not linked' }}</dd>
                   </div>
                 </div>
               </dl>
@@ -189,6 +208,16 @@
                 <input v-model.trim="form.profileUrl" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" type="url" />
               </label>
             </div>
+
+            <label v-if="canManageProject" class="block space-y-2">
+              <span class="text-sm font-medium">Login account</span>
+              <select v-model="form.loginUserId" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]">
+                <option value="">Not linked</option>
+                <option v-for="member in loginMembers" :key="member.userId" :value="member.userId">
+                  {{ member.email }} · {{ labelize(member.role) }}
+                </option>
+              </select>
+            </label>
 
             <label class="block space-y-2">
               <span class="text-sm font-medium">Photo asset ID</span>
@@ -263,7 +292,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, BadgeCheck, Briefcase, Check, Link2, LoaderCircle, LogOut, Pencil, Plus, RefreshCw, UserRound, X } from 'lucide-vue-next'
+import { ArrowLeft, BadgeCheck, Briefcase, Check, Link2, LoaderCircle, LogOut, Pencil, Plus, RefreshCw, Trash2, UserRound, X } from 'lucide-vue-next'
 
 type APIEnvelope<T> = {
   data: T
@@ -299,9 +328,21 @@ type Author = {
   profileUrl?: string
   externalProfiles?: string[]
   sameAs?: string[]
+  loginUserId?: string
+  loginEmail?: string
+  loginRole?: string
+  loginStatus?: string
   status: string
   createdAt?: string
   updatedAt?: string
+}
+
+type ProjectMember = {
+  projectId: string
+  userId: string
+  email: string
+  role: string
+  status: string
 }
 
 const route = useRoute()
@@ -312,9 +353,11 @@ const projectID = computed(() => {
 
 const project = ref<AdminProject | null>(null)
 const authors = ref<Author[]>([])
+const members = ref<ProjectMember[]>([])
 const pending = ref(true)
 const loadingMore = ref(false)
 const saving = ref(false)
+const deletingAuthorID = ref('')
 const editingAuthorID = ref('')
 const nextCursor = ref('')
 const errorMessage = ref('')
@@ -330,6 +373,7 @@ const form = reactive({
   jobTitle: '',
   organization: '',
   profileUrl: '',
+  loginUserId: '',
   credentials: '',
   expertise: '',
   externalProfiles: '',
@@ -339,6 +383,7 @@ const form = reactive({
 const canManageProject = computed(() => project.value?.role === 'project_owner' || project.value?.role === 'project_admin')
 const canManageAuthors = computed(() => canManageProject.value || project.value?.role === 'editor')
 const canSave = computed(() => Boolean(form.displayName.trim() && form.slug.trim()))
+const loginMembers = computed(() => members.value.filter(member => member.status === 'active' || member.status === 'invited'))
 
 watch(() => form.displayName, (value) => {
   if (!editingAuthorID.value && !form.slug) form.slug = slugify(value)
@@ -360,6 +405,7 @@ async function refresh() {
     project.value = projectResponse.data
     authors.value = sortAuthors(apiListData(authorResponse))
     nextCursor.value = authorResponse.meta?.nextCursor || ''
+    members.value = canManageProject.value ? await loadProjectMembers() : []
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load authors. Sign in again if your session has expired.')
   } finally {
@@ -401,6 +447,7 @@ function startEdit(author: Author) {
   form.jobTitle = author.jobTitle || ''
   form.organization = author.organization || ''
   form.profileUrl = author.profileUrl || ''
+  form.loginUserId = author.loginUserId || ''
   form.credentials = (author.credentials || []).join(', ')
   form.expertise = (author.expertise || []).join(', ')
   form.externalProfiles = (author.externalProfiles || []).join('\n')
@@ -419,6 +466,7 @@ function resetForm() {
   form.jobTitle = ''
   form.organization = ''
   form.profileUrl = ''
+  form.loginUserId = ''
   form.credentials = ''
   form.expertise = ''
   form.externalProfiles = ''
@@ -461,7 +509,7 @@ async function saveAuthor() {
 }
 
 function authorBody() {
-  return {
+  const body: Record<string, unknown> = {
     displayName: form.displayName,
     slug: form.slug,
     status: form.status,
@@ -476,6 +524,40 @@ function authorBody() {
     externalProfiles: splitLines(form.externalProfiles),
     sameAs: splitLines(form.sameAs)
   }
+  if (canManageProject.value) {
+    body.loginUserId = form.loginUserId
+  }
+  return body
+}
+
+async function deleteAuthor(author: Author) {
+  if (deletingAuthorID.value) return
+  if (!confirm(`Deactivate ${author.displayName}?`)) return
+  deletingAuthorID.value = author.id
+  clearMessages()
+  try {
+    const csrfToken = await getCSRFToken()
+    const response = await $fetch<APIEnvelope<Author>>(`/api/v1/projects/${projectID.value}/authors/${author.id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: { 'X-CSRF-Token': csrfToken }
+    })
+    authors.value = sortAuthors(authors.value.map(candidate => candidate.id === response.data.id ? response.data : candidate))
+    if (editingAuthorID.value === author.id) resetForm()
+    successMessage.value = 'Author deactivated.'
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, 'Could not deactivate author.')
+  } finally {
+    deletingAuthorID.value = ''
+  }
+}
+
+async function loadProjectMembers() {
+  const response = await $fetch<APIListEnvelope<ProjectMember>>(`/api/v1/projects/${projectID.value}/members`, {
+    credentials: 'include',
+    query: { limit: 100 }
+  })
+  return apiListData(response)
 }
 
 async function logout() {

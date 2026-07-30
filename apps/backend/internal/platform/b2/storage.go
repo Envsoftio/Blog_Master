@@ -1,0 +1,393 @@
+package b2
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"sort"
+	"strings"
+	"time"
+)
+
+const (
+	awsAlgorithm    = "AWS4-HMAC-SHA256"
+	awsService      = "s3"
+	unsignedPayload = "UNSIGNED-PAYLOAD"
+)
+
+type Config struct {
+	Endpoint             string
+	Region               string
+	Bucket               string
+	KeyID                string
+	ApplicationKey       string
+	PublicBaseURL        string
+	PresignTTL           time.Duration
+	ServerSideEncryption string
+}
+
+type Client struct {
+	endpoint             *url.URL
+	region               string
+	bucket               string
+	keyID                string
+	applicationKey       string
+	publicBaseURL        string
+	presignTTL           time.Duration
+	serverSideEncryption string
+	httpClient           *http.Client
+}
+
+type SignedUpload struct {
+	URL       string            `json:"url"`
+	Method    string            `json:"method"`
+	Headers   map[string]string `json:"headers"`
+	Fields    map[string]string `json:"fields,omitempty"`
+	ExpiresAt string            `json:"expiresAt"`
+	MaxBytes  int64             `json:"maxBytes"`
+}
+
+func New(config Config) (*Client, error) {
+	endpoint, err := url.Parse(strings.TrimRight(strings.TrimSpace(config.Endpoint), "/"))
+	if err != nil {
+		return nil, fmt.Errorf("parse B2 media endpoint: %w", err)
+	}
+	if endpoint.Scheme != "https" || endpoint.Host == "" {
+		return nil, fmt.Errorf("B2 media endpoint must be an HTTPS URL")
+	}
+	ttl := config.PresignTTL
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+	if ttl > 7*24*time.Hour {
+		ttl = 7 * 24 * time.Hour
+	}
+	region := strings.TrimSpace(config.Region)
+	if region == "" {
+		region = "us-west-004"
+	}
+	return &Client{
+		endpoint:             endpoint,
+		region:               region,
+		bucket:               strings.TrimSpace(config.Bucket),
+		keyID:                strings.TrimSpace(config.KeyID),
+		applicationKey:       config.ApplicationKey,
+		publicBaseURL:        strings.TrimRight(strings.TrimSpace(config.PublicBaseURL), "/"),
+		presignTTL:           ttl,
+		serverSideEncryption: strings.TrimSpace(config.ServerSideEncryption),
+		httpClient:           &http.Client{Timeout: 30 * time.Second},
+	}, nil
+}
+
+func (c *Client) Bucket() string {
+	if c == nil {
+		return ""
+	}
+	return c.bucket
+}
+
+func (c *Client) PublicURL(key string) string {
+	if c == nil || c.publicBaseURL == "" || key == "" {
+		return ""
+	}
+	return c.publicBaseURL + "/" + escapeKey(key)
+}
+
+func (c *Client) PresignPost(key, contentType string, maxBytes int64, now time.Time) (SignedUpload, error) {
+	if c == nil {
+		return SignedUpload{}, fmt.Errorf("B2 media storage is not configured")
+	}
+	if maxBytes <= 0 {
+		return SignedUpload{}, fmt.Errorf("B2 media upload size must be positive")
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	expiresAt := now.Add(c.presignTTL).UTC()
+	amzDate := now.UTC().Format("20060102T150405Z")
+	shortDate := now.UTC().Format("20060102")
+	credentialScope := shortDate + "/" + c.region + "/" + awsService + "/aws4_request"
+	credential := c.keyID + "/" + credentialScope
+	fields := map[string]string{
+		"key":              key,
+		"Content-Type":     contentType,
+		"x-amz-algorithm":  awsAlgorithm,
+		"x-amz-credential": credential,
+		"x-amz-date":       amzDate,
+	}
+	if c.serverSideEncryption != "" {
+		fields["x-amz-server-side-encryption"] = c.serverSideEncryption
+	}
+	conditions := []any{
+		map[string]string{"bucket": c.bucket},
+		map[string]string{"key": key},
+		[]any{"content-length-range", 1, maxBytes},
+		map[string]string{"Content-Type": contentType},
+		map[string]string{"x-amz-algorithm": awsAlgorithm},
+		map[string]string{"x-amz-credential": credential},
+		map[string]string{"x-amz-date": amzDate},
+	}
+	if c.serverSideEncryption != "" {
+		conditions = append(conditions, map[string]string{"x-amz-server-side-encryption": c.serverSideEncryption})
+	}
+	policy, err := json.Marshal(map[string]any{
+		"expiration": expiresAt.Format(time.RFC3339),
+		"conditions": conditions,
+	})
+	if err != nil {
+		return SignedUpload{}, fmt.Errorf("build B2 upload policy: %w", err)
+	}
+	encodedPolicy := base64.StdEncoding.EncodeToString(policy)
+	fields["policy"] = encodedPolicy
+	fields["x-amz-signature"] = hex.EncodeToString(hmacSHA256(signingKey(c.applicationKey, shortDate, c.region), []byte(encodedPolicy)))
+
+	return SignedUpload{
+		URL:       c.bucketURL().String(),
+		Method:    http.MethodPost,
+		Headers:   map[string]string{},
+		Fields:    fields,
+		ExpiresAt: expiresAt.Format(time.RFC3339),
+		MaxBytes:  maxBytes,
+	}, nil
+}
+
+func (c *Client) PutObject(ctx context.Context, key string, body []byte, contentType string) error {
+	request, err := c.signedRequest(ctx, http.MethodPut, key, body, contentType)
+	if err != nil {
+		return err
+	}
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("put B2 object: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return b2StatusError("put B2 object", response)
+	}
+	return nil
+}
+
+func (c *Client) DeleteObject(ctx context.Context, key string) error {
+	request, err := c.signedRequest(ctx, http.MethodDelete, key, nil, "")
+	if err != nil {
+		return err
+	}
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("delete B2 object: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return b2StatusError("delete B2 object", response)
+	}
+	return nil
+}
+
+func (c *Client) GetObject(ctx context.Context, key string, maxBytes int64) ([]byte, string, error) {
+	request, err := c.signedRequest(ctx, http.MethodGet, key, nil, "")
+	if err != nil {
+		return nil, "", err
+	}
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, "", fmt.Errorf("get B2 object: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, "", b2StatusError("get B2 object", response)
+	}
+	reader := response.Body
+	if maxBytes > 0 {
+		reader = io.NopCloser(io.LimitReader(response.Body, maxBytes+1))
+	}
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, "", fmt.Errorf("read B2 object: %w", err)
+	}
+	if maxBytes > 0 && int64(len(body)) > maxBytes {
+		return nil, "", fmt.Errorf("B2 object exceeds the %d byte processing limit", maxBytes)
+	}
+	return body, response.Header.Get("Content-Type"), nil
+}
+
+func (c *Client) signedRequest(ctx context.Context, method, key string, body []byte, contentType string) (*http.Request, error) {
+	if c == nil {
+		return nil, fmt.Errorf("B2 media storage is not configured")
+	}
+	now := time.Now().UTC()
+	amzDate := now.Format("20060102T150405Z")
+	shortDate := now.Format("20060102")
+	credentialScope := shortDate + "/" + c.region + "/" + awsService + "/aws4_request"
+	payloadHash := sha256Hex(body)
+	var reader io.Reader = http.NoBody
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, c.objectURL(key).String(), reader)
+	if err != nil {
+		return nil, err
+	}
+	headers := map[string]string{
+		"x-amz-content-sha256": payloadHash,
+		"x-amz-date":           amzDate,
+	}
+	if contentType != "" {
+		headers["content-type"] = contentType
+	}
+	if method == http.MethodPut && c.serverSideEncryption != "" {
+		headers["x-amz-server-side-encryption"] = c.serverSideEncryption
+	}
+	for name, value := range headers {
+		request.Header.Set(name, value)
+	}
+	signedHeaders := signedHeaderNames(headers, c.endpoint.Host)
+	canonicalRequest := strings.Join([]string{
+		method,
+		canonicalPath(c.bucket, key),
+		"",
+		canonicalHeaders(headers, c.endpoint.Host),
+		strings.Join(signedHeaders, ";"),
+		payloadHash,
+	}, "\n")
+	stringToSign := strings.Join([]string{
+		awsAlgorithm,
+		amzDate,
+		credentialScope,
+		sha256Hex([]byte(canonicalRequest)),
+	}, "\n")
+	signature := hex.EncodeToString(hmacSHA256(signingKey(c.applicationKey, shortDate, c.region), []byte(stringToSign)))
+	request.Header.Set("Authorization", fmt.Sprintf(
+		"%s Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		awsAlgorithm,
+		c.keyID,
+		credentialScope,
+		strings.Join(signedHeaders, ";"),
+		signature,
+	))
+	return request, nil
+}
+
+func (c *Client) signature(shortDate, credentialScope, amzDate, canonicalRequest string) string {
+	stringToSign := strings.Join([]string{
+		awsAlgorithm,
+		amzDate,
+		credentialScope,
+		sha256Hex([]byte(canonicalRequest)),
+	}, "\n")
+	return hex.EncodeToString(hmacSHA256(signingKey(c.applicationKey, shortDate, c.region), []byte(stringToSign)))
+}
+
+func (c *Client) objectURL(key string) *url.URL {
+	result := *c.endpoint
+	result.Path = "/" + strings.Trim(c.bucket, "/") + "/" + strings.TrimLeft(key, "/")
+	result.RawPath = canonicalPath(c.bucket, key)
+	result.RawQuery = ""
+	return &result
+}
+
+func (c *Client) bucketURL() *url.URL {
+	result := *c.endpoint
+	result.Path = "/" + strings.Trim(c.bucket, "/")
+	result.RawPath = "/" + escapeKey(c.bucket)
+	result.RawQuery = ""
+	return &result
+}
+
+func canonicalPath(bucket, key string) string {
+	return "/" + escapeKey(bucket) + "/" + escapeKey(key)
+}
+
+func escapeKey(value string) string {
+	parts := strings.Split(value, "/")
+	for index, part := range parts {
+		parts[index] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
+}
+
+func signedHeaderNames(headers map[string]string, host string) []string {
+	names := make([]string, 0, len(headers)+1)
+	names = append(names, "host")
+	for name := range headers {
+		names = append(names, strings.ToLower(name))
+	}
+	sort.Strings(names)
+	return names
+}
+
+func canonicalHeaders(headers map[string]string, host string) string {
+	normalized := map[string]string{"host": host}
+	for name, value := range headers {
+		normalized[strings.ToLower(name)] = strings.Join(strings.Fields(value), " ")
+	}
+	names := make([]string, 0, len(normalized))
+	for name := range normalized {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var builder strings.Builder
+	for _, name := range names {
+		builder.WriteString(name)
+		builder.WriteByte(':')
+		builder.WriteString(normalized[name])
+		builder.WriteByte('\n')
+	}
+	return builder.String()
+}
+
+func publicHeaders(headers map[string]string) map[string]string {
+	result := make(map[string]string, len(headers))
+	for name, value := range headers {
+		result[canonicalHeaderName(name)] = value
+	}
+	return result
+}
+
+func canonicalHeaderName(name string) string {
+	parts := strings.Split(strings.ToLower(name), "-")
+	for index, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[index] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	return strings.Join(parts, "-")
+}
+
+func signingKey(secret, shortDate, region string) []byte {
+	dateKey := hmacSHA256([]byte("AWS4"+secret), []byte(shortDate))
+	regionKey := hmacSHA256(dateKey, []byte(region))
+	serviceKey := hmacSHA256(regionKey, []byte(awsService))
+	return hmacSHA256(serviceKey, []byte("aws4_request"))
+}
+
+func hmacSHA256(key, value []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(value)
+	return mac.Sum(nil)
+}
+
+func sha256Hex(value []byte) string {
+	sum := sha256.Sum256(value)
+	return hex.EncodeToString(sum[:])
+}
+
+func b2StatusError(action string, response *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 512))
+	detail := strings.TrimSpace(string(body))
+	if detail == "" {
+		return fmt.Errorf("%s failed with status %d", action, response.StatusCode)
+	}
+	return fmt.Errorf("%s failed with status %d: %s", action, response.StatusCode, detail)
+}

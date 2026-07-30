@@ -1,14 +1,22 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"seoblog/apps/backend/internal/mediajobs"
+	"seoblog/apps/backend/internal/platform/b2"
 	"seoblog/apps/backend/internal/security"
 	"seoblog/apps/backend/internal/store"
 )
@@ -37,8 +45,8 @@ func TestAdminMediaRoutesRequireCSRFAndRemainProjectScoped(t *testing.T) {
 	if created.Data.ProjectID != projectA.ID || created.Data.Status != "registered" {
 		t.Fatalf("unexpected media response %#v", created.Data)
 	}
-	if !strings.HasPrefix(created.Data.ObjectKey, "pending/"+projectA.ID+"/") {
-		t.Fatalf("expected project-scoped pending object key, got %q", created.Data.ObjectKey)
+	if !strings.HasPrefix(created.Data.ObjectKey, "blogSEO/pending/"+projectA.ID+"/") {
+		t.Fatalf("expected project-scoped blogSEO pending object key, got %q", created.Data.ObjectKey)
 	}
 
 	listA := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+projectA.ID+"/media", nil)
@@ -100,6 +108,355 @@ func TestAdminMediaRegistrationRejectsUnsafeFiles(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAdminMediaUploadCompletionScansAndCreatesVariants(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	server.cfg.B2MediaPresignTTL = 15 * time.Minute
+	login := seedAndLogin(t, server, db, "media-complete-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-complete","name":"Media Complete"}`)
+	imageBytes := routeTestPNG(t, 8, 6)
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"hero.png","contentType":"image/png","bytes":`+strconv.Itoa(len(imageBytes))+`}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected signed media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	if created.Data.Status != "uploading" ||
+		created.Data.Upload == nil ||
+		created.Data.Upload.URL == "" ||
+		created.Data.Upload.Method != http.MethodPost ||
+		created.Data.Upload.Fields["key"] != created.Data.ObjectKey {
+		t.Fatalf("expected signed upload target, got %#v", created.Data)
+	}
+	mediaStorage.objects[created.Data.ObjectKey] = imageBytes
+
+	completeResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID+"/complete",
+		`{}`,
+		login,
+	))
+	if completeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected complete 200, got %d: %s", completeResponse.StatusCode, readBody(t, completeResponse))
+	}
+	var completed Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, completeResponse, &completed)
+	if completed.Data.Status != "processing" || completed.Data.ScanStatus != "pending" {
+		t.Fatalf("expected completion route to queue processing, got %#v", completed.Data)
+	}
+	processed, err := mediajobs.Processor{Store: server.store, Storage: mediaStorage}.Process(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 1 {
+		t.Fatalf("expected one processed media asset, got %d", processed)
+	}
+	ready, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.enrichMediaAsset(&ready)
+	if ready.Status != "ready" ||
+		ready.ScanStatus != "passed" ||
+		ready.Width != 8 ||
+		ready.Height != 6 ||
+		len(ready.SHA256) != 64 ||
+		len(ready.Variants) != 3 {
+		t.Fatalf("unexpected ready asset %#v", ready)
+	}
+	if ready.URL == "" || !strings.HasPrefix(ready.URL, "https://cdn.example.test/") {
+		t.Fatalf("expected CDN-backed preview URL, got %q", ready.URL)
+	}
+	if !strings.HasPrefix(ready.Variants[0].ObjectKey, "blogSEO/projects/"+project.ID+"/media/variants/") {
+		t.Fatalf("expected blogSEO variant prefix, got %q", ready.Variants[0].ObjectKey)
+	}
+	if len(mediaStorage.puts) != 3 {
+		t.Fatalf("expected three variant uploads, got %d", len(mediaStorage.puts))
+	}
+	deleteResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID,
+		`{}`,
+		login,
+	))
+	if deleteResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected delete 204, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+	if mediaStorage.deletes[created.Data.ObjectKey] != 1 {
+		t.Fatalf("expected original object deletion, got %#v", mediaStorage.deletes)
+	}
+	for _, variant := range ready.Variants {
+		if mediaStorage.deletes[variant.ObjectKey] != 1 {
+			t.Fatalf("expected variant object %q deletion, got %#v", variant.ObjectKey, mediaStorage.deletes)
+		}
+	}
+}
+
+func TestAdminMediaUploadCompletionRejectsUnsafePDF(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	server.cfg.B2MediaPresignTTL = 15 * time.Minute
+	login := seedAndLogin(t, server, db, "media-reject-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-reject","name":"Media Reject"}`)
+	pdfBytes := []byte("%PDF-1.7\n1 0 obj << /OpenAction << /S /JavaScript /JS (app.alert(1)) >> >> endobj\n")
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"brief.pdf","contentType":"application/pdf","bytes":`+strconv.Itoa(len(pdfBytes))+`}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected signed media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	mediaStorage.objects[created.Data.ObjectKey] = pdfBytes
+
+	completeResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID+"/complete",
+		`{}`,
+		login,
+	))
+	if completeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected unsafe PDF to queue with 200, got %d: %s", completeResponse.StatusCode, readBody(t, completeResponse))
+	}
+	if _, err := (mediajobs.Processor{Store: server.store, Storage: mediaStorage}).Process(context.Background(), 10); err == nil {
+		t.Fatal("expected unsafe PDF processing to return an error")
+	}
+	rejected, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejected.Status != "rejected" || rejected.ScanStatus != "failed" || rejected.ScanReason == "" {
+		t.Fatalf("expected rejected scan state, got %#v", rejected)
+	}
+	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; exists {
+		t.Fatalf("expected rejected original to be deleted from B2")
+	}
+}
+
+func TestAdminMediaProcessingCleansUpPartialVariantUploads(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	mediaStorage.failPutAfter = 1
+	server.mediaStorage = mediaStorage
+	server.cfg.B2MediaPresignTTL = 15 * time.Minute
+	login := seedAndLogin(t, server, db, "media-partial-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-partial","name":"Media Partial"}`)
+	imageBytes := routeTestPNG(t, 8, 6)
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"hero.png","contentType":"image/png","bytes":`+strconv.Itoa(len(imageBytes))+`}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected signed media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	mediaStorage.objects[created.Data.ObjectKey] = imageBytes
+	completeResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID+"/complete",
+		`{}`,
+		login,
+	))
+	if completeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected completion queue 200, got %d: %s", completeResponse.StatusCode, readBody(t, completeResponse))
+	}
+	if _, err := (mediajobs.Processor{Store: server.store, Storage: mediaStorage}).Process(context.Background(), 10); err == nil {
+		t.Fatal("expected partial variant upload failure")
+	}
+	failed, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != "failed" || failed.ScanStatus != "skipped" || failed.ScanReason == "" {
+		t.Fatalf("expected failed asset state, got %#v", failed)
+	}
+	if mediaStorage.deletes[created.Data.ObjectKey] != 1 {
+		t.Fatalf("expected original cleanup, got %#v", mediaStorage.deletes)
+	}
+	if len(mediaStorage.puts) != 0 {
+		t.Fatalf("expected partial variants to be deleted, got %#v", mediaStorage.puts)
+	}
+}
+
+func TestAdminMediaDeleteRefusesRootFolderObjectKey(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	login := seedAndLogin(t, server, db, "media-delete-root-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-delete-root","name":"Media Delete Root"}`)
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"hero.png","contentType":"image/png","bytes":128}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	if _, err := db.Exec(`UPDATE assets SET object_key = ? WHERE project_id = ? AND id = ?`, "blogSEO/", project.ID, created.Data.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	deleteResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID,
+		`{}`,
+		login,
+	))
+	if deleteResponse.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected unsafe delete to fail with 502, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+	if len(mediaStorage.deletes) != 0 {
+		t.Fatalf("expected no B2 delete calls for root key, got %#v", mediaStorage.deletes)
+	}
+	if _, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID); err != nil {
+		t.Fatalf("expected asset row to remain after refused delete: %v", err)
+	}
+}
+
+func TestAdminMediaDeleteRefusesUnrelatedVariantKeyBeforeDeletingAnything(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	login := seedAndLogin(t, server, db, "media-delete-scope-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-delete-scope","name":"Media Delete Scope"}`)
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"hero.png","contentType":"image/png","bytes":128}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	mediaStorage.objects[created.Data.ObjectKey] = []byte("original")
+	variantID, err := security.RandomID("variant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelatedVariantKey := "blogSEO/projects/" + project.ID + "/media/variants/asset_other/square_1x1.jpg"
+	if _, err := db.Exec(`
+		INSERT INTO asset_variants(
+			id, project_id, asset_id, variant_name, object_key,
+			mime_type, width, height, byte_size
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, variantID, project.ID, created.Data.ID, "square_1x1", unrelatedVariantKey, "image/jpeg", 1, 1, 16); err != nil {
+		t.Fatal(err)
+	}
+
+	deleteResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID,
+		`{}`,
+		login,
+	))
+	if deleteResponse.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected unsafe delete to fail with 502, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+	if len(mediaStorage.deletes) != 0 {
+		t.Fatalf("expected validation to run before any B2 delete calls, got %#v", mediaStorage.deletes)
+	}
+	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; !exists {
+		t.Fatalf("expected valid original object to remain when unrelated variant key is refused")
+	}
+}
+
+type fakeMediaStorage struct {
+	objects      map[string][]byte
+	puts         map[string][]byte
+	deletes      map[string]int
+	failPutAfter int
+}
+
+func newFakeMediaStorage() *fakeMediaStorage {
+	return &fakeMediaStorage{
+		objects:      map[string][]byte{},
+		puts:         map[string][]byte{},
+		deletes:      map[string]int{},
+		failPutAfter: -1,
+	}
+}
+
+func (s *fakeMediaStorage) Bucket() string {
+	return "media-bucket"
+}
+
+func (s *fakeMediaStorage) PublicURL(key string) string {
+	if key == "" {
+		return ""
+	}
+	return "https://cdn.example.test/" + key
+}
+
+func (s *fakeMediaStorage) PresignPost(key, contentType string, maxBytes int64, now time.Time) (b2.SignedUpload, error) {
+	return b2.SignedUpload{
+		URL:       "https://uploads.example.test/" + key,
+		Method:    http.MethodPost,
+		Headers:   map[string]string{},
+		Fields:    map[string]string{"key": key, "Content-Type": contentType},
+		ExpiresAt: now.Add(15 * time.Minute).Format(time.RFC3339),
+		MaxBytes:  maxBytes,
+	}, nil
+}
+
+func (s *fakeMediaStorage) GetObject(ctx context.Context, key string, maxBytes int64) ([]byte, string, error) {
+	body, ok := s.objects[key]
+	if !ok {
+		return nil, "", fmt.Errorf("object %q not found", key)
+	}
+	if maxBytes > 0 && int64(len(body)) > maxBytes {
+		return nil, "", fmt.Errorf("object %q exceeds limit", key)
+	}
+	return append([]byte(nil), body...), http.DetectContentType(body), nil
+}
+
+func (s *fakeMediaStorage) PutObject(ctx context.Context, key string, body []byte, contentType string) error {
+	if s.failPutAfter >= 0 && len(s.puts) >= s.failPutAfter {
+		return fmt.Errorf("variant upload failed")
+	}
+	s.puts[key] = append([]byte(nil), body...)
+	return nil
+}
+
+func (s *fakeMediaStorage) DeleteObject(ctx context.Context, key string) error {
+	s.deletes[key]++
+	delete(s.objects, key)
+	delete(s.puts, key)
+	return nil
+}
+
+func routeTestPNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+	image := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			image.Set(x, y, color.RGBA{R: uint8(x * 20), G: uint8(y * 20), B: 180, A: 255})
+		}
+	}
+	var output bytes.Buffer
+	if err := png.Encode(&output, image); err != nil {
+		t.Fatal(err)
+	}
+	return output.Bytes()
 }
 
 func TestAdminAIJobRoutesPersistAndCancelJobs(t *testing.T) {

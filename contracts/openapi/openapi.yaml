@@ -2344,6 +2344,63 @@ paths:
       tags:
         - Administration
   /api/v1/projects/{projectID}/authors/{authorID}:
+    delete:
+      description: Administrative API route.
+      operationId: delete_api_v1_projects_projectid_authors_authorid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: DELETE /api/v1/projects/{projectID}/authors/{authorID}
+      tags:
+        - Administration
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_authors_authorid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /api/v1/projects/{projectID}/authors/{authorID}
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_authors_authorid
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /api/v1/projects/{projectID}/authors/{authorID}
+      tags:
+        - Administration
     patch:
       description: Administrative API route.
       operationId: patch_api_v1_projects_projectid_authors_authorid
@@ -2811,6 +2868,26 @@ paths:
         "500":
           description: Internal server error
       summary: PATCH /api/v1/projects/{projectID}/media/{assetID}
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/media/{assetID}/complete:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_media_assetid_complete
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: POST /api/v1/projects/{projectID}/media/{assetID}/complete
       tags:
         - Administration
   /api/v1/projects/{projectID}/members:

@@ -8,46 +8,69 @@ import (
 )
 
 type Config struct {
-	Env                  string
-	HTTPAddr             string
-	DBPath               string
-	DevAuth              bool
-	TrustedProxies       []string
-	RedisAddr            string
-	RedisPassword        string
-	RedisTimeout         time.Duration
-	AdminPublicURL       string
-	SMTPAddress          string
-	SMTPUsername         string
-	SMTPPassword         string
-	SMTPFrom             string
-	SMTPFromName         string
-	SMTPRequireTLS       bool
-	WebhookEncryptionKey []byte
-	WebhookAllowedHosts  []string
+	Env                   string
+	HTTPAddr              string
+	DBPath                string
+	DevAuth               bool
+	TrustedProxies        []string
+	RedisAddr             string
+	RedisPassword         string
+	RedisTimeout          time.Duration
+	AdminPublicURL        string
+	SMTPAddress           string
+	SMTPUsername          string
+	SMTPPassword          string
+	SMTPFrom              string
+	SMTPFromName          string
+	SMTPRequireTLS        bool
+	WebhookEncryptionKey  []byte
+	WebhookAllowedHosts   []string
+	B2MediaEndpoint       string
+	B2MediaRegion         string
+	B2MediaBucket         string
+	B2MediaKeyID          string
+	B2MediaApplicationKey string
+	B2MediaPublicBaseURL  string
+	B2MediaPresignTTL     time.Duration
+	B2MediaSSE            string
 }
 
 func Load() Config {
 	_ = LoadDotEnv(".env", "../.env", "../../.env")
 	return Config{
-		Env:                  env("SEOBLOG_ENV", "development"),
-		HTTPAddr:             env("SEOBLOG_HTTP_ADDR", ":8080"),
-		DBPath:               env("SEOBLOG_DB_PATH", "./seoblog.db"),
-		DevAuth:              os.Getenv("SEOBLOG_DEV_AUTH") == "true",
-		TrustedProxies:       stringList(os.Getenv("SEOBLOG_TRUSTED_PROXIES")),
-		RedisAddr:            strings.TrimSpace(os.Getenv("SEOBLOG_REDIS_ADDR")),
-		RedisPassword:        os.Getenv("SEOBLOG_REDIS_PASSWORD"),
-		RedisTimeout:         envDuration("SEOBLOG_REDIS_TIMEOUT", 150*time.Millisecond),
-		AdminPublicURL:       strings.TrimSpace(os.Getenv("SEOBLOG_ADMIN_PUBLIC_URL")),
-		SMTPAddress:          strings.TrimSpace(os.Getenv("SEOBLOG_SMTP_ADDR")),
-		SMTPUsername:         strings.TrimSpace(os.Getenv("SEOBLOG_SMTP_USERNAME")),
-		SMTPPassword:         os.Getenv("SEOBLOG_SMTP_PASSWORD"),
-		SMTPFrom:             env("SEOBLOG_SMTP_FROM", "no-reply@localhost"),
-		SMTPFromName:         env("SEOBLOG_SMTP_FROM_NAME", "SEO Blog"),
-		SMTPRequireTLS:       envBool("SEOBLOG_SMTP_REQUIRE_STARTTLS"),
-		WebhookEncryptionKey: webhookEncryptionKey(os.Getenv("SEOBLOG_WEBHOOK_ENCRYPTION_KEY")),
-		WebhookAllowedHosts:  stringList(os.Getenv("SEOBLOG_WEBHOOK_ALLOWED_HOSTS")),
+		Env:                   env("SEOBLOG_ENV", "development"),
+		HTTPAddr:              env("SEOBLOG_HTTP_ADDR", ":8080"),
+		DBPath:                env("SEOBLOG_DB_PATH", "./seoblog.db"),
+		DevAuth:               os.Getenv("SEOBLOG_DEV_AUTH") == "true",
+		TrustedProxies:        stringList(os.Getenv("SEOBLOG_TRUSTED_PROXIES")),
+		RedisAddr:             strings.TrimSpace(os.Getenv("SEOBLOG_REDIS_ADDR")),
+		RedisPassword:         os.Getenv("SEOBLOG_REDIS_PASSWORD"),
+		RedisTimeout:          envDuration("SEOBLOG_REDIS_TIMEOUT", 150*time.Millisecond),
+		AdminPublicURL:        strings.TrimSpace(os.Getenv("SEOBLOG_ADMIN_PUBLIC_URL")),
+		SMTPAddress:           strings.TrimSpace(os.Getenv("SEOBLOG_SMTP_ADDR")),
+		SMTPUsername:          strings.TrimSpace(os.Getenv("SEOBLOG_SMTP_USERNAME")),
+		SMTPPassword:          os.Getenv("SEOBLOG_SMTP_PASSWORD"),
+		SMTPFrom:              env("SEOBLOG_SMTP_FROM", "no-reply@localhost"),
+		SMTPFromName:          env("SEOBLOG_SMTP_FROM_NAME", "SEO Blog"),
+		SMTPRequireTLS:        envBool("SEOBLOG_SMTP_REQUIRE_STARTTLS"),
+		WebhookEncryptionKey:  webhookEncryptionKey(os.Getenv("SEOBLOG_WEBHOOK_ENCRYPTION_KEY")),
+		WebhookAllowedHosts:   stringList(os.Getenv("SEOBLOG_WEBHOOK_ALLOWED_HOSTS")),
+		B2MediaEndpoint:       strings.TrimSpace(os.Getenv("SEOBLOG_B2_MEDIA_ENDPOINT")),
+		B2MediaRegion:         env("SEOBLOG_B2_MEDIA_REGION", "us-west-004"),
+		B2MediaBucket:         strings.TrimSpace(os.Getenv("SEOBLOG_B2_MEDIA_BUCKET")),
+		B2MediaKeyID:          strings.TrimSpace(os.Getenv("SEOBLOG_B2_MEDIA_KEY_ID")),
+		B2MediaApplicationKey: os.Getenv("SEOBLOG_B2_MEDIA_APPLICATION_KEY"),
+		B2MediaPublicBaseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("SEOBLOG_B2_MEDIA_PUBLIC_BASE_URL")), "/"),
+		B2MediaPresignTTL:     envDuration("SEOBLOG_B2_MEDIA_PRESIGN_TTL", 15*time.Minute),
+		B2MediaSSE:            strings.TrimSpace(os.Getenv("SEOBLOG_B2_MEDIA_SSE")),
 	}
+}
+
+func (c Config) B2MediaEnabled() bool {
+	return c.B2MediaEndpoint != "" &&
+		c.B2MediaBucket != "" &&
+		c.B2MediaKeyID != "" &&
+		c.B2MediaApplicationKey != ""
 }
 
 func env(key, fallback string) string {

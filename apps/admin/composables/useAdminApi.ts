@@ -111,6 +111,10 @@ export type AdminAuthor = {
   profileUrl?: string
   externalProfiles?: string[]
   sameAs?: string[]
+  loginUserId?: string
+  loginEmail?: string
+  loginRole?: string
+  loginStatus?: string
   status?: string
   createdAt?: string
   updatedAt?: string
@@ -122,6 +126,23 @@ export type AdminSeries = {
   name: string
   description?: string
   indexable: boolean
+}
+
+export type AuthorPayload = {
+  slug?: string
+  displayName?: string
+  shortBio?: string
+  fullBio?: string
+  photoAssetId?: string
+  jobTitle?: string
+  organization?: string
+  credentials?: string[]
+  expertise?: string[]
+  profileUrl?: string
+  externalProfiles?: string[]
+  sameAs?: string[]
+  loginUserId?: string
+  status?: string
 }
 
 export type AdminAPIKey = {
@@ -197,6 +218,27 @@ export type ProjectDeletionImpact = {
   pendingJobs: number
 }
 
+export type MediaUploadTarget = {
+  url: string
+  method: string
+  headers: Record<string, string>
+  fields?: Record<string, string>
+  expiresAt: string
+  maxBytes: number
+}
+
+export type AdminMediaVariant = {
+  id: string
+  name: string
+  objectKey: string
+  contentType: string
+  width?: number
+  height?: number
+  bytes: number
+  url?: string
+  createdAt?: string
+}
+
 export type AdminMediaAsset = {
   id: string
   projectId: string
@@ -212,6 +254,13 @@ export type AdminMediaAsset = {
   credit?: string
   license?: string
   objectKey: string
+  bucket?: string
+  sha256?: string
+  scanStatus?: string
+  scanReason?: string
+  metadata?: Record<string, unknown>
+  variants?: AdminMediaVariant[]
+  upload?: MediaUploadTarget
   createdAt?: string
   updatedAt?: string
   url?: string
@@ -650,6 +699,30 @@ export function useAdminApi() {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminAuthor>>(`/api/v1/projects/${projectID}/authors`))
   }
 
+  async function getAuthor(projectID: string, authorID: string) {
+    return await request<APIEnvelope<AdminAuthor>>(`/api/v1/projects/${projectID}/authors/${authorID}`)
+  }
+
+  async function createAuthor(projectID: string, payload: AuthorPayload) {
+    return await request<APIEnvelope<AdminAuthor>>(`/api/v1/projects/${projectID}/authors`, await withCSRF({
+      method: 'POST',
+      body: payload
+    }))
+  }
+
+  async function updateAuthor(projectID: string, authorID: string, payload: AuthorPayload) {
+    return await request<APIEnvelope<AdminAuthor>>(`/api/v1/projects/${projectID}/authors/${authorID}`, await withCSRF({
+      method: 'PATCH',
+      body: payload
+    }))
+  }
+
+  async function deleteAuthor(projectID: string, authorID: string) {
+    return await request<APIEnvelope<AdminAuthor>>(`/api/v1/projects/${projectID}/authors/${authorID}`, await withCSRF({
+      method: 'DELETE'
+    }))
+  }
+
   async function listSeries(projectID: string) {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminSeries>>(`/api/v1/projects/${projectID}/series`))
   }
@@ -751,6 +824,13 @@ export function useAdminApi() {
 
   async function initiateMediaUpload(projectID: string, payload: { filename: string, contentType: string, bytes: number }) {
     return await request<APIEnvelope<AdminMediaAsset>>(`/api/v1/projects/${projectID}/media/uploads`, await withCSRF({
+      method: 'POST',
+      body: payload
+    }))
+  }
+
+  async function completeMediaUpload(projectID: string, assetID: string, payload: { sha256?: string } = {}) {
+    return await request<APIEnvelope<AdminMediaAsset>>(`/api/v1/projects/${projectID}/media/${assetID}/complete`, await withCSRF({
       method: 'POST',
       body: payload
     }))
@@ -891,6 +971,10 @@ export function useAdminApi() {
     listCategories,
     createCategory,
     listAuthors,
+    getAuthor,
+    createAuthor,
+    updateAuthor,
+    deleteAuthor,
     listSeries,
     listArticles,
     createArticle,
@@ -908,6 +992,7 @@ export function useAdminApi() {
     listAuditEvents,
     listMedia,
     initiateMediaUpload,
+    completeMediaUpload,
     listWebhooks,
     createWebhook,
     revokeWebhook,
