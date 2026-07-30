@@ -18,6 +18,8 @@ var operationIDPart = regexp.MustCompile(`[^A-Za-z0-9]+`)
 const adminSessionSecuritySchemeName = "adminSession"
 
 var implementedAdminRouteStatuses = map[string]string{
+	"POST /api/v1/auth/forgot-password":                                     "202",
+	"POST /api/v1/auth/reset-password":                                      "200",
 	"GET /api/v1/projects/{projectID}/media":                                "200",
 	"HEAD /api/v1/projects/{projectID}/media":                               "200",
 	"POST /api/v1/projects/{projectID}/media/uploads":                       "201",
@@ -75,6 +77,7 @@ var implementedAdminRouteStatuses = map[string]string{
 // as the Huma-owned endpoints. Runtime routing remains in Fiber while the
 // contract stays complete and available at /openapi.json and /openapi.yaml.
 func documentFiberRoutes(api huma.API, app *fiber.App) {
+	documentPasswordResetRoutes(api)
 	documentRollbackRoute(api)
 	documentCopyArticleRoute(api)
 	documentRevisionHistoryRoutes(api)
@@ -138,6 +141,90 @@ func documentFiberRoutes(api huma.API, app *fiber.App) {
 			})
 		}
 	}
+}
+
+func documentPasswordResetRoutes(api huma.API) {
+	openAPI := api.OpenAPI()
+	registry := openAPI.Components.Schemas
+	forgotRequestSchema := registry.Schema(reflect.TypeOf(forgotPasswordRequest{}), true, "ForgotPasswordRequest")
+	resetRequestSchema := registry.Schema(reflect.TypeOf(resetPasswordRequest{}), true, "ResetPasswordRequest")
+	responseSchema := registry.Schema(reflect.TypeOf(passwordResetResponse{}), true, "PasswordResetResponse")
+	problemSchema := registry.Schema(reflect.TypeOf(Problem{}), true, "Problem")
+
+	for _, item := range []struct {
+		schema   *huma.Schema
+		required []string
+	}{
+		{schema: forgotRequestSchema, required: []string{"email"}},
+		{schema: resetRequestSchema, required: []string{"token", "password"}},
+	} {
+		resolved := item.schema
+		if item.schema.Ref != "" {
+			resolved = registry.SchemaFromRef(item.schema.Ref)
+		}
+		resolved.Required = item.required
+	}
+	problemResponse := func(description string) *huma.Response {
+		return &huma.Response{
+			Description: description,
+			Content: map[string]*huma.MediaType{
+				problemMediaType: {Schema: problemSchema},
+			},
+		}
+	}
+
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodPost,
+		Path:        "/api/v1/auth/forgot-password",
+		OperationID: "requestPasswordReset",
+		Summary:     "Request a password reset",
+		Description: "Creates a one-time reset token for an active account and sends it by email. The response is identical when the address is unknown.",
+		Tags:        []string{"Authentication"},
+		RequestBody: &huma.RequestBody{
+			Description: "Account email address.",
+			Required:    true,
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: forgotRequestSchema},
+			},
+		},
+		Responses: map[string]*huma.Response{
+			"202": {
+				Description: "Password-reset request accepted",
+				Content: map[string]*huma.MediaType{
+					"application/json": {Schema: responseSchema},
+				},
+			},
+			"400": problemResponse("Invalid request body"),
+			"429": problemResponse("Password-reset rate limit exceeded"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodPost,
+		Path:        "/api/v1/auth/reset-password",
+		OperationID: "completePasswordReset",
+		Summary:     "Complete a password reset",
+		Description: "Consumes an unexpired one-time reset token, changes the password and revokes every active session for the account.",
+		Tags:        []string{"Authentication"},
+		RequestBody: &huma.RequestBody{
+			Description: "One-time reset token and replacement password.",
+			Required:    true,
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: resetRequestSchema},
+			},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Password reset completed",
+				Content: map[string]*huma.MediaType{
+					"application/json": {Schema: responseSchema},
+				},
+			},
+			"400": problemResponse("Invalid request, password or reset token"),
+			"429": problemResponse("Password-reset rate limit exceeded"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
 }
 
 func documentRevisionHistoryRoutes(api huma.API) {

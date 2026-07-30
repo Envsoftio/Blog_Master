@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -18,10 +19,102 @@ import (
 	"time"
 
 	"seoblog/apps/backend/internal/config"
+	"seoblog/apps/backend/internal/mailer"
 	"seoblog/apps/backend/internal/platform/database"
 	"seoblog/apps/backend/internal/security"
 	"seoblog/apps/backend/internal/store"
 )
+
+func TestPasswordResetIsEnumerationSafeSingleUseAndRevokesSessions(t *testing.T) {
+	sender := &recordingMailer{}
+	server, db := newAdminTestServerWithMailer(t, sender)
+	oldPassword := "correct horse battery staple"
+	newPassword := "new correct horse battery staple"
+	seedOwner(t, db, "owner@example.test", oldPassword)
+	login := adminLogin(t, server, "owner@example.test", oldPassword)
+
+	firstBody := requestPasswordReset(t, server, "OWNER@example.test", http.StatusAccepted)
+	firstMessage := sender.message(t, 0)
+	firstToken := resetTokenFromMessage(t, firstMessage)
+	if !strings.Contains(firstMessage.HTML, "Reset your password</a>") {
+		t.Fatalf("expected an HTML password-reset message, got %q", firstMessage.HTML)
+	}
+	if strings.Contains(firstBody, firstToken) || strings.Contains(firstBody, "owner@example.test") {
+		t.Fatalf("password-reset response leaked account or token data: %s", firstBody)
+	}
+
+	var storedHash string
+	if err := db.QueryRow(`
+		SELECT token_hash
+		FROM password_resets
+		ORDER BY created_at DESC, rowid DESC
+		LIMIT 1
+	`).Scan(&storedHash); err != nil {
+		t.Fatal(err)
+	}
+	if storedHash != security.TokenHash(firstToken) {
+		t.Fatalf("expected reset verifier %q, got %q", security.TokenHash(firstToken), storedHash)
+	}
+	if storedHash == firstToken {
+		t.Fatal("raw reset token was stored")
+	}
+
+	unknownBody := requestPasswordReset(t, server, "missing@example.test", http.StatusAccepted)
+	if unknownBody != firstBody {
+		t.Fatalf("known and unknown reset responses differ:\nknown: %s\nunknown: %s", firstBody, unknownBody)
+	}
+	if sender.count() != 1 {
+		t.Fatalf("expected no email for an unknown account, got %d messages", sender.count())
+	}
+
+	requestPasswordReset(t, server, "owner@example.test", http.StatusAccepted)
+	secondToken := resetTokenFromMessage(t, sender.message(t, 1))
+	completePasswordReset(t, server, firstToken, newPassword, http.StatusBadRequest)
+	completePasswordReset(t, server, secondToken, "too short", http.StatusBadRequest)
+	completePasswordReset(t, server, secondToken, newPassword, http.StatusOK)
+	completePasswordReset(t, server, secondToken, newPassword, http.StatusBadRequest)
+
+	meRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	addCookies(meRequest, login.cookies)
+	meResponse := mustTest(t, server, meRequest)
+	if meResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected the pre-reset session to be revoked, got %d", meResponse.StatusCode)
+	}
+
+	oldLoginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(
+		`{"email":"owner@example.test","password":"`+oldPassword+`"}`,
+	))
+	oldLoginRequest.Header.Set("Content-Type", "application/json")
+	oldLoginResponse := mustTest(t, server, oldLoginRequest)
+	if oldLoginResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected old password login to fail, got %d", oldLoginResponse.StatusCode)
+	}
+	adminLogin(t, server, "owner@example.test", newPassword)
+
+	var pendingResetCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM password_resets
+		WHERE user_id = ? AND used_at IS NULL
+	`, login.userID).Scan(&pendingResetCount); err != nil {
+		t.Fatal(err)
+	}
+	if pendingResetCount != 0 {
+		t.Fatalf("expected all reset links to be consumed, got %d pending", pendingResetCount)
+	}
+
+	expiredToken, err := security.RandomToken(32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO password_resets(token_hash, user_id, expires_at)
+		VALUES (?, ?, datetime(CURRENT_TIMESTAMP, '-1 minute'))
+	`, security.TokenHash(expiredToken), login.userID); err != nil {
+		t.Fatal(err)
+	}
+	completePasswordReset(t, server, expiredToken, newPassword, http.StatusBadRequest)
+}
 
 func TestAdminLoginMeAndProjectCreate(t *testing.T) {
 	server, db := newAdminTestServer(t)
@@ -3420,6 +3513,10 @@ type adminLoginResult struct {
 }
 
 func newAdminTestServer(t *testing.T) (*Server, *sql.DB) {
+	return newAdminTestServerWithMailer(t, nil)
+}
+
+func newAdminTestServerWithMailer(t *testing.T, sender mailer.Sender) (*Server, *sql.DB) {
 	t.Helper()
 	db, err := database.OpenSQLite(filepath.Join(t.TempDir(), "admin.db"))
 	if err != nil {
@@ -3430,11 +3527,99 @@ func newAdminTestServer(t *testing.T) (*Server, *sql.DB) {
 		t.Fatal(err)
 	}
 	server := New(Options{
-		Config: config.Config{Env: "development", DevAuth: true},
+		Config: config.Config{
+			Env:            "development",
+			DevAuth:        true,
+			AdminPublicURL: "http://admin.example.test",
+		},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Mailer: sender,
 		Store:  store.New(db),
 	})
 	return server, db
+}
+
+type recordingMailer struct {
+	mu       sync.Mutex
+	messages []mailer.Message
+}
+
+func (m *recordingMailer) Send(_ context.Context, message mailer.Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messages = append(m.messages, message)
+	return nil
+}
+
+func (m *recordingMailer) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.messages)
+}
+
+func (m *recordingMailer) message(t *testing.T, index int) mailer.Message {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.Lock()
+		if index >= 0 && index < len(m.messages) {
+			message := m.messages[index]
+			m.mu.Unlock()
+			return message
+		}
+		m.mu.Unlock()
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("expected password-reset email %d, got %d messages", index, m.count())
+	return mailer.Message{}
+}
+
+func requestPasswordReset(t *testing.T, server *Server, email string, expectedStatus int) string {
+	t.Helper()
+	body, err := json.Marshal(forgotPasswordRequest{Email: email})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/forgot-password", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := mustTest(t, server, request)
+	if response.StatusCode != expectedStatus {
+		t.Fatalf("expected password-reset request %d, got %d: %s", expectedStatus, response.StatusCode, readBody(t, response))
+	}
+	return readBody(t, response)
+}
+
+func completePasswordReset(t *testing.T, server *Server, token, password string, expectedStatus int) {
+	t.Helper()
+	body, err := json.Marshal(resetPasswordRequest{Token: token, Password: password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/reset-password", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := mustTest(t, server, request)
+	if response.StatusCode != expectedStatus {
+		t.Fatalf("expected password-reset completion %d, got %d: %s", expectedStatus, response.StatusCode, readBody(t, response))
+	}
+	_ = response.Body.Close()
+}
+
+func resetTokenFromMessage(t *testing.T, message mailer.Message) string {
+	t.Helper()
+	for _, line := range strings.Split(message.Text, "\n") {
+		if !strings.HasPrefix(line, "http://") && !strings.HasPrefix(line, "https://") {
+			continue
+		}
+		resetURL, err := url.Parse(strings.TrimSpace(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token := resetURL.Query().Get("token"); token != "" {
+			return token
+		}
+	}
+	t.Fatalf("reset email did not contain a tokenized URL: %#v", message)
+	return ""
 }
 
 func createTestProject(t *testing.T, server *Server, login adminLoginResult, body string) store.AdminProject {

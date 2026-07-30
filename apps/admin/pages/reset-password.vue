@@ -87,9 +87,7 @@ async function resetPassword() {
     await api.resetPassword(token.value, password.value)
     complete.value = true
   } catch (error) {
-    errorMessage.value = apiStatus(error) === 501
-      ? 'Password reset is not enabled on this backend.'
-      : normalizeAPIError(error, 'Could not reset the password.')
+    errorMessage.value = normalizeAPIError(error, 'Could not reset the password.')
   } finally {
     pending.value = false
   }

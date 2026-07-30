@@ -2,10 +2,12 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"net/url"
 	"strings"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 
+	"seoblog/apps/backend/internal/mailer"
 	"seoblog/apps/backend/internal/security"
 	"seoblog/apps/backend/internal/store"
 )
@@ -27,14 +30,16 @@ const (
 	reauthenticationWindow  = 5 * time.Minute
 	defaultProjectListLimit = 50
 	maxProjectListLimit     = 100
+	passwordMinLength       = 15
+	passwordMaxLength       = 128
 )
 
 func (s *Server) registerAdminRoutes() {
 	api := s.app.Group("/api/v1")
 
 	api.Post("/auth/login", s.login)
-	api.Post("/auth/forgot-password", func(c *fiber.Ctx) error { return notImplemented(c, "password reset request") })
-	api.Post("/auth/reset-password", func(c *fiber.Ctx) error { return notImplemented(c, "password reset completion") })
+	api.Post("/auth/forgot-password", passwordResetRequestSourceRateLimiter(), passwordResetEmailRateLimiter(), s.forgotPassword)
+	api.Post("/auth/reset-password", passwordResetCompletionSourceRateLimiter(), passwordResetTokenRateLimiter(), s.resetPassword)
 	api.Post("/invitations/:token/accept", invitationAcceptanceSourceRateLimiter(), invitationTokenRateLimiter(), s.acceptInvitation)
 
 	api.Get("/auth/me", s.requireAdminSession, s.currentUser)
@@ -141,6 +146,19 @@ func (s *Server) registerAdminRoutes() {
 type loginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+}
+
+type forgotPasswordRequest struct {
+	Email string `json:"email" format:"email"`
+}
+
+type resetPasswordRequest struct {
+	Token    string `json:"token" minLength:"1"`
+	Password string `json:"password" minLength:"15" maxLength:"128"`
+}
+
+type passwordResetResponse struct {
+	Data map[string]any `json:"data"`
 }
 
 type reauthenticationRequest struct {
@@ -420,6 +438,115 @@ func (s *Server) login(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[authResponse]{
 		Data: authResponse{User: credential.User, CSRFToken: csrfToken},
 	})
+}
+
+func (s *Server) forgotPassword(c *fiber.Ctx) error {
+	var input forgotPasswordRequest
+	if err := decodeStrictRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+
+	token, err := security.RandomToken(32)
+	if err != nil {
+		s.logger.Error("generate password reset token", "error", err)
+		return problem(c, fiber.StatusInternalServerError, "Could not request password reset", "")
+	}
+	target, created, err := s.store.CreatePasswordReset(
+		c.UserContext(),
+		input.Email,
+		security.TokenHash(token),
+		time.Now().UTC(),
+	)
+	if err != nil {
+		s.logger.Error("create password reset", "error", err)
+		return problem(c, fiber.StatusInternalServerError, "Could not request password reset", "")
+	}
+	if created {
+		resetURL, urlErr := s.passwordResetURL(token)
+		if urlErr != nil {
+			s.logger.Error("build password reset URL", "user_id", target.UserID, "error", urlErr)
+		} else {
+			s.sendPasswordResetEmail(target, resetURL)
+		}
+	}
+	return writeJSON(c, fiber.StatusAccepted, passwordResetResponse{Data: map[string]any{}})
+}
+
+func (s *Server) sendPasswordResetEmail(target store.PasswordResetTarget, resetURL string) {
+	select {
+	case s.mailSlots <- struct{}{}:
+	default:
+		s.logger.Error("password reset email queue is full", "user_id", target.UserID)
+		return
+	}
+	go func() {
+		defer func() { <-s.mailSlots }()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		safeResetURL := html.EscapeString(resetURL)
+		if err := s.mailer.Send(ctx, mailer.Message{
+			To:      target.Email,
+			Subject: "Reset your SEO Blog password",
+			Text: "A password reset was requested for your SEO Blog account.\n\n" +
+				"Reset your password using this link:\n" + resetURL + "\n\n" +
+				"This link expires in one hour and can be used only once. If you did not request it, you can ignore this email.",
+			HTML: "<p>A password reset was requested for your SEO Blog account.</p>" +
+				`<p><a href="` + safeResetURL + `">Reset your password</a></p>` +
+				"<p>This link expires in one hour and can be used only once. If you did not request it, you can ignore this email.</p>",
+		}); err != nil {
+			s.logger.Error("send password reset email", "user_id", target.UserID, "error", err)
+		}
+	}()
+}
+
+func (s *Server) resetPassword(c *fiber.Ctx) error {
+	var input resetPasswordRequest
+	if err := decodeStrictRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	input.Token = strings.TrimSpace(input.Token)
+	if input.Token == "" {
+		return problem(c, fiber.StatusBadRequest, "Invalid or expired reset link", "")
+	}
+	if len(input.Password) < passwordMinLength || len(input.Password) > passwordMaxLength {
+		return problem(c, fiber.StatusBadRequest, "Invalid password", "Password must be between 15 and 128 characters")
+	}
+	passwordHash, err := security.HashPassword(input.Password)
+	if err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid password", "")
+	}
+	err = s.store.CompletePasswordReset(
+		c.UserContext(),
+		security.TokenHash(input.Token),
+		passwordHash,
+		time.Now().UTC(),
+	)
+	if errors.Is(err, store.ErrInvalidPasswordReset) {
+		return problem(c, fiber.StatusBadRequest, "Invalid or expired reset link", "")
+	}
+	if err != nil {
+		s.logger.Error("complete password reset", "error", err)
+		return problem(c, fiber.StatusInternalServerError, "Could not reset password", "")
+	}
+	s.clearAuthCookies(c)
+	return writeJSON(c, fiber.StatusOK, passwordResetResponse{Data: map[string]any{}})
+}
+
+func (s *Server) passwordResetURL(token string) (string, error) {
+	base, err := url.Parse(strings.TrimSpace(s.cfg.AdminPublicURL))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return "", errors.New("SEOBLOG_ADMIN_PUBLIC_URL must be an absolute URL")
+	}
+	if s.cfg.Env == "production" && base.Scheme != "https" {
+		return "", errors.New("SEOBLOG_ADMIN_PUBLIC_URL must use HTTPS in production")
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/reset-password"
+	base.RawPath = ""
+	base.Fragment = ""
+	query := base.Query()
+	query.Set("token", token)
+	base.RawQuery = query.Encode()
+	return base.String(), nil
 }
 
 func (s *Server) currentUser(c *fiber.Ctx) error {

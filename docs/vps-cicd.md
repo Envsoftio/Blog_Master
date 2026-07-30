@@ -60,11 +60,20 @@ SEOBLOG_HTTP_ADDR=127.0.0.1:8080
 SEOBLOG_DB_PATH=/srv/seoblog/shared/seoblog.db
 SEOBLOG_DEV_AUTH=false
 SEOBLOG_TRUSTED_PROXIES=127.0.0.1
+SEOBLOG_ADMIN_PUBLIC_URL=https://admin.example.com
+SEOBLOG_SMTP_ADDR=smtp.zeptomail.com:587
+SEOBLOG_SMTP_USERNAME=emailapikey
+SEOBLOG_SMTP_PASSWORD=
+SEOBLOG_SMTP_REQUIRE_STARTTLS=true
+SEOBLOG_SMTP_FROM=noreply@proctorplus.io
+SEOBLOG_SMTP_FROM_NAME=Example Team
 NITRO_HOST=127.0.0.1
 NITRO_PORT=3000
 NUXT_API_BASE_URL=http://127.0.0.1:8080
 SEOBLOG_RELEASE_ROOT=/srv/seoblog/current
 ```
+
+Set the public admin URL and ZeptoMail API-key password before enabling invitation or password-recovery email. Production SMTP requires STARTTLS and the API never returns reset tokens in an API response.
 
 ## First owner
 

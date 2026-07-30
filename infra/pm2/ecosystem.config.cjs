@@ -47,7 +47,14 @@ module.exports = {
         SEOBLOG_HTTP_ADDR: apiAddr,
         SEOBLOG_DB_PATH: dbPath,
         SEOBLOG_DEV_AUTH: process.env.SEOBLOG_DEV_AUTH || 'false',
-        SEOBLOG_TRUSTED_PROXIES: process.env.SEOBLOG_TRUSTED_PROXIES || '127.0.0.1'
+        SEOBLOG_TRUSTED_PROXIES: process.env.SEOBLOG_TRUSTED_PROXIES || '127.0.0.1',
+        SEOBLOG_ADMIN_PUBLIC_URL: process.env.SEOBLOG_ADMIN_PUBLIC_URL || '',
+        SEOBLOG_SMTP_ADDR: process.env.SEOBLOG_SMTP_ADDR || '',
+        SEOBLOG_SMTP_USERNAME: process.env.SEOBLOG_SMTP_USERNAME || '',
+        SEOBLOG_SMTP_PASSWORD: process.env.SEOBLOG_SMTP_PASSWORD || '',
+        SEOBLOG_SMTP_REQUIRE_STARTTLS: process.env.SEOBLOG_SMTP_REQUIRE_STARTTLS || 'false',
+        SEOBLOG_SMTP_FROM: process.env.SEOBLOG_SMTP_FROM || '',
+        SEOBLOG_SMTP_FROM_NAME: process.env.SEOBLOG_SMTP_FROM_NAME || ''
       }
     },
     {

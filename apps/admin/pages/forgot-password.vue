@@ -45,11 +45,7 @@ async function requestReset() {
     await api.forgotPassword(email.value)
     submitted.value = true
   } catch (error) {
-    if (apiStatus(error) === 501) {
-      errorMessage.value = 'Password recovery is not enabled on this backend.'
-    } else {
-      errorMessage.value = normalizeAPIError(error, 'Could not request a password reset.')
-    }
+    errorMessage.value = normalizeAPIError(error, 'Could not request a password reset.')
   } finally {
     pending.value = false
   }

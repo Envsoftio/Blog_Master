@@ -370,6 +370,22 @@ components:
           format: uri
           type: string
       type: object
+    ForgotPasswordRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ForgotPasswordRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        email:
+          format: email
+          type: string
+      required:
+        - email
+      type: object
     HealthResponse:
       additionalProperties: false
       properties:
@@ -437,6 +453,22 @@ components:
       required:
         - limit
       type: object
+    PasswordResetResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PasswordResetResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          additionalProperties: {}
+          type: object
+      required:
+        - data
+      type: object
     Problem:
       additionalProperties: false
       properties:
@@ -460,6 +492,27 @@ components:
         - type
         - title
         - status
+      type: object
+    ResetPasswordRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ResetPasswordRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        password:
+          maxLength: 128
+          minLength: 15
+          type: string
+        token:
+          minLength: 1
+          type: string
+      required:
+        - token
+        - password
       type: object
     RevisionRequest:
       additionalProperties: false
@@ -672,24 +725,41 @@ paths:
         - Authentication
   /api/v1/auth/forgot-password:
     post:
-      description: Administrative API route.
-      operationId: post_api_v1_auth_forgot_password
+      description: Creates a one-time reset token for an active account and sends it by email. The response is identical when the address is unknown.
+      operationId: requestPasswordReset
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForgotPasswordRequest"
+        description: Account email address.
+        required: true
       responses:
-        "200":
-          description: Successful response
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordResetResponse"
+          description: Password-reset request accepted
         "400":
-          description: Invalid request
-        "401":
-          description: Authentication required
-        "403":
-          description: Insufficient permission
-        "404":
-          description: Resource not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Invalid request body
+        "429":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Password-reset rate limit exceeded
         "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
-      summary: POST /api/v1/auth/forgot-password
+      summary: Request a password reset
       tags:
         - Authentication
   /api/v1/auth/login:
@@ -803,24 +873,41 @@ paths:
         - Authentication
   /api/v1/auth/reset-password:
     post:
-      description: Administrative API route.
-      operationId: post_api_v1_auth_reset_password
+      description: Consumes an unexpired one-time reset token, changes the password and revokes every active session for the account.
+      operationId: completePasswordReset
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordRequest"
+        description: One-time reset token and replacement password.
+        required: true
       responses:
         "200":
-          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordResetResponse"
+          description: Password reset completed
         "400":
-          description: Invalid request
-        "401":
-          description: Authentication required
-        "403":
-          description: Insufficient permission
-        "404":
-          description: Resource not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Invalid request, password or reset token
+        "429":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Password-reset rate limit exceeded
         "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
-      summary: POST /api/v1/auth/reset-password
+      summary: Complete a password reset
       tags:
         - Authentication
   /api/v1/invitations/{token}/accept:

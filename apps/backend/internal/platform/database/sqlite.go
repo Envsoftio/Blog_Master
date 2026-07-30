@@ -46,6 +46,9 @@ var aiContextMigration string
 //go:embed migrations/0012_ai_job_context.sql
 var aiJobContextMigration string
 
+//go:embed migrations/0013_password_reset_index.sql
+var passwordResetIndexMigration string
+
 type migration struct {
 	version    string
 	statements string
@@ -94,6 +97,7 @@ func Migrate(db *sql.DB) error {
 		{version: "0010_ai_observability", statements: aiObservabilityMigration},
 		{version: "0011_ai_context", statements: aiContextMigration},
 		{version: "0012_ai_job_context", statements: aiJobContextMigration},
+		{version: "0013_password_reset_index", statements: passwordResetIndexMigration},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {

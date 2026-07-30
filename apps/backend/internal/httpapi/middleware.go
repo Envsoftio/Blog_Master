@@ -132,6 +132,46 @@ func invitationTokenRateLimiter() fiber.Handler {
 	})
 }
 
+func passwordResetRequestSourceRateLimiter() fiber.Handler {
+	return newAdminRateLimiter(10, time.Hour, func(c *fiber.Ctx) string {
+		return "password-reset-request-source:" + requestSource(c)
+	})
+}
+
+func passwordResetEmailRateLimiter() fiber.Handler {
+	return newAdminRateLimiter(3, time.Hour, func(c *fiber.Ctx) string {
+		var input struct {
+			Email string `json:"email"`
+		}
+		_ = json.Unmarshal(c.Body(), &input)
+		identity := strings.ToLower(strings.TrimSpace(input.Email))
+		if identity == "" {
+			identity = "invalid"
+		}
+		return "password-reset-email:" + hashRateLimitIdentity(identity)
+	})
+}
+
+func passwordResetCompletionSourceRateLimiter() fiber.Handler {
+	return newAdminRateLimiter(20, time.Hour, func(c *fiber.Ctx) string {
+		return "password-reset-completion-source:" + requestSource(c)
+	})
+}
+
+func passwordResetTokenRateLimiter() fiber.Handler {
+	return newAdminRateLimiter(5, time.Hour, func(c *fiber.Ctx) string {
+		var input struct {
+			Token string `json:"token"`
+		}
+		_ = json.Unmarshal(c.Body(), &input)
+		identity := strings.TrimSpace(input.Token)
+		if identity == "" {
+			identity = "invalid"
+		}
+		return "password-reset-token:" + hashRateLimitIdentity(identity)
+	})
+}
+
 func newAdminRateLimiter(max int, expiration time.Duration, keyGenerator func(*fiber.Ctx) string) fiber.Handler {
 	return limiter.New(limiter.Config{
 		Max:          max,

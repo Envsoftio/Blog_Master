@@ -35,6 +35,8 @@ func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
 		path          string
 		successStatus string
 	}{
+		{http.MethodPost, "/api/v1/auth/forgot-password", "202"},
+		{http.MethodPost, "/api/v1/auth/reset-password", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/media", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/media/uploads", "201"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/media/{assetID}", "200"},
@@ -93,6 +95,82 @@ func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
 			if _, ok := operation.Responses[route.successStatus]; !ok {
 				t.Fatalf("expected success status %s", route.successStatus)
 			}
+		})
+	}
+}
+
+func TestPasswordResetOpenAPIContracts(t *testing.T) {
+	server, _ := newAdminTestServer(t)
+	routes := []struct {
+		path          string
+		operationID   string
+		successStatus string
+		required      []string
+	}{
+		{
+			path:          "/api/v1/auth/forgot-password",
+			operationID:   "requestPasswordReset",
+			successStatus: "202",
+			required:      []string{"email"},
+		},
+		{
+			path:          "/api/v1/auth/reset-password",
+			operationID:   "completePasswordReset",
+			successStatus: "200",
+			required:      []string{"token", "password"},
+		},
+	}
+
+	for _, route := range routes {
+		t.Run(route.operationID, func(t *testing.T) {
+			item := server.openAPI.Paths[route.path]
+			if item == nil || item.Post == nil {
+				t.Fatal("expected documented password-reset operation")
+			}
+			operation := item.Post
+			if operation.OperationID != route.operationID {
+				t.Fatalf("expected operation ID %q, got %q", route.operationID, operation.OperationID)
+			}
+			if operation.RequestBody == nil || !operation.RequestBody.Required {
+				t.Fatal("expected required request body")
+			}
+			mediaType := operation.RequestBody.Content["application/json"]
+			if mediaType == nil || mediaType.Schema == nil {
+				t.Fatal("expected JSON request schema")
+			}
+			requestSchema := resolveContractSchema(t, server, mediaType.Schema)
+			for _, property := range route.required {
+				propertySchema := contractProperty(t, requestSchema, property)
+				if !containsString(requestSchema.Required, property) {
+					t.Fatalf("expected required property %q", property)
+				}
+				switch property {
+				case "email":
+					if propertySchema.Format != "email" {
+						t.Fatalf("expected email format, got %q", propertySchema.Format)
+					}
+				case "password":
+					if propertySchema.MinLength == nil || *propertySchema.MinLength != passwordMinLength {
+						t.Fatalf("expected password minimum length %d, got %#v", passwordMinLength, propertySchema.MinLength)
+					}
+					if propertySchema.MaxLength == nil || *propertySchema.MaxLength != passwordMaxLength {
+						t.Fatalf("expected password maximum length %d, got %#v", passwordMaxLength, propertySchema.MaxLength)
+					}
+				}
+			}
+			if _, ok := operation.Responses[route.successStatus]; !ok {
+				t.Fatalf("expected success status %s", route.successStatus)
+			}
+			if _, ok := operation.Responses["429"]; !ok {
+				t.Fatal("expected rate-limit response")
+			}
+			if _, ok := operation.Responses["501"]; ok {
+				t.Fatal("implemented operation must not advertise 501")
+			}
+			if len(operation.Security) != 0 {
+				t.Fatal("password recovery must not require an admin session")
+			}
+			assertProblemResponseMediaTypes(t, server, operation, "400", "429", "500")
 		})
 	}
 }

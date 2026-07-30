@@ -13,21 +13,25 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 
 	"seoblog/apps/backend/internal/config"
+	"seoblog/apps/backend/internal/mailer"
 	"seoblog/apps/backend/internal/store"
 )
 
 type Options struct {
 	Config config.Config
 	Logger *slog.Logger
+	Mailer mailer.Sender
 	Store  *store.Store
 }
 
 type Server struct {
-	app     *fiber.App
-	openAPI *huma.OpenAPI
-	cfg     config.Config
-	logger  *slog.Logger
-	store   *store.Store
+	app       *fiber.App
+	openAPI   *huma.OpenAPI
+	cfg       config.Config
+	logger    *slog.Logger
+	mailer    mailer.Sender
+	mailSlots chan struct{}
+	store     *store.Store
 }
 
 func New(opts Options) *Server {
@@ -54,11 +58,24 @@ func New(opts Options) *Server {
 	})
 	app.Use(recover.New(recover.Config{EnableStackTrace: false}))
 
+	messageSender := opts.Mailer
+	if messageSender == nil {
+		messageSender = mailer.NewSMTP(mailer.SMTPConfig{
+			Address:         opts.Config.SMTPAddress,
+			Username:        opts.Config.SMTPUsername,
+			Password:        opts.Config.SMTPPassword,
+			From:            opts.Config.SMTPFrom,
+			FromName:        opts.Config.SMTPFromName,
+			RequireStartTLS: opts.Config.SMTPRequireTLS,
+		})
+	}
 	s := &Server{
-		app:    app,
-		cfg:    opts.Config,
-		logger: opts.Logger,
-		store:  opts.Store,
+		app:       app,
+		cfg:       opts.Config,
+		logger:    opts.Logger,
+		mailer:    messageSender,
+		mailSlots: make(chan struct{}, 8),
+		store:     opts.Store,
 	}
 	s.registerRoutes()
 	return s
