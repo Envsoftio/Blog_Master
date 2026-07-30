@@ -836,6 +836,13 @@ export function useAdminApi() {
     }))
   }
 
+  async function deleteMedia(projectID: string, assetID: string) {
+    await request(`/api/v1/projects/${projectID}/media/${assetID}`, await withCSRF({
+      method: 'DELETE',
+      body: {}
+    }))
+  }
+
   async function listWebhooks(projectID: string) {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<WebhookEndpoint>>(`/api/v1/projects/${projectID}/webhooks`))
   }
@@ -993,6 +1000,7 @@ export function useAdminApi() {
     listMedia,
     initiateMediaUpload,
     completeMediaUpload,
+    deleteMedia,
     listWebhooks,
     createWebhook,
     revokeWebhook,

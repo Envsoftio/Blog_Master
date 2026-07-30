@@ -102,7 +102,21 @@
             <h3>{{ asset.filename }}</h3>
             <p>{{ asset.width && asset.height ? `${asset.width} × ${asset.height}` : labelize(asset.contentType) }} · {{ formatBytes(asset.bytes || 0) }}</p>
           </div>
-          <span class="status-pill" :class="mediaStatusClass(asset.status)">{{ labelize(asset.status) }}</span>
+          <div class="media-card__state">
+            <span class="status-pill" :class="mediaStatusClass(asset.status)">{{ labelize(asset.status) }}</span>
+            <button
+              v-if="canDeleteMediaAsset(asset)"
+              class="icon-button media-card__delete"
+              type="button"
+              :title="mediaDeleteLabel(asset)"
+              :aria-label="mediaDeleteLabel(asset)"
+              :disabled="deletingAssetIDs.includes(asset.id)"
+              @click="deleteMediaAsset(asset)"
+            >
+              <LoaderCircle v-if="deletingAssetIDs.includes(asset.id)" class="spin" :size="14" />
+              <Trash2 v-else :size="14" />
+            </button>
+          </div>
         </div>
       </article>
     </div>
@@ -120,6 +134,7 @@ import {
   RefreshCw,
   ScanText,
   Search,
+  Trash2,
   Upload
 } from 'lucide-vue-next'
 import type { AdminMediaAsset } from '~/composables/useAdminApi'
@@ -138,6 +153,7 @@ const typeFilter = ref('all')
 const view = ref<'grid' | 'list'>('grid')
 const errorMessage = ref('')
 const successMessage = ref('')
+const deletingAssetIDs = ref<string[]>([])
 const acceptedUploadTypes = '.jpg,.jpeg,.png,.webp,.gif,.pdf,image/jpeg,image/png,image/webp,image/gif,application/pdf'
 const mediaTypeByExtension: Record<string, string> = {
   jpg: 'image/jpeg',
@@ -197,18 +213,27 @@ async function uploadFiles() {
     let uploadedCount = 0
     let registeredCount = 0
     for (const file of selectedFiles.value) {
-      const initiated = await api.initiateMediaUpload(projectID.value, {
-        filename: file.name,
-        contentType: mediaContentType(file) || 'application/octet-stream',
-        bytes: file.size
-      })
-      if (initiated.data.upload) {
-        const sha256 = await fileSHA256(file)
-        await uploadToSignedTarget(file, initiated.data.upload)
-        await api.completeMediaUpload(projectID.value, initiated.data.id, { sha256 })
-        uploadedCount++
-      } else {
-        registeredCount++
+      let initiatedAsset: AdminMediaAsset | null = null
+      try {
+        const initiated = await api.initiateMediaUpload(projectID.value, {
+          filename: file.name,
+          contentType: mediaContentType(file) || 'application/octet-stream',
+          bytes: file.size
+        })
+        initiatedAsset = initiated.data
+        if (initiated.data.upload) {
+          const sha256 = await fileSHA256(file)
+          await uploadToSignedTarget(file, initiated.data.upload)
+          await api.completeMediaUpload(projectID.value, initiated.data.id, { sha256 })
+          uploadedCount++
+        } else {
+          registeredCount++
+        }
+      } catch (error) {
+        if (initiatedAsset) {
+          await cleanupFailedUpload(initiatedAsset)
+        }
+        throw error
       }
     }
     successMessage.value = uploadedCount
@@ -248,6 +273,46 @@ async function uploadToSignedTarget(file: File, upload: NonNullable<AdminMediaAs
   })
   if (!response.ok) {
     throw new Error(`Object storage upload failed with status ${response.status}.`)
+  }
+}
+
+async function cleanupFailedUpload(asset: AdminMediaAsset) {
+  try {
+    await api.deleteMedia(projectID.value, asset.id)
+    assets.value = assets.value.filter(item => item.id !== asset.id)
+  } catch {
+    // Keep the original upload error visible; the stale row can still be deleted manually.
+  }
+}
+
+function canDeleteMediaAsset(asset: AdminMediaAsset) {
+  return ['registered', 'uploading', 'processing', 'failed', 'rejected'].includes(asset.status)
+}
+
+function mediaDeleteLabel(asset: AdminMediaAsset) {
+  if (asset.status === 'uploading' || asset.status === 'registered') {
+    return `Delete unfinished upload for ${asset.filename}`
+  }
+  if (asset.status === 'processing') {
+    return `Delete processing media ${asset.filename}`
+  }
+  return `Delete failed media ${asset.filename}`
+}
+
+async function deleteMediaAsset(asset: AdminMediaAsset) {
+  if (!canDeleteMediaAsset(asset) || deletingAssetIDs.value.includes(asset.id)) return
+  if (!window.confirm(`Delete ${asset.filename}?`)) return
+  deletingAssetIDs.value = [...deletingAssetIDs.value, asset.id]
+  errorMessage.value = ''
+  successMessage.value = ''
+  try {
+    await api.deleteMedia(projectID.value, asset.id)
+    assets.value = assets.value.filter(item => item.id !== asset.id)
+    successMessage.value = `${asset.filename} deleted.`
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, 'Could not delete the media.')
+  } finally {
+    deletingAssetIDs.value = deletingAssetIDs.value.filter(id => id !== asset.id)
   }
 }
 
@@ -317,6 +382,8 @@ function mediaStatusClass(status: string) {
 .media-card__body h3, .media-card__body p { overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
 .media-card__body h3 { font-size: 11px; }
 .media-card__body p { margin-top: 3px; color: var(--text-soft); font-size: 8px; }
+.media-card__state { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.media-card__delete { width: 28px; height: 28px; flex-basis: 28px; color: var(--danger); }
 .media-grid--list { grid-template-columns: 1fr; }
 .media-grid--list .media-card { display: grid; grid-template-columns: 84px minmax(0, 1fr); }
 .media-grid--list .media-card__preview { aspect-ratio: 4 / 3; border-right: 1px solid var(--border); border-bottom: 0; }
