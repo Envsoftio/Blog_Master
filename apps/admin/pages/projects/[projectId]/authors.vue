@@ -166,10 +166,22 @@
                   <option value="inactive">Inactive</option>
                 </select>
               </label>
-              <label class="field">
-                <span>Photo asset ID</span>
-                <input v-model.trim="form.photoAssetId" autocomplete="off">
-              </label>
+              <div class="author-photo-field">
+                <label class="field">
+                  <span>Photo</span>
+                  <select v-model="form.photoAssetId">
+                    <option value="">No photo</option>
+                    <option v-if="form.photoAssetId && !selectedPhotoAsset" :value="form.photoAssetId">Current photo</option>
+                    <option v-for="asset in authorPhotoAssets" :key="asset.id" :value="asset.id">
+                      {{ mediaAssetLabel(asset) }}
+                    </option>
+                  </select>
+                </label>
+                <div class="author-photo-preview">
+                  <img v-if="selectedPhotoAsset?.url" :src="selectedPhotoAsset.url" :alt="selectedPhotoAsset.altText || ''">
+                  <UserRound v-else :size="18" />
+                </div>
+              </div>
             </div>
           </section>
 
@@ -216,7 +228,7 @@
             <h3><Sparkles :size="14" />Authority</h3>
             <div class="author-form__grid">
               <label class="field">
-                <span>Credentials</span>
+                <span>Qualifications</span>
                 <input v-model.trim="form.credentials">
               </label>
               <label class="field">
@@ -274,7 +286,7 @@ import {
   UsersRound,
   X
 } from 'lucide-vue-next'
-import type { AdminAuthor, AdminProject, AdminProjectMember, APIListEnvelope, AuthorPayload } from '~/composables/useAdminApi'
+import type { AdminAuthor, AdminMediaAsset, AdminProject, AdminProjectMember, APIListEnvelope, AuthorPayload } from '~/composables/useAdminApi'
 import { apiListData, labelize, normalizeAPIError, slugify, useAdminApi } from '~/composables/useAdminApi'
 
 type AuthorFilter = 'all' | 'active' | 'inactive' | 'linked' | 'missing_bio'
@@ -286,6 +298,7 @@ const projectID = computed(() => String(route.params.projectId || ''))
 const project = ref<AdminProject | null>(null)
 const authors = ref<AdminAuthor[]>([])
 const members = ref<AdminProjectMember[]>([])
+const mediaAssets = ref<AdminMediaAsset[]>([])
 const pending = ref(true)
 const loadingMore = ref(false)
 const saving = ref(false)
@@ -320,6 +333,8 @@ const canManageProject = computed(() => ['project_owner', 'project_admin'].inclu
 const canManageAuthors = computed(() => canManageProject.value || project.value?.role === 'editor')
 const canSave = computed(() => Boolean(form.displayName.trim() && form.slug.trim()))
 const loginMembers = computed(() => members.value.filter(member => member.status === 'active' || member.status === 'invited'))
+const authorPhotoAssets = computed(() => mediaAssets.value.filter(asset => asset.status === 'ready' && asset.contentType.startsWith('image/')))
+const selectedPhotoAsset = computed(() => authorPhotoAssets.value.find(asset => asset.id === form.photoAssetId))
 
 const activeAuthors = computed(() => authors.value.filter(author => normalizedStatus(author) === 'active'))
 const inactiveAuthors = computed(() => authors.value.filter(author => normalizedStatus(author) === 'inactive'))
@@ -390,7 +405,12 @@ async function refresh() {
     project.value = projectResponse.data
     authors.value = sortAuthors(apiListData(authorResponse))
     nextCursor.value = authorResponse.meta?.nextCursor || ''
-    members.value = canManageProject.value ? await loadProjectMembers() : []
+    const [loadedMembers, loadedMedia] = await Promise.all([
+      canManageProject.value ? loadProjectMembers() : Promise.resolve([]),
+      loadMediaAssets()
+    ])
+    members.value = loadedMembers
+    mediaAssets.value = loadedMedia
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load authors. Sign in again if your session has expired.')
   } finally {
@@ -548,6 +568,14 @@ async function loadProjectMembers() {
   return apiListData(response)
 }
 
+async function loadMediaAssets() {
+  try {
+    return apiListData(await api.listMedia(projectID.value))
+  } catch {
+    return []
+  }
+}
+
 function splitCSV(value: string) {
   return cleanList(value.split(','))
 }
@@ -570,6 +598,11 @@ function cleanList(values: string[]) {
 
 function sortAuthors(values: AdminAuthor[]) {
   return [...values].sort((left, right) => left.displayName.localeCompare(right.displayName))
+}
+
+function mediaAssetLabel(asset: AdminMediaAsset) {
+  const dimensions = asset.width && asset.height ? ` - ${asset.width} x ${asset.height}` : ''
+  return `${asset.filename}${dimensions}`
 }
 
 function normalizedStatus(author: AdminAuthor) {
@@ -692,6 +725,9 @@ function clearMessages() {
 .author-form__section + .author-form__section { padding-top: 14px; border-top: 1px solid var(--border); }
 .author-form__section h3 { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: var(--text-soft); font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .author-form__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.author-photo-field { display: grid; grid-template-columns: minmax(0, 1fr) 52px; gap: 10px; align-items: end; }
+.author-photo-preview { display: grid; width: 52px; height: 52px; place-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); color: var(--text-faint); }
+.author-photo-preview img { width: 100%; height: 100%; object-fit: cover; }
 .textarea--short { min-height: 76px !important; }
 .author-form__actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding-top: 4px; }
 .author-form__actions .button { width: 100%; }
