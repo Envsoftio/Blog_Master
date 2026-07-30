@@ -1,97 +1,53 @@
 <template>
-  <section class="min-h-screen grid place-items-center px-6 py-10">
-    <div class="w-full max-w-md">
-      <form
-        v-if="!acceptance"
-        class="space-y-5 rounded-lg border border-[#d8d8d0] bg-white p-6 shadow-sm dark:border-[#3d403a] dark:bg-[#252823]"
-        @submit.prevent="acceptInvitation"
-      >
-        <div class="flex items-start gap-3">
-          <div class="mt-0.5 grid h-9 w-9 place-items-center rounded-md bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]">
-            <UserCheck class="h-5 w-5" />
-          </div>
-          <div>
-            <p class="text-sm text-[#666b60] dark:text-[#b8c2bb]">SEO Blog CMS</p>
-            <h1 class="mt-1 text-2xl font-semibold tracking-normal">Accept invitation</h1>
-          </div>
-        </div>
-
-        <label class="block space-y-2">
-          <span class="text-sm font-medium">Account password</span>
-          <input
-            v-model="password"
-            class="w-full rounded-md border border-[#c9c9bf] px-3 py-2 dark:border-[#555a50] dark:bg-[#1c1e1b]"
-            name="password"
-            type="password"
-            autocomplete="current-password"
-            required
-            minlength="8"
-          />
-        </label>
-
-        <label class="block space-y-2">
-          <span class="text-sm font-medium">Confirm password</span>
-          <input
-            v-model="confirmation"
-            class="w-full rounded-md border border-[#c9c9bf] px-3 py-2 dark:border-[#555a50] dark:bg-[#1c1e1b]"
-            name="password-confirmation"
-            type="password"
-            autocomplete="current-password"
-            required
-            minlength="8"
-          />
-        </label>
-
-        <p v-if="errorMessage" class="rounded-md border border-[#edc6c2] bg-[#fff4f2] px-4 py-3 text-sm text-[#9b2d23] dark:border-[#6d352f] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]" role="alert">
-          {{ errorMessage }}
-        </p>
-
-        <button
-          class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
-          type="submit"
-          :disabled="pending || !canSubmit"
-        >
-          <LoaderCircle v-if="pending" class="h-4 w-4 animate-spin" />
-          <UserCheck v-else class="h-4 w-4" />
-          Activate account
-        </button>
-      </form>
-
-      <div v-else class="space-y-5 rounded-lg border border-[#b9dcc9] bg-white p-6 shadow-sm dark:border-[#2d644a] dark:bg-[#252823]">
-        <div class="flex items-start gap-3">
-          <div class="mt-0.5 grid h-9 w-9 place-items-center rounded-md bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]">
-            <Check class="h-5 w-5" />
-          </div>
-          <div class="min-w-0">
-            <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Invitation accepted</p>
-            <h1 class="mt-1 truncate text-2xl font-semibold tracking-normal">{{ acceptance.email }}</h1>
-          </div>
-        </div>
-        <dl class="grid gap-3 text-sm sm:grid-cols-2">
-          <div>
-            <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Role</dt>
-            <dd class="mt-1">{{ roleLabel(acceptance.role) }}</dd>
-          </div>
-          <div>
-            <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Project</dt>
-            <dd class="mt-1 truncate">{{ acceptance.projectId }}</dd>
-          </div>
-        </dl>
-        <NuxtLink class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 font-medium text-white hover:bg-[#10463a]" to="/">
-          <LogIn class="h-4 w-4" />
-          Sign in
-        </NuxtLink>
+  <AuthPanel
+    :eyebrow="acceptance ? 'Invitation accepted' : 'Project invitation'"
+    :title="acceptance ? 'Your account is ready' : 'Activate your account'"
+    :description="acceptance ? 'Sign in to open your new project workspace.' : 'Choose a secure password to accept this invitation.'"
+  >
+    <form v-if="!acceptance" class="invite-form" @submit.prevent="acceptInvitation">
+      <label class="field">
+        <span>Account password</span>
+        <span class="invite-input">
+          <LockKeyhole :size="16" />
+          <input v-model="password" :type="passwordVisible ? 'text' : 'password'" autocomplete="new-password" required minlength="15" maxlength="128">
+          <button type="button" :title="passwordVisible ? 'Hide password' : 'Show password'" :aria-label="passwordVisible ? 'Hide password' : 'Show password'" @click="passwordVisible = !passwordVisible">
+            <EyeOff v-if="passwordVisible" :size="16" /><Eye v-else :size="16" />
+          </button>
+        </span>
+      </label>
+      <label class="field">
+        <span>Confirm password</span>
+        <span class="invite-input">
+          <LockKeyhole :size="16" />
+          <input v-model="confirmation" :type="passwordVisible ? 'text' : 'password'" autocomplete="new-password" required minlength="15" maxlength="128">
+        </span>
+      </label>
+      <div class="password-rule" :class="{ 'is-ready': password.length >= 15 && password === confirmation }">
+        <CircleCheck :size="14" />
+        <span>At least 15 characters and both entries match</span>
       </div>
+      <p v-if="errorMessage" class="ui-alert ui-alert--danger" role="alert">{{ errorMessage }}</p>
+      <button class="button button--primary invite-submit" type="submit" :disabled="pending || !canSubmit">
+        <LoaderCircle v-if="pending" class="spin" :size="16" />
+        <UserCheck v-else :size="16" />
+        Activate account
+      </button>
+    </form>
+
+    <div v-else class="invitation-complete">
+      <span class="invitation-complete__icon"><CircleCheck :size="22" /></span>
+      <dl>
+        <div><dt>Email</dt><dd>{{ acceptance.email }}</dd></div>
+        <div><dt>Role</dt><dd>{{ labelize(acceptance.role) }}</dd></div>
+      </dl>
+      <NuxtLink class="button button--primary" to="/"><LogIn :size="16" />Sign in</NuxtLink>
     </div>
-  </section>
+  </AuthPanel>
 </template>
 
 <script setup lang="ts">
-import { Check, LoaderCircle, LogIn, UserCheck } from 'lucide-vue-next'
-
-type APIEnvelope<T> = {
-  data: T
-}
+import { CircleCheck, Eye, EyeOff, LoaderCircle, LockKeyhole, LogIn, UserCheck } from 'lucide-vue-next'
+import type { APIEnvelope } from '~/composables/useAdminApi'
 
 type InvitationAcceptance = {
   projectId: string
@@ -101,28 +57,25 @@ type InvitationAcceptance = {
 }
 
 const route = useRoute()
-const token = computed(() => {
-  const value = route.params.token
-  return Array.isArray(value) ? String(value[0] || '') : String(value || '')
-})
+const api = useAdminApi()
+const token = computed(() => String(route.params.token || ''))
 const password = ref('')
 const confirmation = ref('')
+const passwordVisible = ref(false)
 const pending = ref(false)
 const errorMessage = ref('')
 const acceptance = ref<InvitationAcceptance | null>(null)
-const canSubmit = computed(() => password.value.length >= 8 && password.value === confirmation.value && Boolean(token.value))
+const canSubmit = computed(() => token.value.length > 0 && password.value.length >= 15 && password.value === confirmation.value)
 
 async function acceptInvitation() {
   if (!canSubmit.value) {
-    errorMessage.value = password.value !== confirmation.value
-      ? 'Passwords do not match.'
-      : 'Password must be at least 8 characters.'
+    errorMessage.value = password.value !== confirmation.value ? 'Passwords do not match.' : 'Password must be at least 15 characters.'
     return
   }
   pending.value = true
   errorMessage.value = ''
   try {
-    const response = await $fetch<APIEnvelope<InvitationAcceptance>>(`/api/v1/invitations/${encodeURIComponent(token.value)}/accept`, {
+    const response = await api.request<APIEnvelope<InvitationAcceptance>>(`/api/v1/invitations/${encodeURIComponent(token.value)}/accept`, {
       method: 'POST',
       body: { password: password.value }
     })
@@ -130,21 +83,29 @@ async function acceptInvitation() {
     password.value = ''
     confirmation.value = ''
   } catch (error) {
-    errorMessage.value = normalizeAPIError(error)
+    errorMessage.value = normalizeAPIError(error, 'Could not accept this invitation.')
   } finally {
     pending.value = false
   }
 }
-
-function roleLabel(role: string) {
-  return role.replaceAll('_', ' ')
-}
-
-function normalizeAPIError(error: unknown) {
-  if (typeof error === 'object' && error !== null && 'data' in error) {
-    const data = (error as { data?: { title?: string, detail?: string } }).data
-    return data?.detail || data?.title || 'Could not accept this invitation.'
-  }
-  return 'Could not accept this invitation.'
-}
 </script>
+
+<style scoped>
+.invite-form { display: grid; gap: 15px; }
+.invite-input { position: relative; display: flex; align-items: center; color: var(--text-soft); }
+.invite-input > svg:first-child { position: absolute; z-index: 1; left: 12px; }
+.invite-input input { min-height: 44px; padding-left: 39px; padding-right: 40px; }
+.invite-input button { position: absolute; right: 6px; display: grid; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--text-soft); cursor: pointer; }
+.password-rule { display: flex; align-items: center; gap: 6px; color: var(--text-faint); font-size: 8px; }
+.password-rule.is-ready { color: var(--primary); }
+.invite-submit { width: 100%; min-height: 44px; }
+.invitation-complete { display: grid; justify-items: center; }
+.invitation-complete__icon { display: grid; width: 46px; height: 46px; place-items: center; border-radius: 8px; background: var(--primary-soft); color: var(--primary); }
+.invitation-complete dl { display: grid; width: 100%; grid-template-columns: 1fr 1fr; gap: 1px; margin: 20px 0; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--border); }
+.invitation-complete dl > div { min-width: 0; padding: 11px; background: var(--surface); }
+.invitation-complete dt { color: var(--text-soft); font-size: 8px; }
+.invitation-complete dd { overflow: hidden; margin: 3px 0 0; font-size: 9px; font-weight: 600; text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
+.invitation-complete .button { width: 100%; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>

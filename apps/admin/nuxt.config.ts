@@ -19,6 +19,20 @@ export default defineNuxtConfig({
         'cache-control': 'private, no-store'
       }
     },
+    '/healthz': {
+      proxy: `${apiBaseUrl}/healthz`,
+      headers: {
+        'cache-control': 'no-store',
+        'x-robots-tag': 'noindex, nofollow'
+      }
+    },
+    '/readyz': {
+      proxy: `${apiBaseUrl}/readyz`,
+      headers: {
+        'cache-control': 'no-store',
+        'x-robots-tag': 'noindex, nofollow'
+      }
+    },
     '/**': {
       headers: {
         'cache-control': 'private, no-store',

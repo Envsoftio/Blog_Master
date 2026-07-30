@@ -58,15 +58,24 @@
                 <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Taxonomy</p>
                 <h2 class="mt-1 text-xl font-semibold tracking-normal">Category tree</h2>
               </div>
-              <button
-                v-if="canManageTaxonomy"
-                class="inline-flex items-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
-                type="button"
-                @click="resetForm"
-              >
-                <Plus class="h-4 w-4" />
-                New category
-              </button>
+              <div class="flex flex-wrap items-center gap-2">
+                <NuxtLink
+                  class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-4 py-2 text-sm font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]"
+                  :to="`/projects/${projectID}/tags`"
+                >
+                  <Tags class="h-4 w-4" />
+                  Tags
+                </NuxtLink>
+                <button
+                  v-if="canManageTaxonomy"
+                  class="inline-flex items-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
+                  type="button"
+                  @click="resetForm"
+                >
+                  <Plus class="h-4 w-4" />
+                  New category
+                </button>
+              </div>
             </div>
 
             <div v-if="pending" class="flex items-center gap-3 rounded-lg border border-[#cfd8d1] bg-white p-5 text-sm text-[#58625c] dark:border-[#3f4843] dark:bg-[#202522] dark:text-[#bec7c1]">
@@ -188,7 +197,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, Check, FolderTree, LoaderCircle, LogOut, Pencil, Plus, RefreshCw, X } from 'lucide-vue-next'
+import { ArrowLeft, Check, FolderTree, LoaderCircle, LogOut, Pencil, Plus, RefreshCw, Tags, X } from 'lucide-vue-next'
 
 type APIEnvelope<T> = {
   data: T

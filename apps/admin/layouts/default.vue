@@ -1,5 +1,16 @@
 <template>
-  <main class="min-h-screen bg-[#f7f7f4] text-[#20231f] dark:bg-[#171916] dark:text-[#f2f3ef]">
-    <slot />
-  </main>
+  <div class="app-root">
+    <AppShell v-if="usesAdminShell">
+      <slot />
+    </AppShell>
+    <main v-else class="auth-layout">
+      <slot />
+    </main>
+  </div>
 </template>
+
+<script setup lang="ts">
+const route = useRoute()
+const authRoutes = new Set(['/', '/forgot-password', '/reset-password'])
+const usesAdminShell = computed(() => !authRoutes.has(route.path) && !route.path.startsWith('/invitations/'))
+</script>

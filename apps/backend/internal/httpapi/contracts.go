@@ -17,6 +17,28 @@ var operationIDPart = regexp.MustCompile(`[^A-Za-z0-9]+`)
 
 const adminSessionSecuritySchemeName = "adminSession"
 
+var implementedAdminRouteStatuses = map[string]string{
+	"GET /api/v1/projects/{projectID}/media":                         "200",
+	"HEAD /api/v1/projects/{projectID}/media":                        "200",
+	"POST /api/v1/projects/{projectID}/media/uploads":                "201",
+	"GET /api/v1/projects/{projectID}/media/{assetID}":               "200",
+	"HEAD /api/v1/projects/{projectID}/media/{assetID}":              "200",
+	"PATCH /api/v1/projects/{projectID}/media/{assetID}":             "200",
+	"DELETE /api/v1/projects/{projectID}/media/{assetID}":            "204",
+	"GET /api/v1/projects/{projectID}/ai/jobs":                       "200",
+	"HEAD /api/v1/projects/{projectID}/ai/jobs":                      "200",
+	"POST /api/v1/projects/{projectID}/ai/jobs":                      "202",
+	"GET /api/v1/projects/{projectID}/ai/jobs/{jobID}":               "200",
+	"HEAD /api/v1/projects/{projectID}/ai/jobs/{jobID}":              "200",
+	"POST /api/v1/projects/{projectID}/ai/jobs/{jobID}/cancel":       "200",
+	"GET /api/v1/projects/{projectID}/webhooks":                      "200",
+	"HEAD /api/v1/projects/{projectID}/webhooks":                     "200",
+	"POST /api/v1/projects/{projectID}/webhooks":                     "201",
+	"POST /api/v1/projects/{projectID}/webhooks/{endpointID}/revoke": "200",
+	"GET /api/v1/projects/{projectID}/delivery/status":               "200",
+	"HEAD /api/v1/projects/{projectID}/delivery/status":              "200",
+}
+
 // documentFiberRoutes adds the Fiber-owned routes to the same OpenAPI document
 // as the Huma-owned endpoints. Runtime routing remains in Fiber while the
 // contract stays complete and available at /openapi.json and /openapi.yaml.
@@ -53,17 +75,24 @@ func documentFiberRoutes(api huma.API, app *fiber.App) {
 				continue
 			}
 			operationID := strings.Trim(operationIDPart.ReplaceAllString(strings.ToLower(method+"_"+path), "_"), "_")
+			successStatus := "200"
+			implementedStatus, implemented := implementedAdminRouteStatuses[method+" "+path]
+			if implemented {
+				successStatus = implementedStatus
+			}
 			responses := map[string]*huma.Response{
-				"200": {Description: "Successful response"},
-				"400": {Description: "Invalid request"},
-				"401": {Description: "Authentication required"},
-				"403": {Description: "Insufficient permission"},
-				"404": {Description: "Resource not found"},
-				"500": {Description: "Internal server error"},
+				successStatus: {Description: "Successful response"},
+				"400":         {Description: "Invalid request"},
+				"401":         {Description: "Authentication required"},
+				"403":         {Description: "Insufficient permission"},
+				"404":         {Description: "Resource not found"},
+				"500":         {Description: "Internal server error"},
 			}
 			description := ""
 			if strings.HasPrefix(path, "/api/v1/") {
 				description = "Administrative API route."
+			}
+			if strings.HasPrefix(path, "/api/v1/") && !implemented {
 				responses["501"] = &huma.Response{Description: "Administrative workflow is not implemented yet"}
 			}
 			api.OpenAPI().AddOperation(&huma.Operation{

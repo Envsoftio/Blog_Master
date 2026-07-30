@@ -995,9 +995,9 @@ paths:
       tags:
         - Administration
   /api/v1/projects/{projectID}/ai/jobs:
-    post:
+    get:
       description: Administrative API route.
-      operationId: post_api_v1_projects_projectid_ai_jobs
+      operationId: get_api_v1_projects_projectid_ai_jobs
       responses:
         "200":
           description: Successful response
@@ -1011,8 +1011,44 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
+      summary: GET /api/v1/projects/{projectID}/ai/jobs
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_ai_jobs
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /api/v1/projects/{projectID}/ai/jobs
+      tags:
+        - Administration
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_ai_jobs
+      responses:
+        "202":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
       summary: POST /api/v1/projects/{projectID}/ai/jobs
       tags:
         - Administration
@@ -1033,8 +1069,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/ai/jobs/{jobID}
       tags:
         - Administration
@@ -1054,8 +1088,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/ai/jobs/{jobID}
       tags:
         - Administration
@@ -1076,8 +1108,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: POST /api/v1/projects/{projectID}/ai/jobs/{jobID}/cancel
       tags:
         - Administration
@@ -2514,8 +2544,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/delivery/status
       tags:
         - Administration
@@ -2535,8 +2563,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/delivery/status
       tags:
         - Administration
@@ -2665,8 +2691,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/media
       tags:
         - Administration
@@ -2686,8 +2710,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/media
       tags:
         - Administration
@@ -2696,7 +2718,7 @@ paths:
       description: Administrative API route.
       operationId: post_api_v1_projects_projectid_media_uploads
       responses:
-        "200":
+        "201":
           description: Successful response
         "400":
           description: Invalid request
@@ -2708,8 +2730,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: POST /api/v1/projects/{projectID}/media/uploads
       tags:
         - Administration
@@ -2718,7 +2738,7 @@ paths:
       description: Administrative API route.
       operationId: delete_api_v1_projects_projectid_media_assetid
       responses:
-        "200":
+        "204":
           description: Successful response
         "400":
           description: Invalid request
@@ -2730,8 +2750,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: DELETE /api/v1/projects/{projectID}/media/{assetID}
       tags:
         - Administration
@@ -2751,8 +2769,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/media/{assetID}
       tags:
         - Administration
@@ -2772,8 +2788,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/media/{assetID}
       tags:
         - Administration
@@ -2793,8 +2807,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: PATCH /api/v1/projects/{projectID}/media/{assetID}
       tags:
         - Administration
@@ -3461,8 +3473,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/webhooks
       tags:
         - Administration
@@ -3482,8 +3492,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/webhooks
       tags:
         - Administration
@@ -3491,7 +3499,7 @@ paths:
       description: Administrative API route.
       operationId: post_api_v1_projects_projectid_webhooks
       responses:
-        "200":
+        "201":
           description: Successful response
         "400":
           description: Invalid request
@@ -3503,8 +3511,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: POST /api/v1/projects/{projectID}/webhooks
       tags:
         - Administration
@@ -3525,8 +3531,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: POST /api/v1/projects/{projectID}/webhooks/{endpointID}/revoke
       tags:
         - Administration

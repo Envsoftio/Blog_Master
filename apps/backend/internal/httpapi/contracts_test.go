@@ -28,6 +28,48 @@ func TestProblemResponsesUseProblemJSON(t *testing.T) {
 	}
 }
 
+func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
+	server, _ := newAdminTestServer(t)
+	routes := []struct {
+		method        string
+		path          string
+		successStatus string
+	}{
+		{http.MethodGet, "/api/v1/projects/{projectID}/media", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/media/uploads", "201"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/media/{assetID}", "200"},
+		{http.MethodPatch, "/api/v1/projects/{projectID}/media/{assetID}", "200"},
+		{http.MethodDelete, "/api/v1/projects/{projectID}/media/{assetID}", "204"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/ai/jobs", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/ai/jobs", "202"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/ai/jobs/{jobID}", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/ai/jobs/{jobID}/cancel", "200"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/webhooks", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/webhooks", "201"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/webhooks/{endpointID}/revoke", "200"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/delivery/status", "200"},
+	}
+
+	for _, route := range routes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			item := server.openAPI.Paths[route.path]
+			if item == nil {
+				t.Fatal("expected documented route")
+			}
+			operation := operationForMethod(item, route.method)
+			if operation == nil {
+				t.Fatal("expected documented operation")
+			}
+			if _, ok := operation.Responses["501"]; ok {
+				t.Fatal("implemented operation must not advertise 501")
+			}
+			if _, ok := operation.Responses[route.successStatus]; !ok {
+				t.Fatalf("expected success status %s", route.successStatus)
+			}
+		})
+	}
+}
+
 func TestRollbackOpenAPIContract(t *testing.T) {
 	server, _ := newAdminTestServer(t)
 	assertAdminSessionSecurityScheme(t, server)

@@ -1,333 +1,333 @@
 <template>
-  <section class="min-h-screen">
-    <header class="border-b border-[#d7ded8] bg-white px-6 py-4 dark:border-[#343a38] dark:bg-[#202422]">
-      <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
-        <div>
-          <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Workspace</p>
-          <h1 class="mt-1 text-2xl font-semibold tracking-normal">Dashboard</h1>
-        </div>
-        <div class="flex items-center gap-2">
-          <button
-            class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] bg-white text-[#28342d] hover:bg-[#eef5f1] disabled:opacity-50 dark:border-[#414a45] dark:bg-[#252b28] dark:text-[#eef4ef]"
-            type="button"
-            title="Refresh"
-            aria-label="Refresh"
-            :disabled="pending"
-            @click="fetchProjects"
-          >
-            <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': pending }" />
-          </button>
-          <NuxtLink
-            class="inline-flex h-10 w-10 items-center justify-center rounded-md bg-[#165a4a] text-white hover:bg-[#10463a]"
-            to="/projects?new=1"
-            title="New project"
-            aria-label="New project"
-          >
-            <Plus class="h-4 w-4" />
-          </NuxtLink>
-          <button
-            class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] bg-white text-[#28342d] hover:bg-[#fff4df] dark:border-[#414a45] dark:bg-[#252b28] dark:text-[#eef4ef]"
-            type="button"
-            title="Log out"
-            aria-label="Log out"
-            @click="logout"
-          >
-            <LogOut class="h-4 w-4" />
-          </button>
-        </div>
+  <div class="page-stack">
+    <div class="dashboard-welcome">
+      <div>
+        <p>{{ greeting }}</p>
+        <h2>Editorial overview</h2>
+        <span>Content progress, review work, and publishing activity across your projects.</span>
       </div>
-    </header>
-
-    <main class="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-6 py-6 lg:grid-cols-[220px_1fr]">
-      <aside class="flex gap-2 overflow-x-auto lg:block lg:space-y-2">
-        <NuxtLink class="block rounded-md bg-white px-3 py-2 text-sm shadow-sm dark:bg-[#252b28]" to="/dashboard">Dashboard</NuxtLink>
-        <NuxtLink class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" to="/projects">Projects</NuxtLink>
-        <NuxtLink v-if="selectedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${selectedProjectID}/articles`">Articles</NuxtLink>
-        <NuxtLink v-if="selectedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${selectedProjectID}/categories`">Categories</NuxtLink>
-        <NuxtLink v-if="selectedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${selectedProjectID}/series`">Series</NuxtLink>
-        <NuxtLink v-if="selectedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${selectedProjectID}/authors`">Authors</NuxtLink>
-        <NuxtLink v-if="selectedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${selectedProjectID}/api-keys`">API keys</NuxtLink>
-      </aside>
-
-      <div class="space-y-6">
-        <p v-if="errorMessage" class="rounded-md border border-[#edc6c2] bg-[#fff4f2] px-4 py-3 text-sm text-[#9b2d23] dark:border-[#6d352f] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]" role="alert">
-          {{ errorMessage }}
-        </p>
-
-        <div v-if="pending" class="flex items-center gap-3 rounded-lg border border-[#cfd8d1] bg-white p-5 text-sm text-[#58625c] dark:border-[#3f4843] dark:bg-[#202522] dark:text-[#bec7c1]">
-          <LoaderCircle class="h-4 w-4 animate-spin" />
-          Loading dashboard
-        </div>
-
-        <template v-else>
-          <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <article v-for="metric in metrics" :key="metric.label" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex items-center justify-between gap-3">
-                <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">{{ metric.label }}</p>
-                <component :is="metric.icon" class="h-4 w-4" :class="metric.color" />
-              </div>
-              <p class="mt-3 text-3xl font-semibold tracking-normal">{{ metric.value }}</p>
-            </article>
-          </div>
-
-          <div v-if="projects.length === 0" class="rounded-lg border border-dashed border-[#bfcac3] bg-white p-8 text-center dark:border-[#4b5650] dark:bg-[#202522]">
-            <h2 class="text-lg font-semibold">No projects yet</h2>
-            <NuxtLink class="mt-5 inline-flex items-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a]" to="/projects?new=1">
-              <Plus class="h-4 w-4" />
-              New project
-            </NuxtLink>
-          </div>
-
-          <div v-else class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <section class="space-y-4">
-              <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Focus</p>
-                  <h2 class="mt-1 text-xl font-semibold tracking-normal">{{ selectedProject?.name || 'Project' }}</h2>
-                </div>
-                <select
-                  v-model="selectedProjectID"
-                  class="h-10 rounded-md border border-[#bfcac3] bg-white px-3 py-2 text-sm text-[#20231f] dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]"
-                >
-                  <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
-                </select>
-              </div>
-
-              <article v-if="selectedProject" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-                <div class="flex flex-wrap items-start justify-between gap-4">
-                  <div class="min-w-0">
-                    <h3 class="truncate text-lg font-semibold">{{ selectedProject.name }}</h3>
-                    <p class="mt-1 truncate text-sm text-[#5f6a63] dark:text-[#b8c2bb]">{{ selectedProject.slug }}</p>
-                  </div>
-                  <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="statusClass(selectedProject.status)">
-                    {{ selectedProject.status }}
-                  </span>
-                </div>
-
-                <dl class="mt-5 grid gap-3 text-sm sm:grid-cols-2">
-                  <div class="flex items-center gap-2">
-                    <Globe2 class="h-4 w-4 text-[#3162a3]" />
-                    <div class="min-w-0">
-                      <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Domain</dt>
-                      <dd class="truncate">{{ selectedProject.primaryDomain || 'Not set' }}</dd>
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <ShieldCheck class="h-4 w-4 text-[#8a5b00]" />
-                    <div class="min-w-0">
-                      <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Role</dt>
-                      <dd class="truncate">{{ roleLabel(selectedProject.role) }}</dd>
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <FolderKanban class="h-4 w-4 text-[#165a4a]" />
-                    <div class="min-w-0">
-                      <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Blog path</dt>
-                      <dd class="truncate">{{ selectedProject.blogBasePath }}</dd>
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <Languages class="h-4 w-4 text-[#7b4f9d]" />
-                    <div class="min-w-0">
-                      <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Locale</dt>
-                      <dd class="truncate">{{ selectedProject.defaultLocale }}</dd>
-                    </div>
-                  </div>
-                </dl>
-
-                <div class="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  <NuxtLink v-for="action in projectActions" :key="action.label" class="inline-flex items-center justify-between gap-3 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]" :to="action.to">
-                    <span class="inline-flex items-center gap-2">
-                      <component :is="action.icon" class="h-4 w-4" />
-                      {{ action.label }}
-                    </span>
-                    <ArrowRight class="h-4 w-4" />
-                  </NuxtLink>
-                </div>
-              </article>
-            </section>
-
-            <section class="space-y-4">
-              <div class="flex items-center justify-between gap-3">
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Projects</p>
-                  <h2 class="mt-1 text-xl font-semibold tracking-normal">Recent</h2>
-                </div>
-                <NuxtLink class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]" to="/projects">
-                  Open
-                  <ArrowRight class="h-4 w-4" />
-                </NuxtLink>
-              </div>
-
-              <div class="space-y-3">
-                <NuxtLink
-                  v-for="project in projects.slice(0, 5)"
-                  :key="project.id"
-                  class="flex items-center justify-between gap-3 rounded-lg border border-[#cfd8d1] bg-white p-4 shadow-sm hover:bg-[#f7faf8] dark:border-[#3f4843] dark:bg-[#202522] dark:hover:bg-[#252b28]"
-                  :to="`/projects/${project.id}/articles`"
-                >
-                  <span class="min-w-0">
-                    <span class="block truncate text-sm font-medium">{{ project.name }}</span>
-                    <span class="mt-1 block truncate text-xs text-[#667169] dark:text-[#aeb8b0]">{{ project.slug }}</span>
-                  </span>
-                  <ArrowRight class="h-4 w-4 shrink-0 text-[#667169]" />
-                </NuxtLink>
-              </div>
-            </section>
-          </div>
-        </template>
+      <div class="dashboard-welcome__actions">
+        <button class="button button--compact" type="button" :disabled="pending" @click="loadDashboard">
+          <RefreshCw :class="{ spin: pending }" :size="16" />
+          Refresh
+        </button>
+        <NuxtLink class="button button--primary button--compact" to="/projects?new=1">
+          <Plus :size="16" />
+          New project
+        </NuxtLink>
       </div>
-    </main>
-  </section>
+    </div>
+
+    <p v-if="errorMessage" class="ui-alert ui-alert--danger" role="alert">{{ errorMessage }}</p>
+
+    <div class="metric-grid">
+      <article v-for="metric in metrics" :key="metric.label" class="metric-card surface">
+        <div class="metric-card__top">
+          <span>{{ metric.label }}</span>
+          <span class="metric-icon" :class="metric.tone"><component :is="metric.icon" :size="16" /></span>
+        </div>
+        <p class="metric-card__value">{{ metric.value }}</p>
+        <small>{{ metric.detail }}</small>
+      </article>
+    </div>
+
+    <div v-if="pending" class="loading-surface surface">
+      <LoaderCircle class="spin" :size="18" />
+      Loading workspace
+    </div>
+
+    <div v-else-if="projects.length === 0" class="empty-state">
+      <div>
+        <span class="empty-state__icon"><PanelsTopLeft :size="20" /></span>
+        <h3>Create your first project</h3>
+        <p>Projects isolate content, people, credentials, and publishing settings.</p>
+        <NuxtLink class="button button--primary" to="/projects?new=1"><Plus :size="16" />New project</NuxtLink>
+      </div>
+    </div>
+
+    <template v-else>
+      <div class="dashboard-grid">
+        <section class="surface overview-panel">
+          <div class="panel-heading">
+            <div>
+              <p>Content activity</p>
+              <h3>Recent articles</h3>
+            </div>
+            <label class="compact-select">
+              <span class="sr-only">Project</span>
+              <select v-model="selectedProjectID">
+                <option value="all">All projects</option>
+                <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
+              </select>
+              <ChevronDown :size="14" />
+            </label>
+          </div>
+
+          <div v-if="recentArticles.length" class="content-table">
+            <div class="content-row content-row--header">
+              <span>Article</span>
+              <span>Project</span>
+              <span>Workflow</span>
+              <span>Publication</span>
+              <span></span>
+            </div>
+            <div v-for="item in recentArticles" :key="item.article.id" class="content-row">
+              <span class="content-title">
+                <span class="content-title__icon"><FileText :size="15" /></span>
+                <span>
+                  <strong>{{ item.article.title }}</strong>
+                  <small>{{ labelize(item.article.articleType) }} · {{ item.article.locale.toUpperCase() }}</small>
+                </span>
+              </span>
+              <span>{{ item.project.name }}</span>
+              <span><i class="status-pill" :class="editorialStatusClass(item.article.editorialState)">{{ labelize(item.article.editorialState) }}</i></span>
+              <span><i class="status-pill" :class="publicationStatusClass(item.article.publicationState)">{{ labelize(item.article.publicationState) }}</i></span>
+              <NuxtLink class="icon-button" :to="`/projects/${item.project.id}/articles/${item.article.id}`" title="Open article" aria-label="Open article"><ArrowUpRight :size="16" /></NuxtLink>
+            </div>
+          </div>
+          <div v-else class="empty-state empty-state--embedded">
+            <div><span class="empty-state__icon"><FileText :size="20" /></span><h3>No content yet</h3><p>Create the first article in this project.</p></div>
+          </div>
+        </section>
+
+        <aside class="dashboard-rail">
+          <section class="surface focus-panel">
+            <div class="panel-heading">
+              <div><p>Current focus</p><h3>{{ selectedProject?.name || 'All projects' }}</h3></div>
+              <span v-if="selectedProject" class="project-avatar">{{ initials(selectedProject.name) }}</span>
+            </div>
+            <template v-if="selectedProject">
+              <dl class="project-details">
+                <div><dt>Domain</dt><dd>{{ selectedProject.primaryDomain || 'Not configured' }}</dd></div>
+                <div><dt>Locale</dt><dd>{{ selectedProject.defaultLocale.toUpperCase() }}</dd></div>
+                <div><dt>Role</dt><dd>{{ labelize(selectedProject.role) }}</dd></div>
+                <div><dt>Status</dt><dd><span class="status-pill" :class="{ 'status-pill--success': selectedProject.status === 'active' }">{{ selectedProject.status }}</span></dd></div>
+              </dl>
+              <div class="focus-actions">
+                <NuxtLink :to="`/projects/${selectedProject.id}/articles/create`"><Plus :size="15" /><span>New article</span><ChevronRight :size="14" /></NuxtLink>
+                <NuxtLink :to="`/projects/${selectedProject.id}/review`"><ListChecks :size="15" /><span>Review queue</span><ChevronRight :size="14" /></NuxtLink>
+                <NuxtLink :to="`/projects/${selectedProject.id}/calendar`"><CalendarDays :size="15" /><span>Calendar</span><ChevronRight :size="14" /></NuxtLink>
+                <NuxtLink :to="`/projects/${selectedProject.id}/settings`"><Settings2 :size="15" /><span>Project settings</span><ChevronRight :size="14" /></NuxtLink>
+              </div>
+            </template>
+            <div v-else class="project-picker">
+              <button v-for="project in projects" :key="project.id" type="button" @click="selectedProjectID = project.id">
+                <span class="project-avatar">{{ initials(project.name) }}</span>
+                <span><strong>{{ project.name }}</strong><small>{{ project.primaryDomain || project.slug }}</small></span>
+                <ChevronRight :size="14" />
+              </button>
+            </div>
+          </section>
+
+          <section class="surface attention-panel">
+            <div class="panel-heading">
+              <div><p>Workflow</p><h3>Needs attention</h3></div>
+              <span class="status-pill" :class="{ 'status-pill--warning': attentionItems.length }">{{ attentionItems.length }}</span>
+            </div>
+            <div v-if="attentionItems.length" class="attention-list">
+              <NuxtLink v-for="item in attentionItems.slice(0, 5)" :key="item.article.id" :to="item.to">
+                <span class="attention-dot" :class="item.tone" />
+                <span><strong>{{ item.article.title }}</strong><small>{{ item.label }} · {{ item.project.name }}</small></span>
+                <ChevronRight :size="14" />
+              </NuxtLink>
+            </div>
+            <p v-else class="rail-empty">Nothing needs immediate attention</p>
+          </section>
+        </aside>
+      </div>
+
+      <section class="surface projects-strip">
+        <div class="panel-heading">
+          <div><p>Workspace</p><h3>Your projects</h3></div>
+          <NuxtLink class="button button--compact" to="/projects">View all<ArrowUpRight :size="14" /></NuxtLink>
+        </div>
+        <div class="project-cards">
+          <button
+            v-for="project in projects.slice(0, 6)"
+            :key="project.id"
+            type="button"
+            :class="{ 'is-selected': selectedProjectID === project.id }"
+            @click="selectedProjectID = project.id"
+          >
+            <span class="project-avatar">{{ initials(project.name) }}</span>
+            <span><strong>{{ project.name }}</strong><small>{{ project.primaryDomain || project.slug }}</small></span>
+            <span class="status-pill" :class="{ 'status-pill--success': project.status === 'active' }">{{ project.status }}</span>
+          </button>
+        </div>
+      </section>
+    </template>
+  </div>
 </template>
 
 <script setup lang="ts">
 import {
-  ArrowRight,
+  ArrowUpRight,
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Clock3,
   FileText,
-  FolderKanban,
-  FolderTree,
-  Globe2,
-  KeyRound,
-  Languages,
-  LayoutGrid,
+  Layers3,
+  ListChecks,
   LoaderCircle,
-  LogOut,
   PanelsTopLeft,
   Plus,
   RefreshCw,
-  ScrollText,
-  Settings,
-  ShieldCheck,
-  UsersRound
+  Settings2
 } from 'lucide-vue-next'
+import type { AdminArticle, AdminProject } from '~/composables/useAdminApi'
 
-type APIEnvelope<T> = {
-  data: T
-}
+type ProjectArticle = { project: AdminProject, article: AdminArticle }
 
-type APIListEnvelope<T> = {
-  data: T[]
-  meta: {
-    nextCursor?: string
-    limit: number
-  }
-}
-
-type AdminProject = {
-  id: string
-  slug: string
-  name: string
-  status: string
-  publicProjectKey: string
-  primaryDomain?: string
-  blogBasePath: string
-  defaultLocale: string
-  supportedLocales: string[]
-  timezone: string
-  role: string
-}
-
-const projects = ref<AdminProject[]>([])
-const selectedProjectID = ref('')
+const api = useAdminApi()
+const projects = useState<AdminProject[]>('admin-projects', () => [])
+const projectArticles = ref<ProjectArticle[]>([])
+const selectedProjectID = ref('all')
 const pending = ref(true)
 const errorMessage = ref('')
 
-const selectedProject = computed(() => projects.value.find(project => project.id === selectedProjectID.value) || projects.value[0] || null)
-const manageableProjects = computed(() => projects.value.filter(project => project.role === 'project_owner' || project.role === 'project_admin'))
-const selectedManaged = computed(() => Boolean(selectedProject.value && (selectedProject.value.role === 'project_owner' || selectedProject.value.role === 'project_admin')))
+const greeting = computed(() => {
+  const hour = new Date().getHours()
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
+  return 'Good evening'
+})
+const scopedArticles = computed(() => selectedProjectID.value === 'all'
+  ? projectArticles.value
+  : projectArticles.value.filter(item => item.project.id === selectedProjectID.value))
+const selectedProject = computed(() => projects.value.find(project => project.id === selectedProjectID.value) || null)
+const recentArticles = computed(() => [...scopedArticles.value]
+  .sort((a, b) => dateValue(b.article.latestRevision?.createdAt || b.article.createdAt) - dateValue(a.article.latestRevision?.createdAt || a.article.createdAt))
+  .slice(0, 8))
 const metrics = computed(() => [
-  { label: 'Projects', value: projects.value.length, icon: LayoutGrid, color: 'text-[#165a4a]' },
-  { label: 'Active', value: projects.value.filter(project => project.status === 'active').length, icon: FolderKanban, color: 'text-[#3162a3]' },
-  { label: 'Managed', value: manageableProjects.value.length, icon: ShieldCheck, color: 'text-[#8a5b00]' },
-  { label: 'Archived', value: projects.value.filter(project => project.status === 'archived').length, icon: ScrollText, color: 'text-[#6b7280]' }
+  { label: 'Projects', value: projects.value.length, detail: `${projects.value.filter(project => project.status === 'active').length} active`, icon: PanelsTopLeft, tone: 'metric-icon--green' },
+  { label: 'Articles', value: projectArticles.value.length, detail: `${projectArticles.value.filter(item => item.article.publicationState === 'published').length} published`, icon: Layers3, tone: 'metric-icon--blue' },
+  { label: 'In review', value: projectArticles.value.filter(item => item.article.editorialState === 'in_review').length, detail: 'Awaiting a decision', icon: ListChecks, tone: 'metric-icon--amber' },
+  { label: 'Scheduled', value: projectArticles.value.filter(item => item.article.publicationState === 'scheduled').length, detail: 'Upcoming releases', icon: Clock3, tone: 'metric-icon--violet' }
 ])
-const projectActions = computed(() => {
-  const project = selectedProject.value
-  if (!project) return []
-  const base = `/projects/${project.id}`
-  const actions = [
-    { label: 'Articles', to: `${base}/articles`, icon: FileText },
-    { label: 'Categories', to: `${base}/categories`, icon: FolderTree },
-    { label: 'Series', to: `${base}/series`, icon: PanelsTopLeft },
-    { label: 'Authors', to: `${base}/authors`, icon: UsersRound },
-    { label: 'API keys', to: `${base}/api-keys`, icon: KeyRound }
-  ]
-  if (selectedManaged.value) {
-    actions.push(
-      { label: 'Members', to: `${base}/members`, icon: ShieldCheck },
-      { label: 'Settings', to: `${base}/settings`, icon: Settings }
-    )
-  }
-  return actions
+const attentionItems = computed(() => projectArticles.value.flatMap(item => {
+  if (item.article.editorialState === 'in_review') return [{ ...item, label: 'Ready for review', tone: 'attention-dot--amber', to: `/projects/${item.project.id}/articles/${item.article.id}` }]
+  if (item.article.editorialState === 'changes_requested') return [{ ...item, label: 'Changes requested', tone: 'attention-dot--danger', to: `/projects/${item.project.id}/articles/${item.article.id}` }]
+  if (item.article.editorialState === 'approved' && item.article.publicationState === 'unpublished') return [{ ...item, label: 'Approved, not published', tone: 'attention-dot--green', to: `/projects/${item.project.id}/articles/${item.article.id}` }]
+  return []
+}))
+
+watch(projects, value => {
+  if (selectedProjectID.value !== 'all' && !value.some(project => project.id === selectedProjectID.value)) selectedProjectID.value = 'all'
 })
 
-onMounted(fetchProjects)
+onMounted(loadDashboard)
 
-async function fetchProjects() {
+async function loadDashboard() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const response = await $fetch<APIListEnvelope<AdminProject>>('/api/v1/projects', {
-      credentials: 'include',
-      query: { limit: 100 }
-    })
-    projects.value = response.data
-    if (!selectedProjectID.value || !projects.value.some(project => project.id === selectedProjectID.value)) {
-      selectedProjectID.value = projects.value[0]?.id || ''
-    }
+    const projectResponse = await api.listProjects()
+    projects.value = projectResponse.data
+    const articleResults = await Promise.allSettled(projects.value.map(async project => ({
+      project,
+      articles: (await api.listArticles(project.id)).data
+    })))
+    projectArticles.value = articleResults.flatMap(result => result.status === 'fulfilled'
+      ? result.value.articles.map(article => ({ project: result.value.project, article }))
+      : [])
   } catch (error) {
-    errorMessage.value = normalizeAPIError(error, 'Could not load dashboard. Sign in again if your session has expired.')
+    errorMessage.value = normalizeAPIError(error, 'Could not load the workspace dashboard.')
   } finally {
     pending.value = false
   }
 }
 
-async function logout() {
-  try {
-    const csrfToken = await getCSRFToken()
-    await $fetch('/api/v1/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken }
-    })
-  } finally {
-    await navigateTo('/')
-  }
+function initials(value: string) {
+  return value.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('')
 }
 
-async function getCSRFToken() {
-  const response = await $fetch<APIEnvelope<{ csrfToken: string }>>('/api/v1/auth/csrf', {
-    credentials: 'include'
-  })
-  return response.data.csrfToken
+function dateValue(value?: string) {
+  if (!value) return 0
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime()
 }
 
-function statusClass(status: string) {
-  switch (status) {
-    case 'active':
-      return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
-    case 'suspended':
-      return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
-    case 'archived':
-      return 'bg-[#e9edf4] text-[#40506a] dark:bg-[#252d3a] dark:text-[#c4d0e3]'
-    default:
-      return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'
-  }
+function editorialStatusClass(state: string) {
+  if (state === 'approved') return 'status-pill--success'
+  if (state === 'changes_requested') return 'status-pill--warning'
+  return ''
 }
 
-function roleLabel(role: string) {
-  return role.replaceAll('_', ' ')
-}
-
-function normalizeAPIError(error: unknown, fallback: string) {
-  if (typeof error === 'object' && error !== null && 'data' in error) {
-    const data = (error as { data?: { title?: string, detail?: string, statusCode?: number, statusMessage?: string, message?: string } }).data
-    if (data?.statusCode === 502) {
-      return 'The admin API is unavailable. Start the Go API on the configured proxy port or set NUXT_API_BASE_URL to the running API.'
-    }
-    return data?.detail || data?.title || data?.message || fallback
-  }
-  return fallback
+function publicationStatusClass(state: string) {
+  if (state === 'published') return 'status-pill--success'
+  if (state === 'scheduled') return 'status-pill--warning'
+  return ''
 }
 </script>
+
+<style scoped>
+.dashboard-welcome { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
+.dashboard-welcome p, .dashboard-welcome h2, .dashboard-welcome span { margin: 0; }
+.dashboard-welcome p { color: var(--primary); font-size: 11px; font-weight: 650; }
+.dashboard-welcome h2 { margin-top: 2px; font-size: 24px; }
+.dashboard-welcome > div > span { display: block; margin-top: 5px; color: var(--text-soft); font-size: 12px; }
+.dashboard-welcome__actions { display: flex; gap: 7px; }
+.metric-card small { display: block; margin-top: 8px; color: var(--text-faint); font-size: 9px; }
+.metric-icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 6px; background: var(--surface-subtle); color: var(--text-soft); }
+.metric-icon--green { background: var(--primary-soft); color: var(--primary); }
+.metric-icon--blue { background: var(--blue-soft); color: var(--blue); }
+.metric-icon--amber { background: var(--amber-soft); color: var(--amber); }
+.metric-icon--violet { background: #f1eefe; color: #7454c0; }
+.dark .metric-icon--violet { background: #27203d; color: #b7a0f3; }
+.dashboard-grid { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 16px; align-items: start; }
+.overview-panel, .focus-panel, .attention-panel, .projects-strip { overflow: hidden; }
+.panel-heading { display: flex; min-height: 61px; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 15px; border-bottom: 1px solid var(--border); }
+.panel-heading p, .panel-heading h3 { margin: 0; }
+.panel-heading p { color: var(--text-soft); font-size: 9px; }
+.panel-heading h3 { margin-top: 1px; font-size: 14px; }
+.compact-select { position: relative; display: flex; align-items: center; }
+.compact-select select { min-height: 32px; padding: 5px 28px 5px 9px; appearance: none; border: 1px solid var(--border) !important; border-radius: 5px; background: var(--surface) !important; color: var(--text); font-size: 9px; }
+.compact-select svg { position: absolute; right: 8px; pointer-events: none; color: var(--text-soft); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+.content-table { overflow-x: auto; }
+.content-row { display: grid; min-width: 720px; grid-template-columns: minmax(250px, 1.5fr) minmax(110px, .7fr) 115px 110px 30px; gap: 12px; align-items: center; min-height: 58px; padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 9px; }
+.content-row:last-child { border-bottom: 0; }
+.content-row--header { min-height: 34px; background: var(--surface-subtle); color: var(--text-soft); font-weight: 650; text-transform: uppercase; }
+.content-title { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.content-title__icon { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border-radius: 6px; background: var(--blue-soft); color: var(--blue); }
+.content-title > span:last-child { display: flex; min-width: 0; flex-direction: column; }
+.content-title strong, .content-title small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.content-title strong { color: var(--text); font-size: 10px; }
+.content-title small { margin-top: 3px; color: var(--text-soft); font-size: 8px; text-transform: capitalize; }
+.content-row i { font-style: normal; }
+.dashboard-rail { display: grid; gap: 14px; }
+.project-avatar { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border-radius: 7px; background: #e8b95a; color: #2a2112; font-size: 10px; font-weight: 750; }
+.project-details { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin: 0; background: var(--border); }
+.project-details > div { min-width: 0; padding: 11px 14px; background: var(--surface); }
+.project-details dt { color: var(--text-soft); font-size: 8px; }
+.project-details dd { overflow: hidden; margin: 3px 0 0; font-size: 9px; font-weight: 600; text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
+.focus-actions { display: grid; }
+.focus-actions a { display: grid; grid-template-columns: 18px minmax(0, 1fr) 15px; align-items: center; gap: 8px; min-height: 39px; padding: 8px 14px; border-top: 1px solid var(--border); color: var(--text-soft); font-size: 10px; text-decoration: none; }
+.focus-actions a:hover { background: var(--surface-subtle); color: var(--text); }
+.project-picker button, .project-cards button { border: 0; background: transparent; color: var(--text); cursor: pointer; }
+.project-picker button { display: grid; width: 100%; grid-template-columns: 34px minmax(0, 1fr) 15px; align-items: center; gap: 9px; padding: 10px 14px; border-top: 1px solid var(--border); text-align: left; }
+.project-picker button > span:nth-child(2), .attention-list a > span:nth-child(2), .project-cards button > span:nth-child(2) { display: flex; min-width: 0; flex-direction: column; }
+.project-picker strong, .project-picker small, .attention-list strong, .attention-list small, .project-cards strong, .project-cards small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-picker strong, .attention-list strong, .project-cards strong { font-size: 10px; }
+.project-picker small, .attention-list small, .project-cards small { margin-top: 2px; color: var(--text-soft); font-size: 8px; }
+.attention-list a { display: grid; grid-template-columns: 8px minmax(0, 1fr) 15px; align-items: center; gap: 9px; padding: 10px 14px; border-top: 1px solid var(--border); color: var(--text); text-decoration: none; }
+.attention-list a:hover { background: var(--surface-subtle); }
+.attention-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); }
+.attention-dot--danger { background: var(--danger); }
+.attention-dot--green { background: var(--primary); }
+.rail-empty { margin: 0; padding: 16px 14px; color: var(--text-soft); font-size: 10px; }
+.project-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--border); }
+.project-cards button { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 9px; padding: 13px 14px; background: var(--surface); text-align: left; }
+.project-cards button:hover, .project-cards button.is-selected { background: var(--surface-subtle); box-shadow: inset 0 2px 0 var(--primary); }
+.project-cards .status-pill { grid-column: 2; justify-self: start; margin-top: -2px; }
+.empty-state--embedded { min-height: 260px; border: 0; border-radius: 0; box-shadow: none; }
+.empty-state .button { margin-top: 14px; }
+.loading-surface { display: flex; min-height: 140px; align-items: center; justify-content: center; gap: 9px; color: var(--text-soft); }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 1100px) { .dashboard-grid { grid-template-columns: 1fr; } .dashboard-rail { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) { .dashboard-welcome { align-items: stretch; flex-direction: column; } .dashboard-welcome__actions { justify-content: flex-end; } .dashboard-rail { grid-template-columns: 1fr; } .project-cards { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .project-cards { grid-template-columns: 1fr; } }
+</style>

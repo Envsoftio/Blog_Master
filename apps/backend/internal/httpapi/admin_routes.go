@@ -87,11 +87,11 @@ func (s *Server) registerAdminRoutes() {
 	api.Get("/projects/:projectID/series", s.requireAdminSession, s.listAdminSeries)
 	api.Post("/projects/:projectID/series", s.requireAdminSession, s.requireAdminCSRF, s.createSeries)
 
-	api.Get("/projects/:projectID/media", func(c *fiber.Ctx) error { return notImplemented(c, "media library") })
-	api.Post("/projects/:projectID/media/uploads", func(c *fiber.Ctx) error { return notImplemented(c, "media upload initiation") })
-	api.Get("/projects/:projectID/media/:assetID", func(c *fiber.Ctx) error { return notImplemented(c, "media detail") })
-	api.Patch("/projects/:projectID/media/:assetID", func(c *fiber.Ctx) error { return notImplemented(c, "media metadata update") })
-	api.Delete("/projects/:projectID/media/:assetID", func(c *fiber.Ctx) error { return notImplemented(c, "media deletion") })
+	api.Get("/projects/:projectID/media", s.requireAdminSession, s.listMediaAssets)
+	api.Post("/projects/:projectID/media/uploads", s.requireAdminSession, s.requireAdminCSRF, s.createMediaAsset)
+	api.Get("/projects/:projectID/media/:assetID", s.requireAdminSession, s.getMediaAsset)
+	api.Patch("/projects/:projectID/media/:assetID", s.requireAdminSession, s.requireAdminCSRF, s.updateMediaAsset)
+	api.Delete("/projects/:projectID/media/:assetID", s.requireAdminSession, s.requireAdminCSRF, s.deleteMediaAsset)
 
 	api.Get("/projects/:projectID/sources", func(c *fiber.Ctx) error { return notImplemented(c, "source library") })
 	api.Post("/projects/:projectID/sources", func(c *fiber.Ctx) error { return notImplemented(c, "source creation") })
@@ -118,21 +118,22 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/projects/:projectID/evidence-packets", func(c *fiber.Ctx) error { return notImplemented(c, "evidence packet creation") })
 	api.Post("/projects/:projectID/evidence-packets/:packetID/approve", func(c *fiber.Ctx) error { return notImplemented(c, "evidence packet approval") })
 
-	api.Post("/projects/:projectID/ai/jobs", func(c *fiber.Ctx) error { return notImplemented(c, "AI job creation") })
-	api.Get("/projects/:projectID/ai/jobs/:jobID", func(c *fiber.Ctx) error { return notImplemented(c, "AI job detail") })
-	api.Post("/projects/:projectID/ai/jobs/:jobID/cancel", func(c *fiber.Ctx) error { return notImplemented(c, "AI job cancellation") })
+	api.Get("/projects/:projectID/ai/jobs", s.requireAdminSession, s.listAIJobs)
+	api.Post("/projects/:projectID/ai/jobs", s.requireAdminSession, s.requireAdminCSRF, s.createAIJob)
+	api.Get("/projects/:projectID/ai/jobs/:jobID", s.requireAdminSession, s.getAIJob)
+	api.Post("/projects/:projectID/ai/jobs/:jobID/cancel", s.requireAdminSession, s.requireAdminCSRF, s.cancelAIJob)
 	api.Get("/projects/:projectID/ai/jobs/:jobID/events", func(c *fiber.Ctx) error { return notImplemented(c, "AI job event stream") })
 	api.Get("/projects/:projectID/ai/runs", func(c *fiber.Ctx) error { return notImplemented(c, "AI run history") })
 	api.Get("/projects/:projectID/quality-checks", func(c *fiber.Ctx) error { return notImplemented(c, "quality check results") })
 
-	api.Get("/projects/:projectID/webhooks", func(c *fiber.Ctx) error { return notImplemented(c, "webhook endpoints") })
-	api.Post("/projects/:projectID/webhooks", func(c *fiber.Ctx) error { return notImplemented(c, "webhook endpoint creation") })
-	api.Post("/projects/:projectID/webhooks/:endpointID/revoke", func(c *fiber.Ctx) error { return notImplemented(c, "webhook endpoint revocation") })
+	api.Get("/projects/:projectID/webhooks", s.requireAdminSession, s.listWebhooks)
+	api.Post("/projects/:projectID/webhooks", s.requireAdminSession, s.requireAdminCSRF, s.createWebhook)
+	api.Post("/projects/:projectID/webhooks/:endpointID/revoke", s.requireAdminSession, s.requireAdminCSRF, s.revokeWebhook)
 	api.Get("/projects/:projectID/webhook-attempts", func(c *fiber.Ctx) error { return notImplemented(c, "webhook attempts") })
 	api.Post("/projects/:projectID/webhook-attempts/:attemptID/replay", func(c *fiber.Ctx) error { return notImplemented(c, "webhook replay") })
 
 	api.Get("/projects/:projectID/audit-events", s.requireAdminSession, s.listAuditEvents)
-	api.Get("/projects/:projectID/delivery/status", func(c *fiber.Ctx) error { return notImplemented(c, "landing delivery status") })
+	api.Get("/projects/:projectID/delivery/status", s.requireAdminSession, s.deliveryStatus)
 	api.Post("/projects/:projectID/preview-tokens", func(c *fiber.Ctx) error { return notImplemented(c, "preview token creation") })
 }
 

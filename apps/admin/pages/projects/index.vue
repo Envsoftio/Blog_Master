@@ -1,191 +1,147 @@
 <template>
-  <section class="min-h-screen">
-    <header class="border-b border-[#d7ded8] bg-white px-6 py-4 dark:border-[#343a38] dark:bg-[#202422]">
-      <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
-        <div>
-          <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Workspace</p>
-          <h1 class="mt-1 text-2xl font-semibold tracking-normal">Projects</h1>
-        </div>
-        <div class="flex items-center gap-2">
-          <button
-            class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] bg-white text-[#28342d] hover:bg-[#eef5f1] disabled:opacity-50 dark:border-[#414a45] dark:bg-[#252b28] dark:text-[#eef4ef]"
-            type="button"
-            title="Refresh projects"
-            aria-label="Refresh projects"
-            :disabled="pending"
-            @click="fetchProjects"
-          >
-            <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': pending }" />
-          </button>
-          <button
-            class="inline-flex items-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a]"
-            type="button"
-            @click="formOpen = !formOpen"
-          >
-            <Plus class="h-4 w-4" />
-            New project
-          </button>
-          <button
-            class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] bg-white text-[#28342d] hover:bg-[#fff4df] dark:border-[#414a45] dark:bg-[#252b28] dark:text-[#eef4ef]"
-            type="button"
-            title="Log out"
-            aria-label="Log out"
-            @click="logout"
-          >
-            <LogOut class="h-4 w-4" />
-          </button>
-        </div>
+  <div class="page-stack">
+    <div class="page-heading">
+      <div>
+        <h2>Projects</h2>
+        <p>Tenant workspaces, domains, access roles, and lifecycle state.</p>
       </div>
-    </header>
+      <button class="button button--primary button--compact" type="button" @click="formOpen = !formOpen">
+        <Plus :size="16" />
+        New project
+      </button>
+    </div>
 
-    <div class="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-6 py-6 lg:grid-cols-[220px_1fr]">
-      <aside class="flex gap-2 overflow-x-auto lg:block lg:space-y-2">
-        <NuxtLink class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" to="/dashboard">Dashboard</NuxtLink>
-        <NuxtLink class="block rounded-md bg-white px-3 py-2 text-sm shadow-sm dark:bg-[#252b28]" to="/projects">Projects</NuxtLink>
-        <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/articles`">Articles</NuxtLink>
-        <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/categories`">Categories</NuxtLink>
-        <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/series`">Series</NuxtLink>
-        <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/authors`">Authors</NuxtLink>
-        <NuxtLink v-if="firstManagedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstManagedProjectID}/members`">Members</NuxtLink>
-        <NuxtLink v-if="firstProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstProjectID}/api-keys`">API keys</NuxtLink>
-        <NuxtLink v-if="firstManagedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstManagedProjectID}/audit-events`">Audit</NuxtLink>
-        <NuxtLink v-if="firstManagedProjectID" class="block rounded-md px-3 py-2 text-sm text-[#555f58] dark:text-[#b8c2bb]" :to="`/projects/${firstManagedProjectID}/settings`">Settings</NuxtLink>
-      </aside>
+    <form v-if="formOpen" class="surface project-form" @submit.prevent="createProject">
+      <div class="project-form__heading">
+        <span class="project-form__icon"><PanelsTopLeft :size="18" /></span>
+        <div><p>New project</p><h3>Project details</h3></div>
+        <button class="icon-button" type="button" title="Close" aria-label="Close" @click="formOpen = false"><X :size="17" /></button>
+      </div>
+      <div class="project-form__body">
+        <label class="field">
+          <span>Project name</span>
+          <input v-model.trim="form.name" required placeholder="Acme editorial">
+        </label>
+        <label class="field">
+          <span>Project slug</span>
+          <input v-model.trim="form.slug" required placeholder="acme-editorial">
+        </label>
+        <label class="field">
+          <span>Primary domain</span>
+          <input v-model.trim="form.primaryDomain" placeholder="www.example.com">
+        </label>
+        <label class="field">
+          <span>Blog path</span>
+          <input v-model.trim="form.blogBasePath" required placeholder="/blog">
+        </label>
+        <label class="field">
+          <span>Default locale</span>
+          <input v-model.trim="form.defaultLocale" required placeholder="en">
+        </label>
+        <label class="field">
+          <span>Timezone</span>
+          <input v-model.trim="form.timezone" required placeholder="UTC">
+        </label>
+      </div>
+      <div class="project-form__footer">
+        <button class="button" type="button" @click="formOpen = false">Cancel</button>
+        <button class="button button--primary" type="submit" :disabled="creating || !canCreate">
+          <LoaderCircle v-if="creating" class="spin" :size="16" />
+          <Plus v-else :size="16" />
+          Create project
+        </button>
+      </div>
+    </form>
 
-      <div class="space-y-5">
-        <form
-          v-if="formOpen"
-          class="grid gap-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522] md:grid-cols-2"
-          @submit.prevent="createProject"
-        >
-          <label class="block space-y-2">
-            <span class="text-sm font-medium">Name</span>
-            <input v-model.trim="form.name" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
-          </label>
-          <label class="block space-y-2">
-            <span class="text-sm font-medium">Slug</span>
-            <input v-model.trim="form.slug" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
-          </label>
-          <label class="block space-y-2">
-            <span class="text-sm font-medium">Primary domain</span>
-            <input v-model.trim="form.primaryDomain" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="example.com" />
-          </label>
-          <label class="block space-y-2">
-            <span class="text-sm font-medium">Blog path</span>
-            <input v-model.trim="form.blogBasePath" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
-          </label>
-          <div class="flex items-end gap-2 md:col-span-2">
-            <button
-              class="inline-flex items-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
-              type="submit"
-              :disabled="creating"
-            >
-              <LoaderCircle v-if="creating" class="h-4 w-4 animate-spin" />
-              <Plus v-else class="h-4 w-4" />
-              Create
-            </button>
-            <button class="rounded-md px-4 py-2 text-sm text-[#58625c] hover:bg-[#eef2ef] dark:text-[#bec7c1] dark:hover:bg-[#2a302d]" type="button" @click="formOpen = false">
-              Cancel
-            </button>
-          </div>
-        </form>
+    <p v-if="errorMessage" class="ui-alert ui-alert--danger" role="alert">{{ errorMessage }}</p>
+    <p v-if="successMessage" class="ui-alert ui-alert--success">{{ successMessage }}</p>
 
-        <p v-if="errorMessage" class="rounded-md border border-[#edc6c2] bg-[#fff4f2] px-4 py-3 text-sm text-[#9b2d23] dark:border-[#6d352f] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]" role="alert">
-          {{ errorMessage }}
-        </p>
-        <p v-if="successMessage" class="rounded-md border border-[#b9dcc9] bg-[#edf9f1] px-4 py-3 text-sm text-[#165a4a] dark:border-[#2d644a] dark:bg-[#13261e] dark:text-[#aee4d0]">
-          {{ successMessage }}
-        </p>
-
-        <div v-if="pending" class="flex items-center gap-3 rounded-lg border border-[#cfd8d1] bg-white p-5 text-sm text-[#58625c] dark:border-[#3f4843] dark:bg-[#202522] dark:text-[#bec7c1]">
-          <LoaderCircle class="h-4 w-4 animate-spin" />
-          Loading projects
-        </div>
-
-        <div v-else-if="projects.length === 0" class="rounded-lg border border-dashed border-[#bfcac3] bg-white p-8 text-center dark:border-[#4b5650] dark:bg-[#202522]">
-          <h2 class="text-lg font-semibold">No projects yet</h2>
-          <p class="mt-2 text-sm text-[#5f6a63] dark:text-[#b8c2bb]">Create the first tenant project to begin setting up content, authors and API keys.</p>
-        </div>
-
-        <div v-else class="grid gap-4 xl:grid-cols-2">
-          <article v-for="project in projects" :key="project.id" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-            <div class="flex items-start justify-between gap-4">
-              <div class="min-w-0">
-                <h2 class="truncate text-lg font-semibold">{{ project.name }}</h2>
-                <p class="mt-1 text-sm text-[#5f6a63] dark:text-[#b8c2bb]">{{ project.slug }}</p>
-              </div>
-              <span class="shrink-0 rounded-full px-2.5 py-1 text-xs font-medium" :class="statusClass(project.status)">
-                {{ project.status }}
-              </span>
-            </div>
-
-            <dl class="mt-5 grid gap-3 text-sm sm:grid-cols-2">
-              <div class="flex items-center gap-2">
-                <Globe2 class="h-4 w-4 text-[#3162a3]" />
-                <div class="min-w-0">
-                  <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Domain</dt>
-                  <dd class="truncate">{{ project.primaryDomain || 'Not set' }}</dd>
-                </div>
-              </div>
-              <div class="flex items-center gap-2">
-                <ShieldCheck class="h-4 w-4 text-[#8a5b00]" />
-                <div class="min-w-0">
-                  <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Role</dt>
-                  <dd class="truncate">{{ roleLabel(project.role) }}</dd>
-                </div>
-              </div>
-            </dl>
-
-            <NuxtLink class="mt-5 inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]" :to="`/projects/${project.id}/articles`">
-              Open
-              <ArrowRight class="h-4 w-4" />
-            </NuxtLink>
-          </article>
-        </div>
+    <div class="projects-toolbar surface surface--subtle">
+      <label class="project-search">
+        <Search :size="16" />
+        <input v-model.trim="search" type="search" placeholder="Search projects" aria-label="Search projects">
+      </label>
+      <div class="project-filters">
+        <select v-model="statusFilter" class="input" aria-label="Project status">
+          <option value="all">All statuses</option>
+          <option value="active">Active</option>
+          <option value="suspended">Suspended</option>
+          <option value="archived">Archived</option>
+        </select>
+        <button class="icon-button surface" type="button" title="Refresh projects" aria-label="Refresh projects" :disabled="pending" @click="loadProjects">
+          <RefreshCw :class="{ spin: pending }" :size="16" />
+        </button>
       </div>
     </div>
-  </section>
+
+    <div v-if="pending" class="loading-surface surface"><LoaderCircle class="spin" :size="18" />Loading projects</div>
+
+    <div v-else-if="filteredProjects.length === 0" class="empty-state">
+      <div>
+        <span class="empty-state__icon"><PanelsTopLeft :size="20" /></span>
+        <h3>{{ projects.length ? 'No matching projects' : 'No projects yet' }}</h3>
+        <p>{{ projects.length ? 'Try another search or status.' : 'Create the first project in this workspace.' }}</p>
+      </div>
+    </div>
+
+    <div v-else class="projects-grid">
+      <article v-for="project in filteredProjects" :key="project.id" class="project-card surface">
+        <div class="project-card__top">
+          <span class="project-avatar">{{ initials(project.name) }}</span>
+          <div>
+            <h3>{{ project.name }}</h3>
+            <p>{{ project.slug }}</p>
+          </div>
+          <button class="icon-button" type="button" title="Project options" aria-label="Project options"><Ellipsis :size="17" /></button>
+        </div>
+        <div class="project-card__status">
+          <span class="status-pill" :class="{ 'status-pill--success': project.status === 'active', 'status-pill--warning': project.status === 'suspended' }">{{ project.status }}</span>
+          <span>{{ labelize(project.role) }}</span>
+        </div>
+        <dl>
+          <div><dt><Globe2 :size="14" />Domain</dt><dd>{{ project.primaryDomain || 'Not configured' }}</dd></div>
+          <div><dt><Languages :size="14" />Locale</dt><dd>{{ project.defaultLocale.toUpperCase() }}</dd></div>
+          <div><dt><FolderKanban :size="14" />Blog path</dt><dd>{{ project.blogBasePath }}</dd></div>
+          <div><dt><Clock3 :size="14" />Timezone</dt><dd>{{ project.timezone || 'UTC' }}</dd></div>
+        </dl>
+        <div class="project-card__actions">
+          <NuxtLink class="button" :to="`/projects/${project.id}/articles`">Open project<ArrowRight :size="15" /></NuxtLink>
+          <NuxtLink class="icon-button surface" :to="`/projects/${project.id}/articles/create`" title="New article" aria-label="New article"><Plus :size="16" /></NuxtLink>
+          <NuxtLink class="icon-button surface" :to="`/projects/${project.id}/settings`" title="Project settings" aria-label="Project settings"><Settings2 :size="16" /></NuxtLink>
+        </div>
+      </article>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ArrowRight, Globe2, LoaderCircle, LogOut, Plus, RefreshCw, ShieldCheck } from 'lucide-vue-next'
+import {
+  ArrowRight,
+  Clock3,
+  Ellipsis,
+  FolderKanban,
+  Globe2,
+  Languages,
+  LoaderCircle,
+  PanelsTopLeft,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings2,
+  X
+} from 'lucide-vue-next'
+import type { AdminProject } from '~/composables/useAdminApi'
 
-type APIEnvelope<T> = {
-  data: T
-}
-
-type APIListEnvelope<T> = {
-  data: T[]
-  meta: {
-    nextCursor?: string
-    limit: number
-  }
-}
-
-type AdminProject = {
-  id: string
-  slug: string
-  name: string
-  status: string
-  publicProjectKey: string
-  primaryDomain?: string
-  blogBasePath: string
-  defaultLocale: string
-  supportedLocales: string[]
-  timezone: string
-  role: string
-}
-
-const projects = ref<AdminProject[]>([])
+const route = useRoute()
+const api = useAdminApi()
+const projects = useState<AdminProject[]>('admin-projects', () => [])
 const pending = ref(true)
 const creating = ref(false)
 const formOpen = ref(false)
+const search = ref('')
+const statusFilter = ref('all')
 const errorMessage = ref('')
 const successMessage = ref('')
-const firstProjectID = computed(() => projects.value[0]?.id || '')
-const firstManagedProjectID = computed(() => projects.value.find(project => project.role === 'project_owner' || project.role === 'project_admin')?.id || '')
-const route = useRoute()
-
 const form = reactive({
   name: '',
   slug: '',
@@ -194,134 +150,108 @@ const form = reactive({
   defaultLocale: 'en',
   timezone: 'UTC'
 })
+const canCreate = computed(() => form.name.length >= 2 && form.slug.length >= 2 && Boolean(form.blogBasePath) && Boolean(form.defaultLocale))
+const filteredProjects = computed(() => {
+  const term = search.value.toLowerCase()
+  return projects.value.filter(project => {
+    const statusMatches = statusFilter.value === 'all' || project.status === statusFilter.value
+    const searchMatches = !term || `${project.name} ${project.slug} ${project.primaryDomain || ''}`.toLowerCase().includes(term)
+    return statusMatches && searchMatches
+  })
+})
 
-watch(() => form.name, (value) => {
+watch(() => form.name, value => {
   if (!form.slug) form.slug = slugify(value)
 })
 
 onMounted(() => {
   formOpen.value = route.query.new === '1'
-  fetchProjects()
+  loadProjects()
 })
 
-async function fetchProjects() {
+async function loadProjects() {
   pending.value = true
   errorMessage.value = ''
-  successMessage.value = ''
   try {
-    const response = await $fetch<APIListEnvelope<AdminProject>>('/api/v1/projects', {
-      credentials: 'include'
-    })
-    projects.value = response.data
+    projects.value = (await api.listProjects()).data
   } catch (error) {
-    errorMessage.value = normalizeAPIError(error, 'Could not load projects. Sign in again if your session has expired.')
+    errorMessage.value = normalizeAPIError(error, 'Could not load projects.')
   } finally {
     pending.value = false
   }
 }
 
 async function createProject() {
+  if (!canCreate.value) return
   creating.value = true
   errorMessage.value = ''
   successMessage.value = ''
-  let createdProject: AdminProject
   try {
-    const csrfToken = await getCSRFToken()
-    const response = await $fetch<APIEnvelope<AdminProject>>('/api/v1/projects', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {
-        name: form.name.trim(),
-        slug: form.slug.trim(),
-        primaryDomain: form.primaryDomain.trim(),
-        blogBasePath: normalizedBlogBasePath(),
-        defaultLocale: form.defaultLocale,
-        supportedLocales: [form.defaultLocale],
-        timezone: form.timezone
-      }
+    const response = await api.createProject({
+      name: form.name,
+      slug: form.slug,
+      primaryDomain: form.primaryDomain,
+      blogBasePath: normalizeBlogPath(form.blogBasePath),
+      defaultLocale: form.defaultLocale,
+      supportedLocales: [form.defaultLocale],
+      timezone: form.timezone
     })
-    createdProject = response.data
+    projects.value = [response.data, ...projects.value.filter(project => project.id !== response.data.id)]
+    successMessage.value = 'Project created.'
+    formOpen.value = false
+    await navigateTo(`/projects/${response.data.id}/articles`)
   } catch (error) {
-    errorMessage.value = normalizeAPIError(error, 'Could not create project. Check the fields and try again.')
-    creating.value = false
-    return
-  }
-
-  projects.value = [createdProject, ...projects.value.filter(project => project.id !== createdProject.id)]
-  form.name = ''
-  form.slug = ''
-  form.primaryDomain = ''
-  form.blogBasePath = '/blog'
-  formOpen.value = false
-  successMessage.value = 'Project created.'
-  try {
-    await navigateTo(`/projects/${createdProject.id}/articles`)
-  } catch {
-    errorMessage.value = 'Project created, but the project workspace did not open. Refresh or open it from the project list.'
+    errorMessage.value = normalizeAPIError(error, 'Could not create the project.')
   } finally {
     creating.value = false
   }
 }
 
-async function logout() {
-  try {
-    const csrfToken = await getCSRFToken()
-    await $fetch('/api/v1/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken }
-    })
-  } finally {
-    await navigateTo('/')
-  }
+function initials(value: string) {
+  return value.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('')
 }
 
-async function getCSRFToken() {
-  const response = await $fetch<APIEnvelope<{ csrfToken: string }>>('/api/v1/auth/csrf', {
-    credentials: 'include'
-  })
-  return response.data.csrfToken
-}
-
-function statusClass(status: string) {
-  switch (status) {
-    case 'active':
-      return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
-    case 'suspended':
-      return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
-    case 'archived':
-      return 'bg-[#e9edf4] text-[#40506a] dark:bg-[#252d3a] dark:text-[#c4d0e3]'
-    default:
-      return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'
-  }
-}
-
-function roleLabel(role: string) {
-  return role.replaceAll('_', ' ')
-}
-
-function normalizedBlogBasePath() {
-  const value = form.blogBasePath.trim() || '/blog'
-  return value.startsWith('/') ? value : `/${value}`
-}
-
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-}
-
-function normalizeAPIError(error: unknown, fallback: string) {
-  if (typeof error === 'object' && error !== null && 'data' in error) {
-    const data = (error as { data?: { title?: string, detail?: string, statusCode?: number, statusMessage?: string, message?: string } }).data
-    if (data?.statusCode === 502) {
-      return 'The admin API is unavailable. Start the Go API on the configured proxy port or set NUXT_API_BASE_URL to the running API.'
-    }
-    return data?.detail || data?.title || data?.message || fallback
-  }
-  return fallback
+function normalizeBlogPath(value: string) {
+  const path = value.trim() || '/blog'
+  return path.startsWith('/') ? path : `/${path}`
 }
 </script>
+
+<style scoped>
+.project-form { overflow: hidden; }
+.project-form__heading { display: flex; align-items: center; gap: 11px; min-height: 66px; padding: 13px 16px; border-bottom: 1px solid var(--border); }
+.project-form__icon { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 7px; background: var(--primary-soft); color: var(--primary); }
+.project-form__heading p, .project-form__heading h3 { margin: 0; }
+.project-form__heading p { color: var(--text-soft); font-size: 9px; }
+.project-form__heading h3 { margin-top: 1px; font-size: 14px; }
+.project-form__heading .icon-button { margin-left: auto; }
+.project-form__body { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding: 18px; }
+.project-form__footer { display: flex; justify-content: flex-end; gap: 7px; padding: 12px 18px; border-top: 1px solid var(--border); background: var(--surface-subtle); }
+.projects-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px; }
+.project-search { display: flex; width: min(360px, 100%); align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); }
+.project-search input { width: 100%; min-height: 34px; padding: 0; border: 0 !important; box-shadow: none !important; background: transparent !important; font-size: 11px; }
+.project-filters { display: flex; gap: 7px; }
+.project-filters .input { width: 132px; min-height: 34px; padding-block: 5px; font-size: 10px; }
+.projects-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.project-card { overflow: hidden; }
+.project-card__top { display: grid; grid-template-columns: 40px minmax(0, 1fr) 34px; align-items: center; gap: 10px; padding: 15px; }
+.project-avatar { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 7px; background: #e8b95a; color: #2a2112; font-size: 11px; font-weight: 750; }
+.project-card__top > div { min-width: 0; }
+.project-card h3, .project-card p { overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
+.project-card h3 { font-size: 13px; }
+.project-card p { margin-top: 3px; color: var(--text-soft); font-size: 9px; }
+.project-card__status { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 15px; border-block: 1px solid var(--border); background: var(--surface-subtle); }
+.project-card__status > span:last-child { color: var(--text-soft); font-size: 9px; text-transform: capitalize; }
+.project-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin: 0; background: var(--border); }
+.project-card dl > div { min-width: 0; padding: 11px 14px; background: var(--surface); }
+.project-card dt { display: flex; align-items: center; gap: 5px; color: var(--text-soft); font-size: 8px; }
+.project-card dd { overflow: hidden; margin: 4px 0 0; font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.project-card__actions { display: flex; gap: 7px; padding: 12px 14px; border-top: 1px solid var(--border); }
+.project-card__actions .button { flex: 1; justify-content: space-between; }
+.loading-surface { display: flex; min-height: 140px; align-items: center; justify-content: center; gap: 9px; color: var(--text-soft); }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 1180px) { .projects-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 780px) { .project-form__body { grid-template-columns: 1fr 1fr; } .projects-grid { grid-template-columns: 1fr; } }
+@media (max-width: 580px) { .projects-toolbar { align-items: stretch; flex-direction: column; } .project-search { width: 100%; } .project-filters { justify-content: space-between; } .project-form__body { grid-template-columns: 1fr; } }
+</style>

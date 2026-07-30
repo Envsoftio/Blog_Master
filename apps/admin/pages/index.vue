@@ -1,124 +1,175 @@
 <template>
-  <section class="min-h-screen bg-[#f4f5f1] px-6 py-8 text-[#20231f] dark:bg-[#171916] dark:text-[#f2f3ef]">
-    <div class="mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-6xl items-center gap-8 lg:grid-cols-[minmax(0,0.95fr)_minmax(360px,440px)]">
-      <div class="hidden lg:block">
-        <div class="max-w-xl">
-          <div class="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-[#165a4a] text-white shadow-sm">
-            <ShieldCheck class="h-6 w-6" />
-          </div>
-          <p class="mt-8 text-sm font-medium uppercase text-[#5d6a61] dark:text-[#aeb8b0]">SEO Blog CMS</p>
-          <h1 class="mt-3 max-w-lg text-4xl font-semibold leading-tight tracking-normal">Administration workspace</h1>
-          <div class="mt-8 grid max-w-md gap-3 text-sm text-[#4f5b54] dark:text-[#c5cec8]">
-            <div class="flex items-center gap-3 rounded-lg border border-[#d7ded8] bg-white px-4 py-3 shadow-sm dark:border-[#343a38] dark:bg-[#202422]">
-              <LockKeyhole class="h-4 w-4 text-[#3162a3]" />
-              <span>Invite-only access</span>
-            </div>
-            <div class="flex items-center gap-3 rounded-lg border border-[#d7ded8] bg-white px-4 py-3 shadow-sm dark:border-[#343a38] dark:bg-[#202422]">
-              <Server class="h-4 w-4 text-[#165a4a]" />
-              <span>Project-scoped admin</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <form class="w-full space-y-5 rounded-lg border border-[#d8d8d0] bg-white p-6 shadow-sm dark:border-[#3d403a] dark:bg-[#252823]" @submit.prevent="signIn">
-        <div class="flex items-start justify-between gap-4">
-          <div>
-            <p class="text-sm text-[#666b60] dark:text-[#aeb8b0]">SEO Blog CMS</p>
-            <h2 class="mt-1 text-2xl font-semibold tracking-normal">Sign in</h2>
-          </div>
-          <div class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#eef5f1] text-[#165a4a] dark:bg-[#13261e] dark:text-[#aee4d0]">
-            <ShieldCheck class="h-5 w-5" />
-          </div>
-        </div>
-
-        <label class="block space-y-2">
-          <span class="text-sm font-medium">Email</span>
-          <span class="relative block">
-            <Mail class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#667169] dark:text-[#aeb8b0]" />
-            <input v-model.trim="email" class="h-11 w-full rounded-md border border-[#c9c9bf] bg-white pl-10 pr-3 text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#555a50] dark:bg-[#1c1e1b] dark:text-[#f2f3ef]" name="email" type="email" autocomplete="email" required />
-          </span>
-        </label>
-
-        <label class="block space-y-2">
-          <span class="text-sm font-medium">Password</span>
-          <span class="relative block">
-            <LockKeyhole class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#667169] dark:text-[#aeb8b0]" />
-            <input v-model="password" class="h-11 w-full rounded-md border border-[#c9c9bf] bg-white pl-10 pr-12 text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#555a50] dark:bg-[#1c1e1b] dark:text-[#f2f3ef]" name="password" :type="passwordVisible ? 'text' : 'password'" autocomplete="current-password" required minlength="8" />
-            <button
-              class="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-[#4f5b54] hover:bg-[#eef2ef] dark:text-[#c5cec8] dark:hover:bg-[#2a302d]"
-              type="button"
-              :title="passwordVisible ? 'Hide password' : 'Show password'"
-              :aria-label="passwordVisible ? 'Hide password' : 'Show password'"
-              @click="passwordVisible = !passwordVisible"
-            >
-              <EyeOff v-if="passwordVisible" class="h-4 w-4" />
-              <Eye v-else class="h-4 w-4" />
-            </button>
-          </span>
-        </label>
-
-        <p v-if="errorMessage" class="rounded-md border border-[#edc6c2] bg-[#fff4f2] px-3 py-2 text-sm text-[#9b2d23] dark:border-[#6d352f] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]" role="alert">
-          {{ errorMessage }}
-        </p>
-        <p v-if="successMessage" class="rounded-md border border-[#b9dcc9] bg-[#edf9f1] px-3 py-2 text-sm text-[#165a4a] dark:border-[#2d644a] dark:bg-[#13261e] dark:text-[#aee4d0]">
-          {{ successMessage }}
-        </p>
-
-        <button class="inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 font-medium text-white transition hover:bg-[#10463a] disabled:opacity-60" type="submit" :disabled="pending">
-          <LoaderCircle v-if="pending" class="h-4 w-4 animate-spin" />
-          <ArrowRight v-else class="h-4 w-4" />
-          {{ pending ? 'Signing in...' : 'Continue' }}
+  <section class="login-page">
+    <div class="login-page__top">
+      <NuxtLink class="login-brand" to="/" aria-label="SEO Blog CMS">
+        <span><PenLine :size="19" /></span>
+        <strong>Editorial</strong>
+      </NuxtLink>
+      <div class="theme-switcher" role="group" aria-label="Color theme">
+        <button
+          v-for="option in themeOptions"
+          :key="option.value"
+          class="theme-switcher__option"
+          :class="{ 'is-active': colorMode.preference === option.value }"
+          type="button"
+          :title="`${option.label} theme`"
+          :aria-label="`${option.label} theme`"
+          :aria-pressed="colorMode.preference === option.value"
+          @click="colorMode.preference = option.value"
+        >
+          <component :is="option.icon" :size="15" />
         </button>
-      </form>
+      </div>
+    </div>
+
+    <div class="login-layout">
+      <aside class="login-context">
+        <span class="login-context__mark"><BookOpenText :size="28" /></span>
+        <p>SEO Blog CMS</p>
+        <h1>Plan, review, and publish with editorial confidence.</h1>
+        <div class="login-context__features">
+          <div><span><Layers3 :size="17" /></span><p><strong>Project isolation</strong><small>Content and access stay scoped to the selected project.</small></p></div>
+          <div><span><GitPullRequestArrow :size="17" /></span><p><strong>Structured workflow</strong><small>Draft, review, approve, schedule, and publish exact revisions.</small></p></div>
+          <div><span><ShieldCheck :size="17" /></span><p><strong>Secure delivery</strong><small>Server-side sessions and project credentials protect every workflow.</small></p></div>
+        </div>
+      </aside>
+
+      <main class="login-panel">
+        <form class="login-form surface" @submit.prevent="signIn">
+          <div class="login-form__heading">
+            <span>Welcome back</span>
+            <h2>Sign in to your workspace</h2>
+            <p>Use your invite-only administrator account.</p>
+          </div>
+
+          <label class="field login-field">
+            <span>Email address</span>
+            <span class="login-input">
+              <Mail :size="16" />
+              <input v-model.trim="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
+            </span>
+          </label>
+
+          <label class="field login-field">
+            <span class="password-label">Password <NuxtLink to="/forgot-password">Forgot password?</NuxtLink></span>
+            <span class="login-input">
+              <LockKeyhole :size="16" />
+              <input
+                v-model="password"
+                name="password"
+                :type="passwordVisible ? 'text' : 'password'"
+                autocomplete="current-password"
+                required
+                minlength="8"
+                placeholder="Enter your password"
+              >
+              <button type="button" :title="passwordVisible ? 'Hide password' : 'Show password'" :aria-label="passwordVisible ? 'Hide password' : 'Show password'" @click="passwordVisible = !passwordVisible">
+                <EyeOff v-if="passwordVisible" :size="16" />
+                <Eye v-else :size="16" />
+              </button>
+            </span>
+          </label>
+
+          <p v-if="errorMessage" class="ui-alert ui-alert--danger" role="alert">{{ errorMessage }}</p>
+          <p v-if="successMessage" class="ui-alert ui-alert--success">{{ successMessage }}</p>
+
+          <button class="button button--primary login-submit" type="submit" :disabled="pending">
+            <LoaderCircle v-if="pending" class="spin" :size="17" />
+            <LogIn v-else :size="17" />
+            {{ pending ? 'Signing in' : 'Sign in' }}
+          </button>
+
+          <div class="login-security"><ShieldCheck :size="14" /><span>Invite-only access · Secure session</span></div>
+        </form>
+      </main>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { ArrowRight, Eye, EyeOff, LoaderCircle, LockKeyhole, Mail, Server, ShieldCheck } from 'lucide-vue-next'
+import {
+  BookOpenText,
+  Eye,
+  EyeOff,
+  GitPullRequestArrow,
+  Laptop,
+  Layers3,
+  LoaderCircle,
+  LockKeyhole,
+  LogIn,
+  Mail,
+  Moon,
+  PenLine,
+  ShieldCheck,
+  Sun
+} from 'lucide-vue-next'
 
+const api = useAdminApi()
+const colorMode = useColorMode()
 const email = ref('')
 const password = ref('')
 const passwordVisible = ref(false)
 const pending = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
+const themeOptions = [
+  { value: 'system', label: 'System', icon: Laptop },
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon }
+]
 
 async function signIn() {
   pending.value = true
   errorMessage.value = ''
   successMessage.value = ''
   try {
-    await $fetch('/api/v1/auth/login', {
-      method: 'POST',
-      body: { email: email.value, password: password.value },
-      credentials: 'include'
-    })
+    const response = await api.login(email.value, password.value)
+    useState('admin-user').value = response.data.user
+    successMessage.value = 'Signed in. Opening your workspace.'
+    await navigateTo('/dashboard', { replace: true })
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Sign-in failed. Check your details and try again.')
-    pending.value = false
-    return
-  }
-
-  successMessage.value = 'Signed in. Opening dashboard...'
-  try {
-    await navigateTo('/dashboard', { replace: true })
-  } catch {
-    errorMessage.value = 'Signed in, but the dashboard did not open. Go to /dashboard or refresh the page.'
   } finally {
     pending.value = false
   }
 }
-
-function normalizeAPIError(error: unknown, fallback: string) {
-  if (typeof error === 'object' && error !== null && 'data' in error) {
-    const data = (error as { data?: { title?: string, detail?: string, statusCode?: number, statusMessage?: string } }).data
-    if (data?.statusCode === 502) {
-      return 'The admin API is unavailable. Start the Go API on the configured proxy port or set NUXT_API_BASE_URL to the running API.'
-    }
-    return data?.detail || data?.title || fallback
-  }
-  return fallback
-}
 </script>
+
+<style scoped>
+.login-page { min-height: 100vh; background: var(--bg); color: var(--text); }
+.login-page__top { position: fixed; z-index: 10; inset: 0 0 auto; display: flex; height: 72px; align-items: center; justify-content: space-between; padding: 0 32px; }
+.login-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; }
+.login-brand > span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 7px; background: var(--primary); color: white; }
+.login-brand strong { font-size: 14px; }
+.login-layout { display: grid; min-height: 100vh; grid-template-columns: minmax(0, 1fr) minmax(430px, .78fr); }
+.login-context { display: flex; max-width: 760px; justify-self: center; flex-direction: column; justify-content: center; padding: 110px 64px 64px; }
+.login-context__mark { display: grid; width: 54px; height: 54px; place-items: center; border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--border)); border-radius: 8px; background: var(--primary-soft); color: var(--primary); }
+.login-context > p { margin: 27px 0 0; color: var(--primary); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.login-context h1 { max-width: 650px; margin: 8px 0 0; font-size: clamp(34px, 4vw, 54px); font-weight: 710; line-height: 1.09; letter-spacing: 0; }
+.login-context__features { display: grid; max-width: 600px; gap: 15px; margin-top: 40px; }
+.login-context__features > div { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 12px; align-items: center; }
+.login-context__features > div > span { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text-soft); box-shadow: var(--shadow-sm); }
+.login-context__features p { display: flex; margin: 0; flex-direction: column; }
+.login-context__features strong { font-size: 11px; }
+.login-context__features small { margin-top: 3px; color: var(--text-soft); font-size: 9px; }
+.login-panel { display: grid; place-items: center; padding: 96px 42px 42px; border-left: 1px solid var(--border); background: var(--surface-subtle); }
+.login-form { width: 100%; max-width: 420px; padding: 30px; box-shadow: var(--shadow-md); }
+.login-form__heading { margin-bottom: 25px; }
+.login-form__heading span { color: var(--primary); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.login-form__heading h2 { margin: 5px 0 0; font-size: 22px; }
+.login-form__heading p { margin: 6px 0 0; color: var(--text-soft); font-size: 10px; }
+.login-field { margin-top: 15px; }
+.password-label { display: flex; align-items: center; justify-content: space-between; }
+.password-label a { color: var(--primary); font-size: 9px; font-weight: 600; text-decoration: none; }
+.login-input { position: relative; display: flex; align-items: center; color: var(--text-soft); }
+.login-input > svg:first-child { position: absolute; z-index: 1; left: 12px; pointer-events: none; }
+.login-input input { min-height: 44px; padding-left: 39px; padding-right: 40px; }
+.login-input button { position: absolute; right: 6px; display: grid; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--text-soft); cursor: pointer; }
+.login-input button:hover { background: var(--surface-subtle); }
+.login-submit { width: 100%; min-height: 44px; margin-top: 19px; }
+.login-security { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 18px; color: var(--text-faint); font-size: 8px; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 950px) { .login-layout { grid-template-columns: 1fr; } .login-context { display: none; } .login-panel { min-height: 100vh; border-left: 0; } }
+@media (max-width: 560px) { .login-page__top { height: 64px; padding-inline: 16px; } .login-panel { padding: 88px 16px 24px; } .login-form { padding: 23px 18px; } }
+</style>

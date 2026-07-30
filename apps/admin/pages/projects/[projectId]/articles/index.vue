@@ -58,15 +58,40 @@
                 <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Workflow</p>
                 <h2 class="mt-1 text-xl font-semibold tracking-normal">Draft, approve, schedule</h2>
               </div>
-              <button
-                class="inline-flex items-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
-                type="button"
-                :disabled="categories.length === 0"
-                @click="articleFormOpen = !articleFormOpen"
+              <NuxtLink
+                class="inline-flex items-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a]"
+                :to="`/projects/${projectID}/articles/create`"
               >
                 <Plus class="h-4 w-4" />
                 New article
-              </button>
+              </NuxtLink>
+            </div>
+
+            <div class="grid gap-2 rounded-lg border border-[#cfd8d1] bg-white p-2 shadow-sm dark:border-[#3f4843] dark:bg-[#202522] sm:grid-cols-[minmax(0,1fr)_170px_170px]">
+              <label class="relative block">
+                <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#667169] dark:text-[#aeb8b0]" />
+                <input
+                  v-model.trim="search"
+                  class="h-10 w-full rounded-md border border-[#bfcac3] bg-white pl-10 pr-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]"
+                  type="search"
+                  placeholder="Search title, slug, or type"
+                  aria-label="Search articles"
+                />
+              </label>
+              <select v-model="editorialFilter" class="h-10 rounded-md border border-[#bfcac3] bg-white px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" aria-label="Editorial state">
+                <option value="all">All workflow states</option>
+                <option value="draft">Draft</option>
+                <option value="in_review">In review</option>
+                <option value="changes_requested">Changes requested</option>
+                <option value="approved">Approved</option>
+              </select>
+              <select v-model="publicationFilter" class="h-10 rounded-md border border-[#bfcac3] bg-white px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" aria-label="Publication state">
+                <option value="all">All publication states</option>
+                <option value="unpublished">Unpublished</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="published">Published</option>
+                <option value="archived">Archived</option>
+              </select>
             </div>
 
             <div v-if="pending" class="flex items-center gap-3 rounded-lg border border-[#cfd8d1] bg-white p-5 text-sm text-[#58625c] dark:border-[#3f4843] dark:bg-[#202522] dark:text-[#bec7c1]">
@@ -79,7 +104,12 @@
               <p class="mt-2 text-sm text-[#5f6a63] dark:text-[#b8c2bb]">Create a category, then draft the first article for this project.</p>
             </div>
 
-            <article v-for="article in articles" :key="article.id" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <div v-if="!pending && articles.length > 0 && filteredArticles.length === 0" class="rounded-lg border border-dashed border-[#bfcac3] bg-white p-8 text-center dark:border-[#4b5650] dark:bg-[#202522]">
+              <h2 class="text-lg font-semibold">No matching articles</h2>
+              <p class="mt-2 text-sm text-[#5f6a63] dark:text-[#b8c2bb]">Try another search or workflow filter.</p>
+            </div>
+
+            <article v-for="article in filteredArticles" :key="article.id" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div class="min-w-0">
                   <h3 class="truncate text-lg font-semibold">{{ article.title }}</h3>
@@ -200,57 +230,6 @@
 
           <div class="space-y-5">
             <form
-              v-if="articleFormOpen"
-              class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]"
-              @submit.prevent="createArticle"
-            >
-              <div>
-                <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Create</p>
-                <h2 class="mt-1 text-lg font-semibold tracking-normal">Article</h2>
-              </div>
-
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Title</span>
-                <input v-model.trim="articleForm.title" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Slug</span>
-                <input v-model.trim="articleForm.slug" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Type</span>
-                <select v-model="articleForm.articleType" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]">
-                  <option v-for="type in articleTypes" :key="type" :value="type">{{ labelize(type) }}</option>
-                </select>
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Primary category</span>
-                <select v-model="articleForm.primaryCategoryId" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required>
-                  <option value="" disabled>Select category</option>
-                  <option v-for="category in categories" :key="category.id" :value="category.id">{{ category.name }}</option>
-                </select>
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Excerpt</span>
-                <textarea v-model.trim="articleForm.excerpt" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">HTML</span>
-                <textarea v-model.trim="articleForm.html" class="min-h-40 w-full rounded-md border border-[#bfcac3] px-3 py-2 font-mono text-sm dark:border-[#4b5650] dark:bg-[#171b18]" />
-              </label>
-
-              <button
-                class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
-                type="submit"
-                :disabled="creatingArticle || !canCreateArticle"
-              >
-                <LoaderCircle v-if="creatingArticle" class="h-4 w-4 animate-spin" />
-                <Plus v-else class="h-4 w-4" />
-                Create article
-              </button>
-            </form>
-
-            <form
               class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]"
               @submit.prevent="createCategory"
             >
@@ -305,6 +284,7 @@ import {
   LogOut,
   Plus,
   RefreshCw,
+  Search,
   Send,
   UploadCloud,
   XCircle
@@ -375,41 +355,18 @@ const projectID = computed(() => {
   return Array.isArray(value) ? String(value[0] || '') : String(value || '')
 })
 
-const articleTypes = [
-  'standard',
-  'guide',
-  'tutorial',
-  'comparison',
-  'case_study',
-  'research',
-  'listicle',
-  'news_update',
-  'opinion',
-  'reference',
-  'glossary',
-  'release_note'
-]
-
 const project = ref<AdminProject | null>(null)
 const articles = ref<AdminArticle[]>([])
 const categories = ref<TaxonomyTerm[]>([])
 const pending = ref(true)
-const creatingArticle = ref(false)
 const creatingCategory = ref(false)
-const articleFormOpen = ref(true)
+const search = ref('')
+const editorialFilter = ref('all')
+const publicationFilter = ref('all')
 const errorMessage = ref('')
 const successMessage = ref('')
 const actionPending = reactive<Record<string, string>>({})
 const scheduleDrafts = reactive<Record<string, string>>({})
-
-const articleForm = reactive({
-  articleType: 'standard',
-  title: '',
-  slug: '',
-  primaryCategoryId: '',
-  excerpt: '',
-  html: ''
-})
 
 const categoryForm = reactive({
   name: '',
@@ -418,15 +375,15 @@ const categoryForm = reactive({
   indexable: true
 })
 
-const canCreateArticle = computed(() => Boolean(
-  articleForm.title.trim() &&
-  articleForm.slug.trim() &&
-  articleForm.primaryCategoryId
-))
 const canCreateCategory = computed(() => Boolean(categoryForm.name.trim() && categoryForm.slug.trim()))
-
-watch(() => articleForm.title, (value) => {
-  if (!articleForm.slug) articleForm.slug = slugify(value)
+const filteredArticles = computed(() => {
+  const term = search.value.toLowerCase()
+  return articles.value.filter(article => {
+    const searchMatches = !term || `${article.title} ${article.slug} ${article.articleType}`.toLowerCase().includes(term)
+    const editorialMatches = editorialFilter.value === 'all' || article.editorialState === editorialFilter.value
+    const publicationMatches = publicationFilter.value === 'all' || article.publicationState === publicationFilter.value
+    return searchMatches && editorialMatches && publicationMatches
+  })
 })
 
 watch(() => categoryForm.name, (value) => {
@@ -447,9 +404,6 @@ async function refresh() {
     project.value = projectResponse.data
     categories.value = categoryResponse.data
     articles.value = articleResponse.data
-    if (!articleForm.primaryCategoryId && categories.value[0]) {
-      articleForm.primaryCategoryId = categories.value[0].id
-    }
     seedScheduleDrafts()
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load this project. Sign in again if your session has expired.')
@@ -475,9 +429,6 @@ async function createCategory() {
       }
     })
     categories.value = [...categories.value, response.data].sort((left, right) => left.name.localeCompare(right.name))
-    if (!articleForm.primaryCategoryId) {
-      articleForm.primaryCategoryId = response.data.id
-    }
     categoryForm.name = ''
     categoryForm.slug = ''
     categoryForm.description = ''
@@ -487,39 +438,6 @@ async function createCategory() {
     errorMessage.value = normalizeAPIError(error, 'Could not create category.')
   } finally {
     creatingCategory.value = false
-  }
-}
-
-async function createArticle() {
-  creatingArticle.value = true
-  clearMessages()
-  try {
-    const csrfToken = await getCSRFToken()
-    const response = await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {
-        articleType: articleForm.articleType,
-        title: articleForm.title,
-        slug: articleForm.slug,
-        primaryCategoryId: articleForm.primaryCategoryId,
-        excerpt: articleForm.excerpt,
-        html: articleForm.html || `<p>${escapeHTML(articleForm.title)}</p>`
-      }
-    })
-    articles.value = [response.data, ...articles.value]
-    scheduleDrafts[response.data.id] = toLocalInputValue(new Date(Date.now() + 15 * 60 * 1000))
-    articleForm.title = ''
-    articleForm.slug = ''
-    articleForm.excerpt = ''
-    articleForm.html = ''
-    articleFormOpen.value = false
-    successMessage.value = 'Article created.'
-  } catch (error) {
-    errorMessage.value = normalizeAPIError(error, 'Could not create article.')
-  } finally {
-    creatingArticle.value = false
   }
 }
 
@@ -711,15 +629,6 @@ function slugify(value: string) {
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
-}
-
-function escapeHTML(value: string) {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;')
 }
 
 function clearMessages() {
