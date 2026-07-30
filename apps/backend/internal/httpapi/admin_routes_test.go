@@ -2778,6 +2778,108 @@ func TestCreateRevisionRejectsMissingAndStaleBase(t *testing.T) {
 	}
 }
 
+func TestRepublishEmitsDistinctUpdateAndOneHopSlugChangeEvents(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "publish-events@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{
+		"slug":"publish-events",
+		"name":"Publish Events",
+		"primaryDomain":"example.test",
+		"blogBasePath":"/insights"
+	}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"news","name":"News"}`)
+	article := createTestArticle(t, server, login, project.ID, `{
+		"title":"First publication",
+		"slug":"first-publication",
+		"primaryCategoryId":"`+category.ID+`",
+		"html":"<p>First publication</p>"
+	}`)
+	approveTestRevision(t, server, login, project.ID, article.LatestRevision.ID)
+	publishTestArticle(t, server, login, project.ID, article.ID, article.LatestRevision.ID, "first-publication")
+
+	secondRevision := createTestRevision(t, server, login, project.ID, article.ID, `{
+		"title":"Updated publication",
+		"html":"<p>Updated publication</p>"
+	}`)
+	approveTestRevision(t, server, login, project.ID, secondRevision.ID)
+	publishTestArticle(t, server, login, project.ID, article.ID, secondRevision.ID, "first-publication")
+	publishTestArticle(t, server, login, project.ID, article.ID, secondRevision.ID, "renamed-publication")
+
+	type eventRecord struct {
+		Type    string
+		Payload string
+	}
+	rows, err := db.Query(`
+		SELECT event_type, payload_json
+		FROM outbox_events
+		WHERE project_id = ? AND aggregate_id = ?
+		ORDER BY created_at, rowid
+	`, project.ID, article.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []eventRecord
+	for rows.Next() {
+		var event eventRecord
+		if err := rows.Scan(&event.Type, &event.Payload); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 ||
+		events[0].Type != "content.published" ||
+		events[1].Type != "content.updated" ||
+		events[2].Type != "content.slug_changed" {
+		t.Fatalf("unexpected publication events %#v", events)
+	}
+	var slugPayload map[string]any
+	if err := json.Unmarshal([]byte(events[2].Payload), &slugPayload); err != nil {
+		t.Fatal(err)
+	}
+	if slugPayload["old_slug"] != "first-publication" ||
+		slugPayload["new_slug"] != "renamed-publication" {
+		t.Fatalf("unexpected slug event payload %#v", slugPayload)
+	}
+	var targetPath string
+	if err := db.QueryRow(`
+		SELECT target_path
+		FROM slug_redirects
+		WHERE project_id = ? AND source_path = '/insights/first-publication'
+	`, project.ID).Scan(&targetPath); err != nil {
+		t.Fatal(err)
+	}
+	if targetPath != "/insights/renamed-publication" {
+		t.Fatalf("expected old slug to redirect directly to current slug, got %q", targetPath)
+	}
+
+	publishTestArticle(t, server, login, project.ID, article.ID, secondRevision.ID, "first-publication")
+	var oldSourceCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM slug_redirects
+		WHERE project_id = ? AND source_path = '/insights/first-publication'
+	`, project.ID).Scan(&oldSourceCount); err != nil {
+		t.Fatal(err)
+	}
+	if oldSourceCount != 0 {
+		t.Fatal("expected reverting a slug to remove the redirect whose source is now live")
+	}
+	if err := db.QueryRow(`
+		SELECT target_path
+		FROM slug_redirects
+		WHERE project_id = ? AND source_path = '/insights/renamed-publication'
+	`, project.ID).Scan(&targetPath); err != nil {
+		t.Fatal(err)
+	}
+	if targetPath != "/insights/first-publication" {
+		t.Fatalf("expected reverted slug history to remain one hop, got %q", targetPath)
+	}
+}
+
 func TestArticleRollbackTargetsPublicationLocale(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
@@ -3136,6 +3238,333 @@ func TestReviewCommentLifecycleAndScoping(t *testing.T) {
 	}
 	if auditCount != 3 {
 		t.Fatalf("expected comment lifecycle audit events, got %d", auditCount)
+	}
+}
+
+func TestReviewAssignmentCreationAndScoping(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "assignment-owner@example.test", "correct horse battery staple")
+	otherLogin := seedAndLogin(t, server, db, "assignment-other@example.test", "another correct horse battery staple")
+	reviewerLogin := seedAndLogin(t, server, db, "assignment-reviewer@example.test", "reviewer correct horse password")
+	writerLogin := seedAndLogin(t, server, db, "assignment-writer@example.test", "writer correct horse password")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"assignments","name":"Assignments Project"}`)
+	otherProject := createTestProject(t, server, otherLogin, `{"slug":"other-assignments","name":"Other Assignments"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES
+		  (?, ?, 'reviewer', 'active', CURRENT_TIMESTAMP),
+		  (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, reviewerLogin.userID, project.ID, writerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+	category := createTestCategory(t, server, ownerLogin, project.ID, `{"slug":"assignments","name":"Assignments"}`)
+	article := createTestArticle(t, server, ownerLogin, project.ID, `{
+		"articleType":"guide",
+		"title":"Assigned Guide",
+		"slug":"assigned-guide",
+		"primaryCategoryId":"`+category.ID+`",
+		"html":"<p>Draft body</p>"
+	}`)
+
+	candidateRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/review-assignees", nil)
+	addCookies(candidateRequest, ownerLogin.cookies)
+	candidateResponse := mustTest(t, server, candidateRequest)
+	if candidateResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected review-assignee list 200, got %d: %s", candidateResponse.StatusCode, readBody(t, candidateResponse))
+	}
+	var candidates ListEnvelope[store.AdminProjectMember]
+	decodeJSONResponse(t, candidateResponse, &candidates)
+	if findProjectMember(candidates.Data, reviewerLogin.userID).UserID == "" {
+		t.Fatalf("expected reviewer candidate in assignee list, got %#v", candidates.Data)
+	}
+	if findProjectMember(candidates.Data, writerLogin.userID).UserID != "" {
+		t.Fatalf("writer should not be assignable for review, got %#v", candidates.Data)
+	}
+	firstCandidateRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/review-assignees?limit=1", nil)
+	addCookies(firstCandidateRequest, ownerLogin.cookies)
+	firstCandidateResponse := mustTest(t, server, firstCandidateRequest)
+	var firstCandidates ListEnvelope[store.AdminProjectMember]
+	decodeJSONResponse(t, firstCandidateResponse, &firstCandidates)
+	if firstCandidateResponse.StatusCode != http.StatusOK || len(firstCandidates.Data) != 1 || firstCandidates.Meta.NextCursor == "" {
+		t.Fatalf("unexpected first review-assignee page status=%d body=%#v", firstCandidateResponse.StatusCode, firstCandidates)
+	}
+	secondCandidateRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/review-assignees?limit=1&cursor="+firstCandidates.Meta.NextCursor,
+		nil,
+	)
+	addCookies(secondCandidateRequest, ownerLogin.cookies)
+	secondCandidateResponse := mustTest(t, server, secondCandidateRequest)
+	var secondCandidates ListEnvelope[store.AdminProjectMember]
+	decodeJSONResponse(t, secondCandidateResponse, &secondCandidates)
+	if secondCandidateResponse.StatusCode != http.StatusOK ||
+		len(secondCandidates.Data) != 1 ||
+		secondCandidates.Data[0].UserID == firstCandidates.Data[0].UserID {
+		t.Fatalf("unexpected second review-assignee page status=%d body=%#v", secondCandidateResponse.StatusCode, secondCandidates)
+	}
+
+	createRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/assignments",
+		`{
+			"revisionId":"`+article.LatestRevision.ID+`",
+			"assignedTo":"`+reviewerLogin.userID+`",
+			"assignmentType":"reviewer",
+			"dueAt":"2026-08-01T10:00:00Z"
+		}`,
+		ownerLogin,
+	)
+	createResponse := mustTest(t, server, createRequest)
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected assignment creation 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.ReviewAssignment]
+	decodeJSONResponse(t, createResponse, &created)
+	if created.Data.Status != "open" ||
+		created.Data.ArticleID != article.ID ||
+		created.Data.RevisionID != article.LatestRevision.ID ||
+		created.Data.AssignedTo != reviewerLogin.userID ||
+		created.Data.AssigneeRole != "reviewer" ||
+		created.Data.AssignmentType != "reviewer" ||
+		created.Data.DueAt != "2026-08-01 10:00:00" {
+		t.Fatalf("unexpected created assignment %#v", created.Data)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/assignments", nil)
+	addCookies(listRequest, ownerLogin.cookies)
+	listResponse := mustTest(t, server, listRequest)
+	if listResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected assignments list 200, got %d: %s", listResponse.StatusCode, readBody(t, listResponse))
+	}
+	var list ListEnvelope[store.ReviewAssignment]
+	decodeJSONResponse(t, listResponse, &list)
+	if len(list.Data) != 1 || list.Data[0].ID != created.Data.ID || list.Data[0].AssigneeEmail != "assignment-reviewer@example.test" {
+		t.Fatalf("expected created assignment in list, got %#v", list.Data)
+	}
+
+	duplicateCreateRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/assignments",
+		`{"revisionId":"`+article.LatestRevision.ID+`","assignedTo":"`+reviewerLogin.userID+`","assignmentType":"reviewer"}`,
+		ownerLogin,
+	)
+	duplicateCreateResponse := mustTest(t, server, duplicateCreateRequest)
+	if duplicateCreateResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected duplicate assignment validation, got %d: %s", duplicateCreateResponse.StatusCode, readBody(t, duplicateCreateResponse))
+	}
+
+	completeRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/assignments/"+created.Data.ID+"/complete",
+		`{}`,
+		reviewerLogin,
+	)
+	completeResponse := mustTest(t, server, completeRequest)
+	if completeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected assignee completion 200, got %d: %s", completeResponse.StatusCode, readBody(t, completeResponse))
+	}
+	var completed Envelope[store.ReviewAssignment]
+	decodeJSONResponse(t, completeResponse, &completed)
+	if completed.Data.Status != "completed" || completed.Data.ClosedBy != reviewerLogin.userID || completed.Data.ClosedAt == "" {
+		t.Fatalf("unexpected completed assignment %#v", completed.Data)
+	}
+
+	repeatCompleteRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/assignments/"+created.Data.ID+"/complete",
+		`{}`,
+		reviewerLogin,
+	)
+	repeatCompleteResponse := mustTest(t, server, repeatCompleteRequest)
+	if repeatCompleteResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected repeated completion conflict, got %d: %s", repeatCompleteResponse.StatusCode, readBody(t, repeatCompleteResponse))
+	}
+	if _, err := db.Exec(`UPDATE review_assignments SET created_at = '2026-01-01 00:00:00' WHERE id = ?`, created.Data.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	reassignRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/assignments",
+		`{"revisionId":"`+article.LatestRevision.ID+`","assignedTo":"`+reviewerLogin.userID+`","assignmentType":"reviewer"}`,
+		ownerLogin,
+	)
+	reassignResponse := mustTest(t, server, reassignRequest)
+	if reassignResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected reassignment after completion 201, got %d: %s", reassignResponse.StatusCode, readBody(t, reassignResponse))
+	}
+	var reassigned Envelope[store.ReviewAssignment]
+	decodeJSONResponse(t, reassignResponse, &reassigned)
+
+	reviewerCancelRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/assignments/"+reassigned.Data.ID+"/cancel",
+		`{}`,
+		reviewerLogin,
+	)
+	reviewerCancelResponse := mustTest(t, server, reviewerCancelRequest)
+	if reviewerCancelResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected reviewer cancellation denial, got %d: %s", reviewerCancelResponse.StatusCode, readBody(t, reviewerCancelResponse))
+	}
+
+	cancelRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/assignments/"+reassigned.Data.ID+"/cancel",
+		`{}`,
+		ownerLogin,
+	)
+	cancelResponse := mustTest(t, server, cancelRequest)
+	if cancelResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected manager cancellation 200, got %d: %s", cancelResponse.StatusCode, readBody(t, cancelResponse))
+	}
+	var cancelled Envelope[store.ReviewAssignment]
+	decodeJSONResponse(t, cancelResponse, &cancelled)
+	if cancelled.Data.Status != "cancelled" || cancelled.Data.ClosedBy != ownerLogin.userID || cancelled.Data.ClosedAt == "" {
+		t.Fatalf("unexpected cancelled assignment %#v", cancelled.Data)
+	}
+
+	firstPageRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/assignments?limit=1", nil)
+	addCookies(firstPageRequest, ownerLogin.cookies)
+	firstPageResponse := mustTest(t, server, firstPageRequest)
+	if firstPageResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected assignment first page 200, got %d: %s", firstPageResponse.StatusCode, readBody(t, firstPageResponse))
+	}
+	var firstPage ListEnvelope[store.ReviewAssignment]
+	decodeJSONResponse(t, firstPageResponse, &firstPage)
+	if len(firstPage.Data) != 1 || firstPage.Data[0].ID != reassigned.Data.ID || firstPage.Meta.NextCursor == "" || firstPage.Meta.OpenCount == nil || *firstPage.Meta.OpenCount != 0 {
+		t.Fatalf("unexpected newest-first assignment page %#v", firstPage)
+	}
+	secondPageRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/assignments?limit=1&cursor="+firstPage.Meta.NextCursor,
+		nil,
+	)
+	addCookies(secondPageRequest, ownerLogin.cookies)
+	secondPageResponse := mustTest(t, server, secondPageRequest)
+	if secondPageResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected assignment second page 200, got %d: %s", secondPageResponse.StatusCode, readBody(t, secondPageResponse))
+	}
+	var secondPage ListEnvelope[store.ReviewAssignment]
+	decodeJSONResponse(t, secondPageResponse, &secondPage)
+	if len(secondPage.Data) != 1 || secondPage.Data[0].ID != created.Data.ID || secondPage.Meta.NextCursor != "" || secondPage.Meta.OpenCount == nil || *secondPage.Meta.OpenCount != 0 {
+		t.Fatalf("unexpected assignment second page %#v", secondPage)
+	}
+
+	var assignmentNotifications, suppressedNotifications int
+	if err := db.QueryRow(`
+		SELECT COUNT(1), SUM(CASE WHEN status = 'suppressed' THEN 1 ELSE 0 END)
+		FROM review_assignment_notifications
+		WHERE project_id = ?
+		  AND recipient_user_id = ?
+	`, project.ID, reviewerLogin.userID).Scan(&assignmentNotifications, &suppressedNotifications); err != nil {
+		t.Fatal(err)
+	}
+	if assignmentNotifications != 2 || suppressedNotifications != 2 {
+		t.Fatalf("expected closed assignments to retain suppressed notifications, total=%d suppressed=%d", assignmentNotifications, suppressedNotifications)
+	}
+
+	writerCreateRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/assignments",
+		`{"assignedTo":"`+reviewerLogin.userID+`","assignmentType":"reviewer"}`,
+		writerLogin,
+	)
+	writerCreateResponse := mustTest(t, server, writerCreateRequest)
+	if writerCreateResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer assignment creation denial, got %d: %s", writerCreateResponse.StatusCode, readBody(t, writerCreateResponse))
+	}
+
+	reviewerCreateRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/assignments",
+		`{"assignedTo":"`+reviewerLogin.userID+`","assignmentType":"reviewer"}`,
+		reviewerLogin,
+	)
+	reviewerCreateResponse := mustTest(t, server, reviewerCreateRequest)
+	if reviewerCreateResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected reviewer assignment creation denial, got %d: %s", reviewerCreateResponse.StatusCode, readBody(t, reviewerCreateResponse))
+	}
+
+	crossProjectArticle := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+otherProject.ID+"/articles/"+article.ID+"/assignments",
+		`{"assignedTo":"`+otherLogin.userID+`","assignmentType":"reviewer"}`,
+		otherLogin,
+	)
+	crossProjectArticleResponse := mustTest(t, server, crossProjectArticle)
+	if crossProjectArticleResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project article assignment to return 404, got %d: %s", crossProjectArticleResponse.StatusCode, readBody(t, crossProjectArticleResponse))
+	}
+
+	crossProjectAssignee := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/assignments",
+		`{"assignedTo":"`+otherLogin.userID+`","assignmentType":"reviewer"}`,
+		ownerLogin,
+	)
+	crossProjectAssigneeResponse := mustTest(t, server, crossProjectAssignee)
+	if crossProjectAssigneeResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project assignee to return 404, got %d: %s", crossProjectAssigneeResponse.StatusCode, readBody(t, crossProjectAssigneeResponse))
+	}
+
+	writerAssignee := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/assignments",
+		`{"assignedTo":"`+writerLogin.userID+`","assignmentType":"reviewer"}`,
+		ownerLogin,
+	)
+	writerAssigneeResponse := mustTest(t, server, writerAssignee)
+	if writerAssigneeResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer reviewer-assignment denial, got %d: %s", writerAssigneeResponse.StatusCode, readBody(t, writerAssigneeResponse))
+	}
+
+	invalidRevision := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/assignments",
+		`{"revisionId":"rev_missing","assignedTo":"`+reviewerLogin.userID+`","assignmentType":"reviewer"}`,
+		ownerLogin,
+	)
+	invalidRevisionResponse := mustTest(t, server, invalidRevision)
+	if invalidRevisionResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected invalid assignment revision to return 404, got %d: %s", invalidRevisionResponse.StatusCode, readBody(t, invalidRevisionResponse))
+	}
+
+	crossProjectTransition := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+otherProject.ID+"/assignments/"+created.Data.ID+"/complete",
+		`{}`,
+		otherLogin,
+	)
+	crossProjectTransitionResponse := mustTest(t, server, crossProjectTransition)
+	if crossProjectTransitionResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project assignment transition to return 404, got %d: %s", crossProjectTransitionResponse.StatusCode, readBody(t, crossProjectTransitionResponse))
+	}
+
+	var auditCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ?
+		  AND target_id = ?
+		  AND action = 'assignment.create'
+	`, project.ID, created.Data.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("expected assignment audit event, got %d", auditCount)
+	}
+	var transitionAuditCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ?
+		  AND action IN ('assignment.completed', 'assignment.cancelled')
+		  AND target_id IN (?, ?)
+	`, project.ID, created.Data.ID, reassigned.Data.ID).Scan(&transitionAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if transitionAuditCount != 2 {
+		t.Fatalf("expected assignment transition audit events, got %d", transitionAuditCount)
 	}
 }
 
@@ -3526,15 +3955,17 @@ func newAdminTestServerWithMailer(t *testing.T, sender mailer.Sender) (*Server, 
 	if err := database.Migrate(db); err != nil {
 		t.Fatal(err)
 	}
+	webhookEncryptionKey := []byte("0123456789abcdef0123456789abcdef")
 	server := New(Options{
 		Config: config.Config{
-			Env:            "development",
-			DevAuth:        true,
-			AdminPublicURL: "http://admin.example.test",
+			Env:                  "development",
+			DevAuth:              true,
+			AdminPublicURL:       "http://admin.example.test",
+			WebhookEncryptionKey: webhookEncryptionKey,
 		},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Mailer: sender,
-		Store:  store.New(db),
+		Store:  store.New(db, store.WithWebhookEncryptionKey(webhookEncryptionKey)),
 	})
 	return server, db
 }

@@ -8,11 +8,26 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db                   *sql.DB
+	webhookEncryptionKey []byte
 }
 
-func New(db *sql.DB) *Store {
-	return &Store{db: db}
+type Option func(*Store)
+
+func WithWebhookEncryptionKey(key []byte) Option {
+	return func(store *Store) {
+		store.webhookEncryptionKey = append([]byte(nil), key...)
+	}
+}
+
+func New(db *sql.DB, options ...Option) *Store {
+	result := &Store{db: db}
+	for _, option := range options {
+		if option != nil {
+			option(result)
+		}
+	}
+	return result
 }
 
 func (s *Store) Ping(ctx context.Context) error {

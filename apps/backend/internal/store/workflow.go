@@ -1255,19 +1255,46 @@ func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectI
 	if canonical == "" {
 		canonical = canonicalURL(project, input.Slug)
 	}
-	publicationID, err := upsertPublication(ctx, tx, projectID, articleID, revision.ID, input.Locale, input.Slug, canonical, input.ScheduledForUTC, state)
+	locale := strings.TrimSpace(input.Locale)
+	if locale == "" {
+		locale = revision.Locale
+	}
+	if locale == "" {
+		locale = project.DefaultLocale
+	}
+	previousPublication, previousPublicationErr := loadPublicationForLocale(ctx, tx, projectID, articleID, locale)
+	if previousPublicationErr != nil && !errors.Is(previousPublicationErr, sql.ErrNoRows) {
+		return AdminArticle{}, previousPublicationErr
+	}
+	publicationID, err := upsertPublication(ctx, tx, projectID, articleID, revision.ID, locale, input.Slug, canonical, input.ScheduledForUTC, state)
 	if err != nil {
 		return AdminArticle{}, err
 	}
 	if state == "published" {
-		version, err := loadPublicationVersion(ctx, tx, projectID, articleID, input.Locale)
+		version, err := loadPublicationVersion(ctx, tx, projectID, articleID, locale)
 		if err != nil {
 			return AdminArticle{}, err
 		}
 		if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
 			return AdminArticle{}, err
 		}
-		if err := insertPublicationOutbox(ctx, tx, projectID, articleID, revision.ID, "content.published", canonical, version); err != nil {
+		eventType := "content.published"
+		var slugChange []string
+		if previousPublicationErr == nil && previousPublication.FirstPublishedAt != "" {
+			switch {
+			case previousPublication.Slug != input.Slug:
+				eventType = "content.slug_changed"
+				slugChange = []string{previousPublication.Slug, input.Slug}
+				if err := insertArticleSlugRedirect(ctx, tx, project, previousPublication.Slug, input.Slug); err != nil {
+					return AdminArticle{}, err
+				}
+			case previousPublication.PublicationState == "unpublished":
+				eventType = "content.restored"
+			default:
+				eventType = "content.updated"
+			}
+		}
+		if err := insertPublicationOutbox(ctx, tx, projectID, articleID, revision.ID, eventType, canonical, version, slugChange...); err != nil {
 			return AdminArticle{}, err
 		}
 	}
@@ -1571,6 +1598,7 @@ type publicationRecord struct {
 	CanonicalURL        string
 	PublicationState    string
 	PublicationVersion  int64
+	FirstPublishedAt    string
 }
 
 type copySourceRevision struct {
@@ -1652,7 +1680,7 @@ func loadPublicationForLocale(ctx context.Context, tx *sql.Tx, projectID, articl
 	var publication publicationRecord
 	err := tx.QueryRowContext(ctx, `
 		SELECT id, COALESCE(published_revision_id, ''), locale, slug, canonical_url,
-		       publication_state, publication_version
+		       publication_state, publication_version, COALESCE(first_published_at, '')
 		FROM project_publications
 		WHERE project_id = ?
 		  AND content_id = ?
@@ -1667,6 +1695,7 @@ func loadPublicationForLocale(ctx context.Context, tx *sql.Tx, projectID, articl
 		&publication.CanonicalURL,
 		&publication.PublicationState,
 		&publication.PublicationVersion,
+		&publication.FirstPublishedAt,
 	)
 	return publication, err
 }
@@ -1873,14 +1902,28 @@ func incrementProjectGeneration(ctx context.Context, tx *sql.Tx, projectID strin
 	return err
 }
 
-func insertPublicationOutbox(ctx context.Context, tx *sql.Tx, projectID, articleID, revisionID, eventType, canonicalURL string, version int64) error {
-	payload, _ := json.Marshal(map[string]any{
+func insertPublicationOutbox(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID, articleID, revisionID, eventType, canonicalURL string,
+	version int64,
+	slugChange ...string,
+) error {
+	payloadValue := map[string]any{
 		"project_id":          projectID,
 		"content_id":          articleID,
 		"revision_id":         revisionID,
 		"publication_version": version,
 		"canonical_url":       canonicalURL,
-	})
+	}
+	if len(slugChange) == 2 {
+		payloadValue["old_slug"] = slugChange[0]
+		payloadValue["new_slug"] = slugChange[1]
+	}
+	payload, err := json.Marshal(payloadValue)
+	if err != nil {
+		return err
+	}
 	eventID, err := securityRandomID("event")
 	if err != nil {
 		return err
@@ -1892,6 +1935,68 @@ func insertPublicationOutbox(ctx context.Context, tx *sql.Tx, projectID, article
 		) VALUES (?, ?, ?, 'content', ?, ?, ?)
 	`, eventID, projectID, eventType, articleID, string(payload), fmt.Sprintf("%s:%s:%s:%d", eventType, articleID, revisionID, version))
 	return err
+}
+
+func insertArticleSlugRedirect(
+	ctx context.Context,
+	tx *sql.Tx,
+	project workflowProject,
+	oldSlug, newSlug string,
+) error {
+	sourcePath := articlePublicPath(project, oldSlug)
+	targetPath := articlePublicPath(project, newSlug)
+	if sourcePath == targetPath {
+		return nil
+	}
+	var reservedTarget string
+	err := tx.QueryRowContext(ctx, `
+		SELECT target_path
+		FROM slug_redirects
+		WHERE project_id = ? AND source_path = ?
+	`, project.ID, targetPath).Scan(&reservedTarget)
+	switch {
+	case err == nil && reservedTarget != sourcePath:
+		return fmt.Errorf("%w: article slug is reserved by redirect history", ErrValidation)
+	case err == nil:
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM slug_redirects
+			WHERE project_id = ? AND source_path = ?
+		`, project.ID, targetPath); err != nil {
+			return err
+		}
+	case errors.Is(err, sql.ErrNoRows):
+	default:
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE slug_redirects
+		SET target_path = ?
+		WHERE project_id = ? AND target_path = ?
+	`, targetPath, project.ID, sourcePath); err != nil {
+		return err
+	}
+	redirectID, err := securityRandomID("redirect")
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO slug_redirects(id, project_id, source_path, target_path, status_code)
+		VALUES (?, ?, ?, ?, 301)
+		ON CONFLICT(project_id, source_path) DO UPDATE SET
+		  target_path = excluded.target_path,
+		  status_code = 301
+	`, redirectID, project.ID, sourcePath, targetPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func articlePublicPath(project workflowProject, slug string) string {
+	basePath := strings.TrimRight(project.BlogBasePath, "/")
+	if basePath == "" {
+		basePath = "/blog"
+	}
+	return basePath + "/" + slug
 }
 
 func insertTermOutbox(ctx context.Context, tx *sql.Tx, projectID, termID, eventType, termType string, input TermInput) error {

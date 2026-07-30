@@ -38,6 +38,7 @@ type PageMeta struct {
 	ContentGeneration int64  `json:"contentGeneration,omitempty"`
 	NextCursor        string `json:"nextCursor,omitempty"`
 	Limit             int    `json:"limit"`
+	OpenCount         *int   `json:"openCount,omitempty"`
 }
 
 type HealthResponse struct {

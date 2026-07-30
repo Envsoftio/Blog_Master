@@ -177,18 +177,25 @@ type WebhookWithSecret struct {
 }
 
 type WebhookAttempt struct {
-	ID            string `json:"id"`
-	ProjectID     string `json:"projectId"`
-	EndpointID    string `json:"endpointId"`
-	EndpointName  string `json:"endpointName"`
-	OutboxEventID string `json:"outboxEventId"`
-	EventType     string `json:"eventType"`
-	AggregateType string `json:"aggregateType"`
-	AggregateID   string `json:"aggregateId"`
-	Status        string `json:"status"`
-	StatusCode    int64  `json:"statusCode,omitempty"`
-	ErrorCategory string `json:"errorCategory,omitempty"`
-	AttemptedAt   string `json:"attemptedAt"`
+	ID                     string `json:"id"`
+	ProjectID              string `json:"projectId"`
+	EndpointID             string `json:"endpointId"`
+	EndpointName           string `json:"endpointName"`
+	OutboxEventID          string `json:"outboxEventId"`
+	EventType              string `json:"eventType"`
+	AggregateType          string `json:"aggregateType"`
+	AggregateID            string `json:"aggregateId"`
+	Status                 string `json:"status"`
+	StatusCode             int64  `json:"statusCode,omitempty"`
+	ErrorCategory          string `json:"errorCategory,omitempty"`
+	AttemptCount           int64  `json:"attemptCount"`
+	MaxAttempts            int64  `json:"maxAttempts"`
+	NextAttemptAt          string `json:"nextAttemptAt,omitempty"`
+	ResponseDurationMillis int64  `json:"responseDurationMillis,omitempty"`
+	LastErrorSafeMessage   string `json:"lastErrorSafeMessage,omitempty"`
+	CompletedAt            string `json:"completedAt,omitempty"`
+	ReplayOfAttemptID      string `json:"replayOfAttemptId,omitempty"`
+	AttemptedAt            string `json:"attemptedAt"`
 }
 
 type WebhookInput struct {
@@ -1044,7 +1051,11 @@ func (s *Store) CreateWebhook(ctx context.Context, userID, projectID string, inp
 		return WebhookWithSecret{}, fmt.Errorf("%w: webhook name is required", ErrValidation)
 	}
 	parsed, err := url.ParseRequestURI(input.URL)
-	if err != nil || (parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1"))) {
+	if err != nil ||
+		parsed.Scheme != "https" ||
+		parsed.Host == "" ||
+		parsed.User != nil ||
+		parsed.Fragment != "" {
 		return WebhookWithSecret{}, fmt.Errorf("%w: webhook URL must use HTTPS", ErrValidation)
 	}
 	events := uniqueStrings(input.Events)
@@ -1068,10 +1079,32 @@ func (s *Store) CreateWebhook(ctx context.Context, userID, projectID string, inp
 	if err != nil {
 		return WebhookWithSecret{}, err
 	}
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO webhook_endpoints(id, project_id, name, url, secret_hash, events_json, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, endpointID, projectID, input.Name, input.URL, security.TokenHash(secret), eventsJSON, userID); err != nil {
+	secretCiphertext, err := security.EncryptSecret(s.webhookEncryptionKey, secret)
+	if err != nil {
+		return WebhookWithSecret{}, fmt.Errorf("encrypt webhook signing secret: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return WebhookWithSecret{}, err
+	}
+	defer tx.Rollback()
+	if err := requireActiveProjectTx(ctx, tx, projectID); err != nil {
+		return WebhookWithSecret{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO webhook_endpoints(
+		  id, project_id, name, url, secret_hash, secret_ciphertext,
+		  events_json, created_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, endpointID, projectID, input.Name, input.URL, security.TokenHash(secret), secretCiphertext, eventsJSON, userID); err != nil {
+		return WebhookWithSecret{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", userID, "webhook.create", "webhook_endpoint", endpointID, "success", map[string]string{
+		"name": input.Name,
+	}); err != nil {
+		return WebhookWithSecret{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return WebhookWithSecret{}, err
 	}
 	endpoint, err := s.getWebhook(ctx, projectID, endpointID)
@@ -1085,7 +1118,12 @@ func (s *Store) RevokeWebhook(ctx context.Context, userID, projectID, endpointID
 	if err := s.requireProjectManagement(ctx, userID, projectID); err != nil {
 		return WebhookEndpoint{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return WebhookEndpoint{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `
 		UPDATE webhook_endpoints
 		SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP
 		WHERE project_id = ? AND id = ? AND revoked_at IS NULL
@@ -1098,6 +1136,30 @@ func (s *Store) RevokeWebhook(ctx context.Context, userID, projectID, endpointID
 	} else if changed != 1 {
 		return WebhookEndpoint{}, sql.ErrNoRows
 	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE webhook_attempts
+		SET status = 'suppressed',
+		    completed_at = CURRENT_TIMESTAMP,
+		    locked_by = NULL,
+		    locked_until = NULL
+		WHERE project_id = ?
+		  AND endpoint_id = ?
+		  AND (
+		    status IN ('queued','retrying')
+		    OR (
+		      status = 'processing'
+		      AND locked_until <= CURRENT_TIMESTAMP
+		    )
+		  )
+	`, projectID, endpointID); err != nil {
+		return WebhookEndpoint{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", userID, "webhook.revoke", "webhook_endpoint", endpointID, "success", nil); err != nil {
+		return WebhookEndpoint{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return WebhookEndpoint{}, err
+	}
 	return s.getWebhook(ctx, projectID, endpointID)
 }
 
@@ -1109,7 +1171,14 @@ func (s *Store) ListWebhookAttempts(ctx context.Context, userID, projectID, curs
 		SELECT attempt.id, attempt.project_id, attempt.endpoint_id, endpoint.name,
 		       attempt.outbox_event_id, event.event_type, event.aggregate_type,
 		       event.aggregate_id, attempt.status, COALESCE(attempt.status_code, 0),
-		       COALESCE(attempt.error_category, ''), attempt.attempted_at
+		       COALESCE(attempt.error_category, ''),
+		       attempt.attempt_count, attempt.max_attempts,
+		       COALESCE(attempt.next_attempt_at, ''),
+		       COALESCE(attempt.response_duration_ms, 0),
+		       COALESCE(attempt.last_error_safe_message, ''),
+		       COALESCE(attempt.completed_at, ''),
+		       COALESCE(attempt.replay_of_attempt_id, ''),
+		       attempt.attempted_at
 		FROM webhook_attempts attempt
 		JOIN webhook_endpoints endpoint
 		  ON endpoint.project_id = attempt.project_id
@@ -1180,22 +1249,33 @@ func (s *Store) ReplayWebhookAttempt(ctx context.Context, userID, projectID, att
 	if source.Status != "failed" && source.Status != "dead_letter" {
 		return WebhookAttempt{}, fmt.Errorf("%w: only failed webhook attempts can be replayed", ErrInvalidWorkflow)
 	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE outbox_events
-		SET processed_at = NULL,
-		    available_at = CURRENT_TIMESTAMP
-		WHERE project_id = ? AND id = ?
-	`, projectID, source.OutboxEventID); err != nil {
+	replayRootID := attemptID
+	if source.ReplayOfAttemptID != "" {
+		replayRootID = source.ReplayOfAttemptID
+	}
+	var activeReplayCount int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(1)
+		FROM webhook_attempts
+		WHERE replay_of_attempt_id = ?
+		  AND status IN ('queued','processing','retrying')
+	`, replayRootID).Scan(&activeReplayCount); err != nil {
 		return WebhookAttempt{}, err
 	}
+	if activeReplayCount > 0 {
+		return WebhookAttempt{}, fmt.Errorf("%w: a replay is already pending for this delivery", ErrInvalidWorkflow)
+	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO webhook_attempts(id, project_id, endpoint_id, outbox_event_id, status, error_category)
-		VALUES (?, ?, ?, ?, 'queued', ?)
-	`, replayID, projectID, source.EndpointID, source.OutboxEventID, "manual_replay:"+attemptID); err != nil {
+		INSERT INTO webhook_attempts(
+		  id, project_id, endpoint_id, outbox_event_id, status,
+		  error_category, replay_of_attempt_id, next_attempt_at
+		) VALUES (?, ?, ?, ?, 'queued', ?, ?, CURRENT_TIMESTAMP)
+	`, replayID, projectID, source.EndpointID, source.OutboxEventID, "manual_replay", replayRootID); err != nil {
 		return WebhookAttempt{}, err
 	}
 	if err := insertAuditEventTx(ctx, tx, projectID, "user", userID, "webhook_attempt.replay", "webhook_attempt", replayID, "success", map[string]string{
 		"source_attempt_id": attemptID,
+		"root_attempt_id":   replayRootID,
 		"endpoint_id":       source.EndpointID,
 		"outbox_event_id":   source.OutboxEventID,
 	}); err != nil {
@@ -1216,8 +1296,20 @@ func (s *Store) DeliveryStatus(ctx context.Context, userID, projectID string) (D
 		SELECT
 		  (SELECT COUNT(*) FROM webhook_endpoints WHERE project_id = ?),
 		  (SELECT COUNT(*) FROM webhook_endpoints WHERE project_id = ? AND status = 'active'),
-		  (SELECT COUNT(*) FROM webhook_attempts WHERE project_id = ? AND status IN ('pending', 'queued', 'retrying')),
-		  (SELECT COUNT(*) FROM webhook_attempts WHERE project_id = ? AND status IN ('failed', 'dead_letter')),
+		  (SELECT COUNT(*) FROM webhook_attempts WHERE project_id = ? AND status IN ('queued', 'processing', 'retrying')),
+		  (
+		    SELECT COUNT(*)
+		    FROM webhook_attempts failed
+		    WHERE failed.project_id = ?
+		      AND failed.replay_of_attempt_id IS NULL
+		      AND failed.status IN ('failed', 'dead_letter')
+		      AND NOT EXISTS (
+		        SELECT 1
+		        FROM webhook_attempts replay
+		        WHERE replay.replay_of_attempt_id = failed.id
+		          AND replay.status = 'succeeded'
+		      )
+		  ),
 		  (SELECT COUNT(*) FROM webhook_attempts WHERE project_id = ? AND status = 'succeeded')
 	`, projectID, projectID, projectID, projectID, projectID).Scan(
 		&status.Endpoints,
@@ -1234,7 +1326,14 @@ func (s *Store) getWebhookAttempt(ctx context.Context, projectID, attemptID stri
 		SELECT attempt.id, attempt.project_id, attempt.endpoint_id, endpoint.name,
 		       attempt.outbox_event_id, event.event_type, event.aggregate_type,
 		       event.aggregate_id, attempt.status, COALESCE(attempt.status_code, 0),
-		       COALESCE(attempt.error_category, ''), attempt.attempted_at
+		       COALESCE(attempt.error_category, ''),
+		       attempt.attempt_count, attempt.max_attempts,
+		       COALESCE(attempt.next_attempt_at, ''),
+		       COALESCE(attempt.response_duration_ms, 0),
+		       COALESCE(attempt.last_error_safe_message, ''),
+		       COALESCE(attempt.completed_at, ''),
+		       COALESCE(attempt.replay_of_attempt_id, ''),
+		       attempt.attempted_at
 		FROM webhook_attempts attempt
 		JOIN webhook_endpoints endpoint
 		  ON endpoint.project_id = attempt.project_id
@@ -1488,6 +1587,13 @@ func scanWebhookAttempt(row rowScanner) (WebhookAttempt, error) {
 		&attempt.Status,
 		&attempt.StatusCode,
 		&attempt.ErrorCategory,
+		&attempt.AttemptCount,
+		&attempt.MaxAttempts,
+		&attempt.NextAttemptAt,
+		&attempt.ResponseDurationMillis,
+		&attempt.LastErrorSafeMessage,
+		&attempt.CompletedAt,
+		&attempt.ReplayOfAttemptID,
 		&attempt.AttemptedAt,
 	)
 	return attempt, err
@@ -1500,7 +1606,14 @@ func getWebhookAttemptForReplay(ctx context.Context, tx *sql.Tx, projectID, atte
 		SELECT attempt.id, attempt.project_id, attempt.endpoint_id, endpoint.name,
 		       attempt.outbox_event_id, event.event_type, event.aggregate_type,
 		       event.aggregate_id, attempt.status, COALESCE(attempt.status_code, 0),
-		       COALESCE(attempt.error_category, ''), attempt.attempted_at,
+		       COALESCE(attempt.error_category, ''),
+		       attempt.attempt_count, attempt.max_attempts,
+		       COALESCE(attempt.next_attempt_at, ''),
+		       COALESCE(attempt.response_duration_ms, 0),
+		       COALESCE(attempt.last_error_safe_message, ''),
+		       COALESCE(attempt.completed_at, ''),
+		       COALESCE(attempt.replay_of_attempt_id, ''),
+		       attempt.attempted_at,
 		       endpoint.status
 		FROM webhook_attempts attempt
 		JOIN webhook_endpoints endpoint
@@ -1522,6 +1635,13 @@ func getWebhookAttemptForReplay(ctx context.Context, tx *sql.Tx, projectID, atte
 		&attempt.Status,
 		&attempt.StatusCode,
 		&attempt.ErrorCategory,
+		&attempt.AttemptCount,
+		&attempt.MaxAttempts,
+		&attempt.NextAttemptAt,
+		&attempt.ResponseDurationMillis,
+		&attempt.LastErrorSafeMessage,
+		&attempt.CompletedAt,
+		&attempt.ReplayOfAttemptID,
 		&attempt.AttemptedAt,
 		&endpointStatus,
 	)

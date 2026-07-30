@@ -346,6 +346,117 @@
             <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
+                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Review ownership</p>
+                  <h2 class="mt-1 text-xl font-semibold tracking-normal">Assignments</h2>
+                </div>
+                <span class="rounded-md bg-[#eef5f1] px-3 py-2 text-sm text-[#36594a] dark:bg-[#18261f] dark:text-[#b6d7c8]">{{ openAssignmentCount }} open</span>
+              </div>
+
+              <form v-if="canManageAssignments" class="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_150px_190px_auto]" @submit.prevent="createAssignment">
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">Assignee</span>
+                  <select v-model="assignmentForm.assignedTo" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" required>
+                    <option value="">Select a member</option>
+                    <option v-for="member in assignmentEligibleMembers" :key="member.userId" :value="member.userId">
+                      {{ member.email }} · {{ labelize(member.role) }}
+                    </option>
+                  </select>
+                </label>
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">Role</span>
+                  <select v-model="assignmentForm.assignmentType" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]">
+                    <option value="reviewer">Reviewer</option>
+                    <option value="editor">Editor</option>
+                    <option value="sme">SME</option>
+                  </select>
+                </label>
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">Due</span>
+                  <input v-model="assignmentForm.dueAt" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" type="datetime-local" />
+                </label>
+                <button
+                  class="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-[#165a4a] px-4 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
+                  type="submit"
+                  :disabled="creatingAssignment || !canCreateAssignment"
+                >
+                  <LoaderCircle v-if="creatingAssignment" class="h-4 w-4 animate-spin" />
+                  <UserCheck v-else class="h-4 w-4" />
+                  Assign
+                </button>
+              </form>
+
+              <div v-if="assignments.length === 0" class="mt-5 rounded-lg border border-dashed border-[#bfcac3] p-6 text-center dark:border-[#4b5650]">
+                <h3 class="text-lg font-semibold">No assignments yet</h3>
+              </div>
+
+              <article v-for="assignment in assignments" :key="assignment.id" class="mt-4 rounded-lg border border-[#cfd8d1] p-4 dark:border-[#3f4843]">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <p class="truncate text-sm font-medium">{{ assignment.assigneeEmail || assignment.assignedTo }}</p>
+                    <p class="mt-1 truncate font-mono text-xs text-[#667169] dark:text-[#aeb8b0]">{{ assignment.revisionId || 'article' }}</p>
+                  </div>
+                  <div class="flex flex-wrap justify-end gap-2">
+                    <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="assignmentTypeClass(assignment.assignmentType)">{{ labelize(assignment.assignmentType) }}</span>
+                    <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="assignmentStatusClass(assignment.status)">{{ labelize(assignment.status) }}</span>
+                  </div>
+                </div>
+                <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-3">
+                  <div>
+                    <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Due</dt>
+                    <dd>{{ formatDate(assignment.dueAt) }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Created</dt>
+                    <dd>{{ formatDate(assignment.createdAt) }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">{{ assignment.closedAt ? 'Closed' : 'Created by' }}</dt>
+                    <dd v-if="assignment.closedAt">{{ formatDate(assignment.closedAt) }}</dd>
+                    <dd v-else class="truncate font-mono">{{ assignment.createdBy }}</dd>
+                  </div>
+                </dl>
+                <div v-if="assignment.status === 'open' && (canCompleteAssignment(assignment) || canManageAssignments)" class="mt-4 flex flex-wrap justify-end gap-2 border-t border-[#dce4de] pt-4 dark:border-[#39413d]">
+                  <button
+                    v-if="canCompleteAssignment(assignment)"
+                    class="inline-flex h-9 items-center gap-2 rounded-md border border-[#9bc8b6] px-3 text-sm font-medium text-[#165a4a] hover:bg-[#e0f3e9] disabled:opacity-60 dark:border-[#376557] dark:text-[#aee4d0] dark:hover:bg-[#12382f]"
+                    type="button"
+                    :disabled="Boolean(assignmentPending[assignment.id])"
+                    @click="setAssignmentStatus(assignment, 'complete')"
+                  >
+                    <LoaderCircle v-if="assignmentPending[assignment.id] === 'complete'" class="h-4 w-4 animate-spin" />
+                    <CheckCircle2 v-else class="h-4 w-4" />
+                    Complete
+                  </button>
+                  <button
+                    v-if="canManageAssignments"
+                    class="inline-flex h-9 items-center gap-2 rounded-md border border-[#d8b078] px-3 text-sm font-medium text-[#7a4f00] hover:bg-[#fff0ce] disabled:opacity-60 dark:border-[#6e5726] dark:text-[#ffd98a] dark:hover:bg-[#3a2d12]"
+                    type="button"
+                    :disabled="Boolean(assignmentPending[assignment.id])"
+                    @click="setAssignmentStatus(assignment, 'cancel')"
+                  >
+                    <LoaderCircle v-if="assignmentPending[assignment.id] === 'cancel'" class="h-4 w-4 animate-spin" />
+                    <XCircle v-else class="h-4 w-4" />
+                    Cancel
+                  </button>
+                </div>
+              </article>
+
+              <button
+                v-if="nextAssignmentCursor"
+                class="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] bg-white px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:bg-[#202522] dark:hover:bg-[#2a302d]"
+                type="button"
+                :disabled="loadingMoreAssignments"
+                @click="loadMoreAssignments"
+              >
+                <LoaderCircle v-if="loadingMoreAssignments" class="h-4 w-4 animate-spin" />
+                <RefreshCw v-else class="h-4 w-4" />
+                Load more assignments
+              </button>
+            </section>
+
+            <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Review thread</p>
                   <h2 class="mt-1 text-xl font-semibold tracking-normal">Comments</h2>
                 </div>
@@ -685,6 +796,7 @@ import {
   RotateCcw,
   Send,
   UploadCloud,
+  UserCheck,
   XCircle
 } from 'lucide-vue-next'
 
@@ -697,6 +809,7 @@ type APIListEnvelope<T> = {
   meta?: {
     nextCursor?: string
     limit: number
+    openCount?: number
   }
 }
 
@@ -797,6 +910,14 @@ type TaxonomyTerm = {
   indexable: boolean
 }
 
+type AdminProjectMember = {
+  projectId: string
+  userId: string
+  email: string
+  role: string
+  status: string
+}
+
 type ReviewComment = {
   id: string
   projectId: string
@@ -811,6 +932,23 @@ type ReviewComment = {
   resolvedAt?: string
 }
 
+type ReviewAssignment = {
+  id: string
+  projectId: string
+  articleId: string
+  revisionId?: string
+  assignedTo: string
+  assigneeEmail?: string
+  assigneeRole?: string
+  assignmentType: string
+  dueAt?: string
+  status: string
+  createdBy: string
+  createdAt: string
+  closedBy?: string
+  closedAt?: string
+}
+
 const route = useRoute()
 const projectID = computed(() => {
   const value = route.params.projectId
@@ -822,11 +960,14 @@ const articleID = computed(() => {
 })
 
 const project = ref<AdminProject | null>(null)
+const currentUser = useState<{ id: string } | null>('admin-user', () => null)
 const projects = ref<AdminProject[]>([])
 const article = ref<AdminArticle | null>(null)
 const categories = ref<TaxonomyTerm[]>([])
 const copyDestinationCategories = ref<TaxonomyTerm[]>([])
+const members = ref<AdminProjectMember[]>([])
 const comments = ref<ReviewComment[]>([])
+const assignments = ref<ReviewAssignment[]>([])
 const revisions = ref<AdminRevisionSummary[]>([])
 const comparisonBefore = ref<AdminRevisionDetail | null>(null)
 const comparisonAfter = ref<AdminRevisionDetail | null>(null)
@@ -834,16 +975,21 @@ const pending = ref(true)
 const creatingRevision = ref(false)
 const copyingArticle = ref(false)
 const loadingCopyCategories = ref(false)
+const creatingAssignment = ref(false)
 const creatingComment = ref(false)
+const loadingMoreAssignments = ref(false)
 const loadingMoreComments = ref(false)
 const loadingMoreRevisions = ref(false)
 const comparisonPending = ref(false)
+const nextAssignmentCursor = ref('')
+const openAssignmentCount = ref(0)
 const nextCommentCursor = ref('')
 const nextRevisionCursor = ref('')
 const actionPending = ref('')
 const errorMessage = ref('')
 const successMessage = ref('')
 const commentPending = reactive<Record<string, string>>({})
+const assignmentPending = reactive<Record<string, string>>({})
 let comparisonRequestVersion = 0
 let copyCategoryRequestVersion = 0
 
@@ -879,6 +1025,13 @@ const comparisonForm = reactive({
   afterRevisionId: ''
 })
 
+const assignmentForm = reactive({
+  revisionId: '',
+  assignedTo: '',
+  assignmentType: 'reviewer',
+  dueAt: ''
+})
+
 const commentForm = reactive({
   revisionId: '',
   blockId: '',
@@ -906,6 +1059,15 @@ const canCompareRevisions = computed(() => Boolean(
   comparisonForm.beforeRevisionId
   && comparisonForm.afterRevisionId
   && comparisonForm.beforeRevisionId !== comparisonForm.afterRevisionId
+))
+const assignmentEligibleMembers = computed(() => members.value.filter(member =>
+  member.status === 'active'
+  && assignmentTypeAllowedForRole(assignmentForm.assignmentType, member.role)
+))
+const canManageAssignments = computed(() => ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
+const canCreateAssignment = computed(() => Boolean(
+  assignmentForm.assignedTo
+  && assignmentEligibleMembers.value.some(member => member.userId === assignmentForm.assignedTo)
 ))
 const canRollback = computed(() => {
   const selected = revisions.value.find(revision => revision.id === rollbackForm.revisionId)
@@ -969,20 +1131,34 @@ watch(
   destinationProjectId => loadCopyDestinationCategories(destinationProjectId)
 )
 
+watch(
+  () => assignmentForm.assignmentType,
+  () => {
+    if (!assignmentEligibleMembers.value.some(member => member.userId === assignmentForm.assignedTo)) {
+      assignmentForm.assignedTo = ''
+    }
+  }
+)
+
 onMounted(refresh)
 
 async function refresh() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, projectListResponse, categoryResponse, articleResponse, commentResponse, revisionResponse] = await Promise.all([
+    const [projectResponse, projectListResponse, memberResponse, categoryResponse, articleResponse, assignmentResponse, commentResponse, revisionResponse] = await Promise.all([
       $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
       fetchAllCopyProjects(),
+      fetchAllReviewAssignees(),
       $fetch<APIListEnvelope<TaxonomyTerm>>(`/api/v1/projects/${projectID.value}/categories`, {
         credentials: 'include',
         query: { limit: 100 }
       }),
       $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}`, { credentials: 'include' }),
+      $fetch<APIListEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/assignments`, {
+        credentials: 'include',
+        query: { limit: 50 }
+      }),
       $fetch<APIListEnvelope<ReviewComment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/comments`, {
         credentials: 'include',
         query: { limit: 50 }
@@ -994,8 +1170,12 @@ async function refresh() {
     ])
     project.value = projectResponse.data
     projects.value = projectListResponse
+    members.value = memberResponse
     categories.value = sortCategories(apiListData(categoryResponse))
     setArticle(articleResponse.data)
+    assignments.value = apiListData(assignmentResponse)
+    nextAssignmentCursor.value = assignmentResponse.meta?.nextCursor || ''
+    openAssignmentCount.value = assignmentResponse.meta?.openCount ?? assignments.value.filter(assignment => assignment.status === 'open').length
     comments.value = apiListData(commentResponse)
     nextCommentCursor.value = commentResponse.meta?.nextCursor || ''
     setRevisions(apiListData(revisionResponse), revisionResponse.meta?.nextCursor || '')
@@ -1028,6 +1208,35 @@ async function fetchAllCopyProjects() {
   } while (cursor)
 
   return [...allProjects.values()]
+}
+
+async function fetchAllReviewAssignees() {
+  const allMembers = new Map<string, AdminProjectMember>()
+  const seenCursors = new Set<string>()
+  let cursor = ''
+
+  try {
+    do {
+      const response = await $fetch<APIListEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID.value}/review-assignees`, {
+        credentials: 'include',
+        query: {
+          limit: 100,
+          ...(cursor ? { cursor } : {})
+        }
+      })
+      for (const member of apiListData(response)) allMembers.set(member.userId, member)
+
+      const nextCursor = response.meta?.nextCursor || ''
+      if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Review-assignee pagination returned a repeated cursor')
+      if (nextCursor) seenCursors.add(nextCursor)
+      cursor = nextCursor
+    } while (cursor)
+  } catch (error) {
+    if (apiErrorStatus(error) === 403) return []
+    throw error
+  }
+
+  return [...allMembers.values()]
 }
 
 async function createRevision() {
@@ -1253,6 +1462,57 @@ async function mutateArticle(action: string, operation: (csrfToken: string) => P
   }
 }
 
+async function createAssignment() {
+  if (!canCreateAssignment.value) return
+  creatingAssignment.value = true
+  clearMessages()
+  try {
+    const csrfToken = await getCSRFToken()
+    const response = await $fetch<APIEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/assignments`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-CSRF-Token': csrfToken },
+      body: {
+        revisionId: assignmentForm.revisionId || undefined,
+        assignedTo: assignmentForm.assignedTo,
+        assignmentType: assignmentForm.assignmentType,
+        dueAt: assignmentDueAtForAPI()
+      }
+    })
+    assignments.value = [response.data, ...assignments.value]
+    openAssignmentCount.value += 1
+    assignmentForm.assignedTo = ''
+    successMessage.value = 'Assignment created.'
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, 'Could not create assignment.')
+  } finally {
+    creatingAssignment.value = false
+  }
+}
+
+async function setAssignmentStatus(assignment: ReviewAssignment, action: 'complete' | 'cancel') {
+  assignmentPending[assignment.id] = action
+  clearMessages()
+  try {
+    const csrfToken = await getCSRFToken()
+    const response = await $fetch<APIEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID.value}/assignments/${assignment.id}/${action}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-CSRF-Token': csrfToken },
+      body: {}
+    })
+    assignments.value = assignments.value.map(candidate => candidate.id === response.data.id ? response.data : candidate)
+    if (assignment.status === 'open' && response.data.status !== 'open') {
+      openAssignmentCount.value = Math.max(0, openAssignmentCount.value - 1)
+    }
+    successMessage.value = action === 'complete' ? 'Assignment completed.' : 'Assignment cancelled.'
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, action === 'complete' ? 'Could not complete assignment.' : 'Could not cancel assignment.')
+  } finally {
+    delete assignmentPending[assignment.id]
+  }
+}
+
 async function createComment() {
   creatingComment.value = true
   clearMessages()
@@ -1296,6 +1556,30 @@ async function setCommentStatus(comment: ReviewComment, transition: 'resolve' | 
     errorMessage.value = normalizeAPIError(error, transition === 'resolve' ? 'Could not resolve comment.' : 'Could not reopen comment.')
   } finally {
     delete commentPending[comment.id]
+  }
+}
+
+async function loadMoreAssignments() {
+  if (!nextAssignmentCursor.value || loadingMoreAssignments.value) return
+  loadingMoreAssignments.value = true
+  clearMessages()
+  try {
+    const response = await $fetch<APIListEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/assignments`, {
+      credentials: 'include',
+      query: {
+        cursor: nextAssignmentCursor.value,
+        limit: 50
+      }
+    })
+    const merged = new Map(assignments.value.map(assignment => [assignment.id, assignment]))
+    for (const assignment of apiListData(response)) merged.set(assignment.id, assignment)
+    assignments.value = [...merged.values()]
+    nextAssignmentCursor.value = response.meta?.nextCursor || ''
+    if (response.meta?.openCount !== undefined) openAssignmentCount.value = response.meta.openCount
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, 'Could not load more assignments.')
+  } finally {
+    loadingMoreAssignments.value = false
   }
 }
 
@@ -1415,6 +1699,7 @@ function setArticle(value: AdminArticle) {
   copyForm.sourceRevisionId = copyForm.sourceRevisionId || value.latestRevision?.id || ''
   copyForm.slug = copyForm.slug || `${value.slug}-copy`
   copyForm.locale = copyForm.locale || value.locale || project.value?.defaultLocale || 'en'
+  assignmentForm.revisionId = value.latestRevision?.id || ''
   commentForm.revisionId = value.latestRevision?.id || ''
   if (!scheduleDraft.value) {
     const scheduledAt = value.scheduledForUtc ? parseBackendUTC(value.scheduledForUtc) : new Date(Date.now() + 15 * 60 * 1000)
@@ -1463,6 +1748,27 @@ function latestRevisionID() {
 function isCurrentPublication(revision: AdminRevisionSummary) {
   const locale = article.value?.locale || project.value?.defaultLocale || 'en'
   return revision.publishedLocales.includes(locale)
+}
+
+function assignmentDueAtForAPI() {
+  if (!assignmentForm.dueAt) return undefined
+  const date = new Date(assignmentForm.dueAt)
+  if (Number.isNaN(date.getTime())) return undefined
+  return date.toISOString()
+}
+
+function assignmentTypeAllowedForRole(assignmentType: string, role: string) {
+  if (assignmentType === 'editor') {
+    return ['project_owner', 'project_admin', 'editor'].includes(role)
+  }
+  if (assignmentType === 'reviewer' || assignmentType === 'sme') {
+    return ['project_owner', 'project_admin', 'editor', 'reviewer'].includes(role)
+  }
+  return false
+}
+
+function canCompleteAssignment(assignment: ReviewAssignment) {
+  return canManageAssignments.value || assignment.assignedTo === currentUser.value?.id
 }
 
 function invalidateComparison() {
@@ -1746,6 +2052,28 @@ function commentStatusClass(status: string) {
   }
 }
 
+function assignmentStatusClass(status: string) {
+  switch (status) {
+    case 'completed':
+      return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
+    case 'cancelled':
+      return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
+    default:
+      return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'
+  }
+}
+
+function assignmentTypeClass(type: string) {
+  switch (type) {
+    case 'editor':
+      return 'bg-[#e8f0ff] text-[#245b99] dark:bg-[#152944] dark:text-[#b8d5ff]'
+    case 'sme':
+      return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
+    default:
+      return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
+  }
+}
+
 function labelize(value: string) {
   return value.replaceAll('_', ' ').replaceAll('-', ' ')
 }
@@ -1771,5 +2099,11 @@ function normalizeAPIError(error: unknown, fallback: string) {
   }
   if (error instanceof Error && error.message) return error.message
   return fallback
+}
+
+function apiErrorStatus(error: unknown) {
+  if (typeof error !== 'object' || error === null) return 0
+  const value = error as { response?: { status?: number }, status?: number, statusCode?: number }
+  return value.response?.status || value.status || value.statusCode || 0
 }
 </script>

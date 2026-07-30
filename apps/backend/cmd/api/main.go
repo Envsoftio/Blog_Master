@@ -49,7 +49,7 @@ func main() {
 	srv := httpapi.New(httpapi.Options{
 		Config: cfg,
 		Logger: logger,
-		Store:  store.New(db),
+		Store:  store.New(db, store.WithWebhookEncryptionKey(cfg.WebhookEncryptionKey)),
 		Cache:  responseCache,
 	})
 

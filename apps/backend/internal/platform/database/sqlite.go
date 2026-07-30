@@ -49,6 +49,15 @@ var aiJobContextMigration string
 //go:embed migrations/0013_password_reset_index.sql
 var passwordResetIndexMigration string
 
+//go:embed migrations/0014_review_assignments_integrity.sql
+var reviewAssignmentsIntegrityMigration string
+
+//go:embed migrations/0015_review_assignment_workflow.sql
+var reviewAssignmentWorkflowMigration string
+
+//go:embed migrations/0016_webhook_delivery.sql
+var webhookDeliveryMigration string
+
 type migration struct {
 	version    string
 	statements string
@@ -98,6 +107,9 @@ func Migrate(db *sql.DB) error {
 		{version: "0011_ai_context", statements: aiContextMigration},
 		{version: "0012_ai_job_context", statements: aiJobContextMigration},
 		{version: "0013_password_reset_index", statements: passwordResetIndexMigration},
+		{version: "0014_review_assignments_integrity", statements: reviewAssignmentsIntegrityMigration},
+		{version: "0015_review_assignment_workflow", statements: reviewAssignmentWorkflowMigration},
+		{version: "0016_webhook_delivery", statements: webhookDeliveryMigration},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {

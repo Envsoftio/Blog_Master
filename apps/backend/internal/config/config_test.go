@@ -49,3 +49,24 @@ func TestLoadRedisConfig(t *testing.T) {
 		t.Fatalf("expected redis timeout 250ms, got %s", cfg.RedisTimeout)
 	}
 }
+
+func TestLoadWebhookSecurityConfig(t *testing.T) {
+	t.Setenv("SEOBLOG_WEBHOOK_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+	t.Setenv("SEOBLOG_WEBHOOK_ALLOWED_HOSTS", "hooks.staging.example, *.preview.example")
+
+	cfg := Load()
+	if string(cfg.WebhookEncryptionKey) != "0123456789abcdef0123456789abcdef" {
+		t.Fatal("expected a decoded 32-byte webhook encryption key")
+	}
+	expected := []string{"hooks.staging.example", "*.preview.example"}
+	if !reflect.DeepEqual(cfg.WebhookAllowedHosts, expected) {
+		t.Fatalf("expected %#v, got %#v", expected, cfg.WebhookAllowedHosts)
+	}
+}
+
+func TestInvalidWebhookEncryptionKeyIsDisabled(t *testing.T) {
+	t.Setenv("SEOBLOG_WEBHOOK_ENCRYPTION_KEY", "not-base64")
+	if key := Load().WebhookEncryptionKey; key != nil {
+		t.Fatalf("expected invalid webhook key to be disabled, got %d bytes", len(key))
+	}
+}

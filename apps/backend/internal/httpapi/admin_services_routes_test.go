@@ -664,12 +664,19 @@ func TestAdminWebhookRoutesHashSecretAndReportDeliveryStatus(t *testing.T) {
 	if created.Data.Secret == "" || created.Data.Status != "active" {
 		t.Fatalf("expected active endpoint and one-time secret, got %#v", created.Data)
 	}
-	var storedHash string
-	if err := db.QueryRow(`SELECT secret_hash FROM webhook_endpoints WHERE project_id = ? AND id = ?`, project.ID, created.Data.ID).Scan(&storedHash); err != nil {
+	var storedHash, storedCiphertext string
+	if err := db.QueryRow(`
+		SELECT secret_hash, COALESCE(secret_ciphertext, '')
+		FROM webhook_endpoints
+		WHERE project_id = ? AND id = ?
+	`, project.ID, created.Data.ID).Scan(&storedHash, &storedCiphertext); err != nil {
 		t.Fatal(err)
 	}
 	if storedHash == created.Data.Secret || storedHash != security.TokenHash(created.Data.Secret) {
 		t.Fatal("expected only the webhook secret hash to be stored")
+	}
+	if storedCiphertext == "" || strings.Contains(storedCiphertext, created.Data.Secret) {
+		t.Fatal("expected an encrypted signing-secret envelope")
 	}
 
 	listRequest := httptest.NewRequest(http.MethodGet, basePath, nil)
@@ -771,12 +778,32 @@ func TestAdminWebhookRoutesHashSecretAndReportDeliveryStatus(t *testing.T) {
 	if replayed.Data.ID == "" || replayed.Data.ID == "attempt-failed" || replayed.Data.Status != "queued" || replayed.Data.OutboxEventID != "event-failed" {
 		t.Fatalf("unexpected replayed attempt %#v", replayed.Data)
 	}
+	duplicateReplayResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/webhook-attempts/attempt-failed/replay",
+		`{}`,
+		login,
+	))
+	if duplicateReplayResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected duplicate pending replay conflict, got %d: %s", duplicateReplayResponse.StatusCode, readBody(t, duplicateReplayResponse))
+	}
 	var processedAt string
 	if err := db.QueryRow(`SELECT COALESCE(processed_at, '') FROM outbox_events WHERE project_id = ? AND id = ?`, project.ID, "event-failed").Scan(&processedAt); err != nil {
 		t.Fatal(err)
 	}
-	if processedAt != "" {
-		t.Fatalf("expected replay to requeue outbox event, processed_at=%q", processedAt)
+	if processedAt == "" {
+		t.Fatal("expected replay to leave shared outbox processing state unchanged")
+	}
+	var replayOfAttemptID string
+	if err := db.QueryRow(`
+		SELECT COALESCE(replay_of_attempt_id, '')
+		FROM webhook_attempts
+		WHERE id = ?
+	`, replayed.Data.ID).Scan(&replayOfAttemptID); err != nil {
+		t.Fatal(err)
+	}
+	if replayOfAttemptID != "attempt-failed" {
+		t.Fatalf("expected replay to target only its source delivery, got %q", replayOfAttemptID)
 	}
 
 	replaySucceeded := newMemberMutationRequest(
@@ -812,6 +839,55 @@ func TestAdminWebhookRoutesHashSecretAndReportDeliveryStatus(t *testing.T) {
 	decodeJSONResponse(t, statusAfterReplayResponse, &deliveryAfterReplay)
 	if deliveryAfterReplay.Data.Pending != 1 || deliveryAfterReplay.Data.Failures != 1 || deliveryAfterReplay.Data.Succeeded != 1 {
 		t.Fatalf("unexpected delivery status after replay %#v", deliveryAfterReplay.Data)
+	}
+	if _, err := db.Exec(`
+		UPDATE webhook_attempts
+		SET status = 'failed'
+		WHERE id = ?
+	`, replayed.Data.ID); err != nil {
+		t.Fatal(err)
+	}
+	chainedReplayResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/webhook-attempts/"+replayed.Data.ID+"/replay",
+		`{}`,
+		login,
+	))
+	if chainedReplayResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected replay of failed replay 202, got %d: %s", chainedReplayResponse.StatusCode, readBody(t, chainedReplayResponse))
+	}
+	var chainedReplay Envelope[store.WebhookAttempt]
+	decodeJSONResponse(t, chainedReplayResponse, &chainedReplay)
+	if chainedReplay.Data.ReplayOfAttemptID != "attempt-failed" {
+		t.Fatalf("expected replay chain to retain root attempt, got %#v", chainedReplay.Data)
+	}
+
+	revokeResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		basePath+"/"+created.Data.ID+"/revoke",
+		`{}`,
+		login,
+	))
+	if revokeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected webhook revoke 200, got %d: %s", revokeResponse.StatusCode, readBody(t, revokeResponse))
+	}
+	var revoked Envelope[store.WebhookEndpoint]
+	decodeJSONResponse(t, revokeResponse, &revoked)
+	if revoked.Data.Status != "revoked" {
+		t.Fatalf("expected revoked endpoint, got %#v", revoked.Data)
+	}
+	var webhookAuditCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ?
+		  AND target_id = ?
+		  AND action IN ('webhook.create', 'webhook.revoke')
+	`, project.ID, created.Data.ID).Scan(&webhookAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if webhookAuditCount != 2 {
+		t.Fatalf("expected webhook create and revoke audits, got %d", webhookAuditCount)
 	}
 }
 

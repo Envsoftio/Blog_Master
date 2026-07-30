@@ -67,13 +67,14 @@ SEOBLOG_SMTP_PASSWORD=
 SEOBLOG_SMTP_REQUIRE_STARTTLS=true
 SEOBLOG_SMTP_FROM=noreply@proctorplus.io
 SEOBLOG_SMTP_FROM_NAME=Example Team
+SEOBLOG_WEBHOOK_ENCRYPTION_KEY=xqhcQ/knhyV37B0W4qeA73cLHgFyMwPojXHnW0xVv/Y=
 NITRO_HOST=127.0.0.1
 NITRO_PORT=3000
 NUXT_API_BASE_URL=http://127.0.0.1:8080
 SEOBLOG_RELEASE_ROOT=/srv/seoblog/current
 ```
 
-Set the public admin URL and ZeptoMail API-key password before enabling invitation or password-recovery email. Production SMTP requires STARTTLS and the API never returns reset tokens in an API response.
+Set the public admin URL and ZeptoMail API-key password before enabling invitation or password-recovery email. Generate `SEOBLOG_WEBHOOK_ENCRYPTION_KEY` as 32 random bytes encoded with standard Base64 and provide the same value to the API and worker. Staging must also set `SEOBLOG_WEBHOOK_ALLOWED_HOSTS` to its non-production receiver hosts; an empty staging allowlist blocks all delivery. Production SMTP requires STARTTLS and the API never returns reset tokens in an API response. The signing and receiver contract is documented in [webhooks.md](webhooks.md).
 
 ## First owner
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -9,8 +10,11 @@ import (
 	"time"
 
 	"seoblog/apps/backend/internal/config"
+	"seoblog/apps/backend/internal/mailer"
+	"seoblog/apps/backend/internal/notifications"
 	"seoblog/apps/backend/internal/platform/database"
 	"seoblog/apps/backend/internal/store"
+	"seoblog/apps/backend/internal/webhooks"
 )
 
 func main() {
@@ -29,7 +33,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	workerStore := store.New(db)
+	workerStore := store.New(db, store.WithWebhookEncryptionKey(cfg.WebhookEncryptionKey))
+	workerID := "worker-" + fmt.Sprint(os.Getpid())
+	notificationProcessor := notifications.Processor{
+		Store: workerStore,
+		Sender: mailer.NewSMTP(mailer.SMTPConfig{
+			Address:         cfg.SMTPAddress,
+			Username:        cfg.SMTPUsername,
+			Password:        cfg.SMTPPassword,
+			From:            cfg.SMTPFrom,
+			FromName:        cfg.SMTPFromName,
+			RequireStartTLS: cfg.SMTPRequireTLS,
+		}),
+		Logger:         logger,
+		WorkerID:       workerID,
+		AdminPublicURL: cfg.AdminPublicURL,
+	}
+	webhookProcessor := webhooks.Processor{
+		Store: workerStore,
+		Sender: webhooks.NewHTTPSender(webhooks.DestinationPolicy{
+			Environment:  cfg.Env,
+			AllowedHosts: cfg.WebhookAllowedHosts,
+		}),
+		Logger:   logger,
+		WorkerID: workerID,
+	}
 	stopContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ticker := time.NewTicker(5 * time.Second)
@@ -42,15 +70,35 @@ func main() {
 			logger.Info("worker stopped")
 			return
 		case <-ticker.C:
-			cycleContext, cancel := context.WithTimeout(stopContext, 4*time.Second)
-			published, err := workerStore.PublishDueSchedules(cycleContext, 50)
+			cycleContext, cancel := context.WithTimeout(stopContext, 30*time.Second)
+			published, publishErr := workerStore.PublishDueSchedules(cycleContext, 50)
+			webhookResult, webhookErr := webhookProcessor.Process(cycleContext, 50, 2)
+			delivered, failed, notificationErr := notificationProcessor.Process(cycleContext, 2)
 			cancel()
-			if err != nil {
-				logger.Error("worker cycle failed", "error", err)
-				continue
+			if publishErr != nil {
+				logger.Error("scheduled publication cycle failed", "error", publishErr)
+			}
+			if notificationErr != nil {
+				logger.Error("notification cycle failed", "error", notificationErr)
+			}
+			if webhookErr != nil {
+				logger.Error("webhook cycle failed", "error", webhookErr)
 			}
 			if published > 0 {
 				logger.Info("scheduled publications completed", "count", published)
+			}
+			if delivered > 0 || failed > 0 {
+				logger.Info("review assignment notifications processed", "delivered", delivered, "failed", failed)
+			}
+			if webhookResult.EventsFannedOut > 0 ||
+				webhookResult.Succeeded > 0 ||
+				webhookResult.Failed > 0 {
+				logger.Info("webhook deliveries processed",
+					"events", webhookResult.EventsFannedOut,
+					"queued", webhookResult.DeliveriesQueued,
+					"succeeded", webhookResult.Succeeded,
+					"failed", webhookResult.Failed,
+				)
 			}
 		}
 	}

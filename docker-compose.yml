@@ -18,6 +18,7 @@ services:
       SEOBLOG_SMTP_REQUIRE_STARTTLS: "false"
       SEOBLOG_SMTP_FROM: "no-reply@seoblog.local"
       SEOBLOG_SMTP_FROM_NAME: "SEO Blog"
+      SEOBLOG_WEBHOOK_ENCRYPTION_KEY: "c2VvYmxvZy1kZXZlbG9wbWVudC13ZWJob29rLWtleSE="
     volumes:
       - seoblog_sqlite:/data
     ports:
@@ -40,6 +41,12 @@ services:
     environment:
       SEOBLOG_ENV: development
       SEOBLOG_DB_PATH: /data/seoblog.db
+      SEOBLOG_ADMIN_PUBLIC_URL: "http://localhost:8088"
+      SEOBLOG_SMTP_ADDR: "mailpit:1025"
+      SEOBLOG_SMTP_REQUIRE_STARTTLS: "false"
+      SEOBLOG_SMTP_FROM: "no-reply@seoblog.local"
+      SEOBLOG_SMTP_FROM_NAME: "SEO Blog"
+      SEOBLOG_WEBHOOK_ENCRYPTION_KEY: "c2VvYmxvZy1kZXZlbG9wbWVudC13ZWJob29rLWtleSE="
     volumes:
       - seoblog_sqlite:/data
     depends_on:

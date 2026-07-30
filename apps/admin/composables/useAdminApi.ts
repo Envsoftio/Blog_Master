@@ -8,6 +8,7 @@ export type APIListEnvelope<T> = {
     projectId?: string
     nextCursor?: string
     limit: number
+    openCount?: number
   }
 }
 
@@ -151,6 +152,23 @@ export type ReviewComment = {
   resolvedAt?: string
 }
 
+export type ReviewAssignment = {
+  id: string
+  projectId: string
+  articleId: string
+  revisionId?: string
+  assignedTo: string
+  assigneeEmail?: string
+  assigneeRole?: string
+  assignmentType: string
+  dueAt?: string
+  status: string
+  createdBy: string
+  createdAt: string
+  closedBy?: string
+  closedAt?: string
+}
+
 export type AuditEvent = {
   id: string
   projectId?: string
@@ -206,6 +224,28 @@ export type WebhookEndpoint = {
 
 export type WebhookWithSecret = WebhookEndpoint & {
   secret: string
+}
+
+export type WebhookAttempt = {
+  id: string
+  projectId: string
+  endpointId: string
+  endpointName: string
+  outboxEventId: string
+  eventType: string
+  aggregateType: string
+  aggregateId: string
+  status: string
+  statusCode?: number
+  errorCategory?: string
+  attemptCount: number
+  maxAttempts: number
+  nextAttemptAt?: string
+  responseDurationMillis?: number
+  lastErrorSafeMessage?: string
+  completedAt?: string
+  replayOfAttemptId?: string
+  attemptedAt: string
 }
 
 export type AIJob = {
@@ -667,6 +707,32 @@ export function useAdminApi() {
     }))
   }
 
+  async function listReviewAssignees(projectID: string, cursor = '', limit = 100) {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID}/review-assignees`, {
+      query: { limit, ...(cursor ? { cursor } : {}) }
+    }))
+  }
+
+  async function listReviewAssignments(projectID: string, articleID: string, cursor = '', limit = 50) {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID}/articles/${articleID}/assignments`, {
+      query: { limit, ...(cursor ? { cursor } : {}) }
+    }))
+  }
+
+  async function createReviewAssignment(projectID: string, articleID: string, payload: { revisionId?: string, assignedTo: string, assignmentType: string, dueAt?: string }) {
+    return await request<APIEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID}/articles/${articleID}/assignments`, await withCSRF({
+      method: 'POST',
+      body: payload
+    }))
+  }
+
+  async function mutateReviewAssignment(projectID: string, assignmentID: string, action: 'complete' | 'cancel') {
+    return await request<APIEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID}/assignments/${assignmentID}/${action}`, await withCSRF({
+      method: 'POST',
+      body: {}
+    }))
+  }
+
   async function listAuditEvents(projectID: string, limit = 100) {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<AuditEvent>>(`/api/v1/projects/${projectID}/audit-events`, {
       query: { limit }
@@ -692,6 +758,26 @@ export function useAdminApi() {
     return await request<APIEnvelope<WebhookWithSecret>>(`/api/v1/projects/${projectID}/webhooks`, await withCSRF({
       method: 'POST',
       body: payload
+    }))
+  }
+
+  async function revokeWebhook(projectID: string, endpointID: string) {
+    return await request<APIEnvelope<WebhookEndpoint>>(`/api/v1/projects/${projectID}/webhooks/${endpointID}/revoke`, await withCSRF({
+      method: 'POST',
+      body: {}
+    }))
+  }
+
+  async function listWebhookAttempts(projectID: string, cursor = '', limit = 25) {
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (cursor) query.set('cursor', cursor)
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<WebhookAttempt>>(`/api/v1/projects/${projectID}/webhook-attempts?${query}`))
+  }
+
+  async function replayWebhookAttempt(projectID: string, attemptID: string) {
+    return await request<APIEnvelope<WebhookAttempt>>(`/api/v1/projects/${projectID}/webhook-attempts/${attemptID}/replay`, await withCSRF({
+      method: 'POST',
+      body: {}
     }))
   }
 
@@ -809,11 +895,18 @@ export function useAdminApi() {
     listComments,
     createComment,
     mutateComment,
+    listReviewAssignees,
+    listReviewAssignments,
+    createReviewAssignment,
+    mutateReviewAssignment,
     listAuditEvents,
     listMedia,
     initiateMediaUpload,
     listWebhooks,
     createWebhook,
+    revokeWebhook,
+    listWebhookAttempts,
+    replayWebhookAttempt,
     deliveryStatus,
     listAIJobs,
     createAIJob,

@@ -1,47 +1,52 @@
 package config
 
 import (
+	"encoding/base64"
 	"os"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	Env            string
-	HTTPAddr       string
-	DBPath         string
-	DevAuth        bool
-	TrustedProxies []string
-	RedisAddr      string
-	RedisPassword  string
-	RedisTimeout   time.Duration
-	AdminPublicURL string
-	SMTPAddress    string
-	SMTPUsername   string
-	SMTPPassword   string
-	SMTPFrom       string
-	SMTPFromName   string
-	SMTPRequireTLS bool
+	Env                  string
+	HTTPAddr             string
+	DBPath               string
+	DevAuth              bool
+	TrustedProxies       []string
+	RedisAddr            string
+	RedisPassword        string
+	RedisTimeout         time.Duration
+	AdminPublicURL       string
+	SMTPAddress          string
+	SMTPUsername         string
+	SMTPPassword         string
+	SMTPFrom             string
+	SMTPFromName         string
+	SMTPRequireTLS       bool
+	WebhookEncryptionKey []byte
+	WebhookAllowedHosts  []string
 }
 
 func Load() Config {
 	_ = LoadDotEnv(".env", "../.env", "../../.env")
 	return Config{
-		Env:            env("SEOBLOG_ENV", "development"),
-		HTTPAddr:       env("SEOBLOG_HTTP_ADDR", ":8080"),
-		DBPath:         env("SEOBLOG_DB_PATH", "./seoblog.db"),
-		DevAuth:        os.Getenv("SEOBLOG_DEV_AUTH") == "true",
-		TrustedProxies: stringList(os.Getenv("SEOBLOG_TRUSTED_PROXIES")),
-		RedisAddr:      strings.TrimSpace(os.Getenv("SEOBLOG_REDIS_ADDR")),
-		RedisPassword:  os.Getenv("SEOBLOG_REDIS_PASSWORD"),
-		RedisTimeout:   envDuration("SEOBLOG_REDIS_TIMEOUT", 150*time.Millisecond),
-		AdminPublicURL: strings.TrimSpace(os.Getenv("SEOBLOG_ADMIN_PUBLIC_URL")),
-		SMTPAddress:    strings.TrimSpace(os.Getenv("SEOBLOG_SMTP_ADDR")),
-		SMTPUsername:   strings.TrimSpace(os.Getenv("SEOBLOG_SMTP_USERNAME")),
-		SMTPPassword:   os.Getenv("SEOBLOG_SMTP_PASSWORD"),
-		SMTPFrom:       env("SEOBLOG_SMTP_FROM", "no-reply@localhost"),
-		SMTPFromName:   env("SEOBLOG_SMTP_FROM_NAME", "SEO Blog"),
-		SMTPRequireTLS: envBool("SEOBLOG_SMTP_REQUIRE_STARTTLS"),
+		Env:                  env("SEOBLOG_ENV", "development"),
+		HTTPAddr:             env("SEOBLOG_HTTP_ADDR", ":8080"),
+		DBPath:               env("SEOBLOG_DB_PATH", "./seoblog.db"),
+		DevAuth:              os.Getenv("SEOBLOG_DEV_AUTH") == "true",
+		TrustedProxies:       stringList(os.Getenv("SEOBLOG_TRUSTED_PROXIES")),
+		RedisAddr:            strings.TrimSpace(os.Getenv("SEOBLOG_REDIS_ADDR")),
+		RedisPassword:        os.Getenv("SEOBLOG_REDIS_PASSWORD"),
+		RedisTimeout:         envDuration("SEOBLOG_REDIS_TIMEOUT", 150*time.Millisecond),
+		AdminPublicURL:       strings.TrimSpace(os.Getenv("SEOBLOG_ADMIN_PUBLIC_URL")),
+		SMTPAddress:          strings.TrimSpace(os.Getenv("SEOBLOG_SMTP_ADDR")),
+		SMTPUsername:         strings.TrimSpace(os.Getenv("SEOBLOG_SMTP_USERNAME")),
+		SMTPPassword:         os.Getenv("SEOBLOG_SMTP_PASSWORD"),
+		SMTPFrom:             env("SEOBLOG_SMTP_FROM", "no-reply@localhost"),
+		SMTPFromName:         env("SEOBLOG_SMTP_FROM_NAME", "SEO Blog"),
+		SMTPRequireTLS:       envBool("SEOBLOG_SMTP_REQUIRE_STARTTLS"),
+		WebhookEncryptionKey: webhookEncryptionKey(os.Getenv("SEOBLOG_WEBHOOK_ENCRYPTION_KEY")),
+		WebhookAllowedHosts:  stringList(os.Getenv("SEOBLOG_WEBHOOK_ALLOWED_HOSTS")),
 	}
 }
 
@@ -77,4 +82,12 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return duration
+}
+
+func webhookEncryptionKey(raw string) []byte {
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
+	if err != nil || len(decoded) != 32 {
+		return nil
+	}
+	return decoded
 }

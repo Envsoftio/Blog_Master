@@ -105,12 +105,15 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/projects/:projectID/revisions/:revisionID/claims", s.requireAdminSession, s.requireAdminCSRF, s.createRevisionClaim)
 	api.Post("/projects/:projectID/claims/:claimID/verify", s.requireAdminSession, s.requireAdminCSRF, s.verifyClaim)
 
+	api.Get("/projects/:projectID/review-assignees", s.requireAdminSession, s.listReviewAssignees)
 	api.Get("/projects/:projectID/articles/:articleID/comments", s.requireAdminSession, s.listReviewComments)
 	api.Post("/projects/:projectID/articles/:articleID/comments", s.requireAdminSession, s.requireAdminCSRF, s.createReviewComment)
 	api.Post("/projects/:projectID/comments/:commentID/resolve", s.requireAdminSession, s.requireAdminCSRF, s.resolveReviewComment)
 	api.Post("/projects/:projectID/comments/:commentID/reopen", s.requireAdminSession, s.requireAdminCSRF, s.reopenReviewComment)
-	api.Get("/projects/:projectID/articles/:articleID/assignments", func(c *fiber.Ctx) error { return notImplemented(c, "review assignments") })
-	api.Post("/projects/:projectID/articles/:articleID/assignments", func(c *fiber.Ctx) error { return notImplemented(c, "review assignment creation") })
+	api.Get("/projects/:projectID/articles/:articleID/assignments", s.requireAdminSession, s.listReviewAssignments)
+	api.Post("/projects/:projectID/articles/:articleID/assignments", s.requireAdminSession, s.requireAdminCSRF, s.createReviewAssignment)
+	api.Post("/projects/:projectID/assignments/:assignmentID/complete", s.requireAdminSession, s.requireAdminCSRF, s.completeReviewAssignment)
+	api.Post("/projects/:projectID/assignments/:assignmentID/cancel", s.requireAdminSession, s.requireAdminCSRF, s.cancelReviewAssignment)
 
 	api.Get("/projects/:projectID/articles/:articleID/disclosures", s.requireAdminSession, s.listDisclosures)
 	api.Post("/projects/:projectID/articles/:articleID/disclosures", s.requireAdminSession, s.requireAdminCSRF, s.createDisclosure)
@@ -340,6 +343,13 @@ type reviewCommentRequest struct {
 	RevisionID string `json:"revisionId"`
 	BlockID    string `json:"blockId"`
 	Body       string `json:"body"`
+}
+
+type reviewAssignmentRequest struct {
+	RevisionID     string `json:"revisionId"`
+	AssignedTo     string `json:"assignedTo"`
+	AssignmentType string `json:"assignmentType"`
+	DueAt          string `json:"dueAt"`
 }
 
 type sourceRequest struct {
@@ -1575,6 +1585,93 @@ func (s *Server) reopenReviewComment(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewComment]{Data: comment})
 }
 
+func (s *Server) listReviewAssignments(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	cursor, err := decodeCursor[store.ReviewAssignmentCursor](c.Query("cursor"))
+	if err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
+	}
+	assignments, openCount, err := s.store.ListReviewAssignments(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), cursor, limit+1)
+	if err != nil {
+		return s.adminReadError(c, err, "Article not found", "Could not list review assignments")
+	}
+	nextCursor := ""
+	if len(assignments) > limit {
+		assignments = assignments[:limit]
+		last := assignments[len(assignments)-1]
+		nextCursor = encodeCursor(store.ReviewAssignmentCursor{CreatedAt: last.CreatedAt, ID: last.ID})
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.ReviewAssignment]{
+		Data: assignments,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor, OpenCount: &openCount},
+	})
+}
+
+func (s *Server) listReviewAssignees(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	members, err := s.store.ListReviewAssignees(c.UserContext(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
+	if err != nil {
+		return s.adminReadError(c, err, "Project not found", "Could not list review assignees")
+	}
+	nextCursor := ""
+	if len(members) > limit {
+		members = members[:limit]
+		nextCursor = members[len(members)-1].UserID
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.AdminProjectMember]{
+		Data: members,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
+	})
+}
+
+func (s *Server) createReviewAssignment(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input reviewAssignmentRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	assignment, err := s.store.CreateReviewAssignment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not create review assignment")
+	}
+	return writeJSON(c, fiber.StatusCreated, Envelope[store.ReviewAssignment]{Data: assignment})
+}
+
+func (s *Server) completeReviewAssignment(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	assignment, err := s.store.CompleteReviewAssignment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("assignmentID"))
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not complete review assignment")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewAssignment]{Data: assignment})
+}
+
+func (s *Server) cancelReviewAssignment(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	assignment, err := s.store.CancelReviewAssignment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("assignmentID"))
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not cancel review assignment")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewAssignment]{Data: assignment})
+}
+
 func (s *Server) requireAdminSession(c *fiber.Ctx) error {
 	rawSession := c.Cookies(sessionCookieName)
 	if rawSession == "" {
@@ -2021,6 +2118,15 @@ func (input claimVerificationRequest) toStoreInput() store.ClaimVerificationInpu
 	return store.ClaimVerificationInput{
 		VerificationState: input.VerificationState,
 		SourceIDs:         input.SourceIDs,
+	}
+}
+
+func (input reviewAssignmentRequest) toStoreInput() store.ReviewAssignmentInput {
+	return store.ReviewAssignmentInput{
+		RevisionID:     input.RevisionID,
+		AssignedTo:     input.AssignedTo,
+		AssignmentType: input.AssignmentType,
+		DueAt:          input.DueAt,
 	}
 }
 

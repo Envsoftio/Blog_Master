@@ -451,6 +451,9 @@ components:
           type: integer
         nextCursor:
           type: string
+        openCount:
+          format: int64
+          type: integer
         projectId:
           type: string
       required:
@@ -1533,8 +1536,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/articles/{articleID}/assignments
       tags:
         - Administration
@@ -1554,8 +1555,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/articles/{articleID}/assignments
       tags:
         - Administration
@@ -1563,7 +1562,7 @@ paths:
       description: Administrative API route.
       operationId: post_api_v1_projects_projectid_articles_articleid_assignments
       responses:
-        "200":
+        "201":
           description: Successful response
         "400":
           description: Invalid request
@@ -1575,8 +1574,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: POST /api/v1/projects/{projectID}/articles/{articleID}/assignments
       tags:
         - Administration
@@ -2271,6 +2268,46 @@ paths:
         "501":
           description: Administrative workflow is not implemented yet
       summary: POST /api/v1/projects/{projectID}/articles/{articleID}/unpublish
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/assignments/{assignmentID}/cancel:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_assignments_assignmentid_cancel
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: POST /api/v1/projects/{projectID}/assignments/{assignmentID}/cancel
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/assignments/{assignmentID}/complete:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_assignments_assignmentid_complete
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: POST /api/v1/projects/{projectID}/assignments/{assignmentID}/complete
       tags:
         - Administration
   /api/v1/projects/{projectID}/audit-events:
@@ -3033,6 +3070,45 @@ paths:
         "500":
           description: Internal server error
       summary: HEAD /api/v1/projects/{projectID}/quality-checks
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/review-assignees:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_review_assignees
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /api/v1/projects/{projectID}/review-assignees
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_review_assignees
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /api/v1/projects/{projectID}/review-assignees
       tags:
         - Administration
   /api/v1/projects/{projectID}/revisions/{revisionID}/approve:

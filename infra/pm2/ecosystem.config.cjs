@@ -43,7 +43,7 @@ module.exports = {
       max_restarts: 10,
       kill_timeout: 15000,
       env_production: {
-        SEOBLOG_ENV: 'production',
+        SEOBLOG_ENV: process.env.SEOBLOG_ENV || 'production',
         SEOBLOG_HTTP_ADDR: apiAddr,
         SEOBLOG_DB_PATH: dbPath,
         SEOBLOG_DEV_AUTH: process.env.SEOBLOG_DEV_AUTH || 'false',
@@ -54,7 +54,9 @@ module.exports = {
         SEOBLOG_SMTP_PASSWORD: process.env.SEOBLOG_SMTP_PASSWORD || '',
         SEOBLOG_SMTP_REQUIRE_STARTTLS: process.env.SEOBLOG_SMTP_REQUIRE_STARTTLS || 'false',
         SEOBLOG_SMTP_FROM: process.env.SEOBLOG_SMTP_FROM || '',
-        SEOBLOG_SMTP_FROM_NAME: process.env.SEOBLOG_SMTP_FROM_NAME || ''
+        SEOBLOG_SMTP_FROM_NAME: process.env.SEOBLOG_SMTP_FROM_NAME || '',
+        SEOBLOG_WEBHOOK_ENCRYPTION_KEY: process.env.SEOBLOG_WEBHOOK_ENCRYPTION_KEY || '',
+        SEOBLOG_WEBHOOK_ALLOWED_HOSTS: process.env.SEOBLOG_WEBHOOK_ALLOWED_HOSTS || ''
       }
     },
     {
@@ -71,11 +73,20 @@ module.exports = {
       max_restarts: 10,
       kill_timeout: 30000,
       env_production: {
-        SEOBLOG_ENV: 'production',
+        SEOBLOG_ENV: process.env.SEOBLOG_ENV || 'production',
         SEOBLOG_HTTP_ADDR: apiAddr,
         SEOBLOG_DB_PATH: dbPath,
         SEOBLOG_DEV_AUTH: process.env.SEOBLOG_DEV_AUTH || 'false',
-        SEOBLOG_TRUSTED_PROXIES: process.env.SEOBLOG_TRUSTED_PROXIES || '127.0.0.1'
+        SEOBLOG_TRUSTED_PROXIES: process.env.SEOBLOG_TRUSTED_PROXIES || '127.0.0.1',
+        SEOBLOG_ADMIN_PUBLIC_URL: process.env.SEOBLOG_ADMIN_PUBLIC_URL || '',
+        SEOBLOG_SMTP_ADDR: process.env.SEOBLOG_SMTP_ADDR || '',
+        SEOBLOG_SMTP_USERNAME: process.env.SEOBLOG_SMTP_USERNAME || '',
+        SEOBLOG_SMTP_PASSWORD: process.env.SEOBLOG_SMTP_PASSWORD || '',
+        SEOBLOG_SMTP_REQUIRE_STARTTLS: process.env.SEOBLOG_SMTP_REQUIRE_STARTTLS || 'false',
+        SEOBLOG_SMTP_FROM: process.env.SEOBLOG_SMTP_FROM || '',
+        SEOBLOG_SMTP_FROM_NAME: process.env.SEOBLOG_SMTP_FROM_NAME || '',
+        SEOBLOG_WEBHOOK_ENCRYPTION_KEY: process.env.SEOBLOG_WEBHOOK_ENCRYPTION_KEY || '',
+        SEOBLOG_WEBHOOK_ALLOWED_HOSTS: process.env.SEOBLOG_WEBHOOK_ALLOWED_HOSTS || ''
       }
     }
   ]
