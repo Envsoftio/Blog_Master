@@ -112,11 +112,11 @@ func (s *Server) registerAdminRoutes() {
 	api.Get("/projects/:projectID/articles/:articleID/corrections", s.requireAdminSession, s.listCorrections)
 	api.Post("/projects/:projectID/articles/:articleID/corrections", s.requireAdminSession, s.requireAdminCSRF, s.createCorrection)
 
-	api.Get("/projects/:projectID/voice-profile", func(c *fiber.Ctx) error { return notImplemented(c, "voice profile") })
-	api.Post("/projects/:projectID/voice-profile", func(c *fiber.Ctx) error { return notImplemented(c, "voice profile version creation") })
-	api.Get("/projects/:projectID/evidence-packets", func(c *fiber.Ctx) error { return notImplemented(c, "evidence packet listing") })
-	api.Post("/projects/:projectID/evidence-packets", func(c *fiber.Ctx) error { return notImplemented(c, "evidence packet creation") })
-	api.Post("/projects/:projectID/evidence-packets/:packetID/approve", func(c *fiber.Ctx) error { return notImplemented(c, "evidence packet approval") })
+	api.Get("/projects/:projectID/voice-profile", s.requireAdminSession, s.getVoiceProfile)
+	api.Post("/projects/:projectID/voice-profile", s.requireAdminSession, s.requireAdminCSRF, s.createVoiceProfile)
+	api.Get("/projects/:projectID/evidence-packets", s.requireAdminSession, s.listEvidencePackets)
+	api.Post("/projects/:projectID/evidence-packets", s.requireAdminSession, s.requireAdminCSRF, s.createEvidencePacket)
+	api.Post("/projects/:projectID/evidence-packets/:packetID/approve", s.requireAdminSession, s.requireAdminCSRF, s.approveEvidencePacket)
 
 	api.Get("/projects/:projectID/ai/jobs", s.requireAdminSession, s.listAIJobs)
 	api.Post("/projects/:projectID/ai/jobs", s.requireAdminSession, s.requireAdminCSRF, s.createAIJob)

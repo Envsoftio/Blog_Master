@@ -40,6 +40,9 @@ var previewTokensMigration string
 //go:embed migrations/0010_ai_observability.sql
 var aiObservabilityMigration string
 
+//go:embed migrations/0011_ai_context.sql
+var aiContextMigration string
+
 type migration struct {
 	version    string
 	statements string
@@ -86,6 +89,7 @@ func Migrate(db *sql.DB) error {
 		{version: "0008_admin_frontend_services", statements: adminFrontendServicesMigration},
 		{version: "0009_preview_tokens", statements: previewTokensMigration},
 		{version: "0010_ai_observability", statements: aiObservabilityMigration},
+		{version: "0011_ai_context", statements: aiContextMigration},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {

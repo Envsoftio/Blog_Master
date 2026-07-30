@@ -267,6 +267,91 @@ export type QualityCheckResult = {
   createdAt: string
 }
 
+export type VoiceWritingExample = {
+  title: string
+  excerpt: string
+}
+
+export type VoiceProfileDocument = {
+  audience: string
+  assumedKnowledge: string
+  brandPurpose: string
+  pointOfView: string
+  tone: string
+  formality: string
+  humor: string
+  preferredVocabulary: string[]
+  productTerminology: Record<string, string>
+  approvedProductFacts: string[]
+  sentencePreferences: string
+  paragraphPreferences: string
+  avoidPhrases: string[]
+  prohibitedClaims: string[]
+  contentTypeStyles: Record<string, string>
+  writingExamples: VoiceWritingExample[]
+  introductionRules: string
+  conclusionRules: string
+  callToActionRules: string
+  regionalSpelling: string
+  locale: string
+}
+
+export type VoiceProfile = {
+  id: string
+  projectId: string
+  version: number
+  profile: VoiceProfileDocument
+  createdBy: string
+  createdAt: string
+}
+
+export type EvidenceFact = {
+  statement: string
+  sourceIds: string[]
+}
+
+export type EvidencePacketDocument = {
+  humanBrief: string
+  searchIntent: string
+  thesis: string
+  productFacts: EvidenceFact[]
+  subjectMatterNotes: string[]
+  firsthandObservations: string[]
+  sourceIds: string[]
+  customerEvidence: string[]
+  measurements: string[]
+  allowedClaims: string[]
+  prohibitedClaims: string[]
+  limitations: string[]
+  requiredInternalLinks: string[]
+  callToAction: string
+  publicationRecommendation: 'ready' | 'request_unique_evidence' | 'do_not_publish'
+}
+
+export type EvidencePacket = {
+  id: string
+  projectId: string
+  contentId?: string
+  version: number
+  packet: EvidencePacketDocument
+  approvedBy?: string
+  approvedAt?: string
+  createdBy: string
+  createdAt: string
+}
+
+export type AdminSource = {
+  id: string
+  projectId: string
+  title: string
+  publisher?: string
+  author?: string
+  url?: string
+  sourceType: string
+  isPrimary: boolean
+  createdAt: string
+}
+
 export type ProjectCreatePayload = {
   name: string
   slug: string
@@ -639,6 +724,44 @@ export function useAdminApi() {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<QualityCheckResult>>(`/api/v1/projects/${projectID}/quality-checks${suffix}`))
   }
 
+  async function getVoiceProfile(projectID: string) {
+    return await request<APIEnvelope<VoiceProfile>>(`/api/v1/projects/${projectID}/voice-profile`)
+  }
+
+  async function createVoiceProfile(projectID: string, profile: VoiceProfileDocument) {
+    return await request<APIEnvelope<VoiceProfile>>(`/api/v1/projects/${projectID}/voice-profile`, await withCSRF({
+      method: 'POST',
+      body: { profile }
+    }))
+  }
+
+  async function listEvidencePackets(projectID: string, filters: { contentId?: string, approvalState?: string } = {}) {
+    const query = new URLSearchParams()
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) query.set(key, value)
+    }
+    const suffix = query.size ? `?${query.toString()}` : ''
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<EvidencePacket>>(`/api/v1/projects/${projectID}/evidence-packets${suffix}`))
+  }
+
+  async function createEvidencePacket(projectID: string, contentId: string, packet: EvidencePacketDocument) {
+    return await request<APIEnvelope<EvidencePacket>>(`/api/v1/projects/${projectID}/evidence-packets`, await withCSRF({
+      method: 'POST',
+      body: { contentId, packet }
+    }))
+  }
+
+  async function approveEvidencePacket(projectID: string, packetID: string) {
+    return await request<APIEnvelope<EvidencePacket>>(`/api/v1/projects/${projectID}/evidence-packets/${packetID}/approve`, await withCSRF({
+      method: 'POST',
+      body: {}
+    }))
+  }
+
+  async function listSources(projectID: string) {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminSource>>(`/api/v1/projects/${projectID}/sources?limit=100`))
+  }
+
   return {
     request,
     getCSRFToken,
@@ -686,7 +809,13 @@ export function useAdminApi() {
     createAIJob,
     listAIJobEvents,
     listAIRuns,
-    listQualityChecks
+    listQualityChecks,
+    getVoiceProfile,
+    createVoiceProfile,
+    listEvidencePackets,
+    createEvidencePacket,
+    approveEvidencePacket,
+    listSources
   }
 }
 

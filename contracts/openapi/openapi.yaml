@@ -2561,8 +2561,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/evidence-packets
       tags:
         - Administration
@@ -2582,8 +2580,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/evidence-packets
       tags:
         - Administration
@@ -2591,7 +2587,7 @@ paths:
       description: Administrative API route.
       operationId: post_api_v1_projects_projectid_evidence_packets
       responses:
-        "200":
+        "201":
           description: Successful response
         "400":
           description: Invalid request
@@ -2603,8 +2599,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: POST /api/v1/projects/{projectID}/evidence-packets
       tags:
         - Administration
@@ -2625,8 +2619,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: POST /api/v1/projects/{projectID}/evidence-packets/{packetID}/approve
       tags:
         - Administration
@@ -3322,8 +3314,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/voice-profile
       tags:
         - Administration
@@ -3343,8 +3333,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/voice-profile
       tags:
         - Administration
@@ -3352,7 +3340,7 @@ paths:
       description: Administrative API route.
       operationId: post_api_v1_projects_projectid_voice_profile
       responses:
-        "200":
+        "201":
           description: Successful response
         "400":
           description: Invalid request
@@ -3364,8 +3352,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: POST /api/v1/projects/{projectID}/voice-profile
       tags:
         - Administration

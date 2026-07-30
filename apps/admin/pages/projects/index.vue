@@ -24,7 +24,7 @@
         </label>
         <label class="field">
           <span>Project slug</span>
-          <input v-model.trim="form.slug" required placeholder="acme-editorial">
+          <input v-model.trim="form.slug" required placeholder="acme-editorial" @input="slugTouched = true">
         </label>
         <label class="field">
           <span>Primary domain</span>
@@ -138,6 +138,7 @@ const projects = useAdminProjectsState()
 const pending = ref(true)
 const creating = ref(false)
 const formOpen = ref(false)
+const slugTouched = ref(false)
 const search = ref('')
 const statusFilter = ref('all')
 const errorMessage = ref('')
@@ -161,7 +162,7 @@ const filteredProjects = computed(() => {
 })
 
 watch(() => form.name, value => {
-  if (!form.slug) form.slug = slugify(value)
+  if (!slugTouched.value) form.slug = slugify(value)
 })
 
 onMounted(() => {
