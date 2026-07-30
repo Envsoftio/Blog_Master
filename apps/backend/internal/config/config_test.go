@@ -35,3 +35,17 @@ func TestLoadSMTPConfig(t *testing.T) {
 		t.Fatal("expected STARTTLS to be required")
 	}
 }
+
+func TestLoadRedisConfig(t *testing.T) {
+	t.Setenv("SEOBLOG_REDIS_ADDR", "redis:6379")
+	t.Setenv("SEOBLOG_REDIS_PASSWORD", "redis-secret")
+	t.Setenv("SEOBLOG_REDIS_TIMEOUT", "250ms")
+
+	cfg := Load()
+	if cfg.RedisAddr != "redis:6379" || cfg.RedisPassword != "redis-secret" {
+		t.Fatalf("unexpected redis config: %#v", cfg)
+	}
+	if cfg.RedisTimeout.String() != "250ms" {
+		t.Fatalf("expected redis timeout 250ms, got %s", cfg.RedisTimeout)
+	}
+}

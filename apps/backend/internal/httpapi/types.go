@@ -34,9 +34,10 @@ type MetaData struct {
 }
 
 type PageMeta struct {
-	ProjectID  string `json:"projectId,omitempty"`
-	NextCursor string `json:"nextCursor,omitempty"`
-	Limit      int    `json:"limit"`
+	ProjectID         string `json:"projectId,omitempty"`
+	ContentGeneration int64  `json:"contentGeneration,omitempty"`
+	NextCursor        string `json:"nextCursor,omitempty"`
+	Limit             int    `json:"limit"`
 }
 
 type HealthResponse struct {

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -11,6 +12,9 @@ type Config struct {
 	DBPath         string
 	DevAuth        bool
 	TrustedProxies []string
+	RedisAddr      string
+	RedisPassword  string
+	RedisTimeout   time.Duration
 	AdminPublicURL string
 	SMTPAddress    string
 	SMTPUsername   string
@@ -28,6 +32,9 @@ func Load() Config {
 		DBPath:         env("SEOBLOG_DB_PATH", "./seoblog.db"),
 		DevAuth:        os.Getenv("SEOBLOG_DEV_AUTH") == "true",
 		TrustedProxies: stringList(os.Getenv("SEOBLOG_TRUSTED_PROXIES")),
+		RedisAddr:      strings.TrimSpace(os.Getenv("SEOBLOG_REDIS_ADDR")),
+		RedisPassword:  os.Getenv("SEOBLOG_REDIS_PASSWORD"),
+		RedisTimeout:   envDuration("SEOBLOG_REDIS_TIMEOUT", 150*time.Millisecond),
 		AdminPublicURL: strings.TrimSpace(os.Getenv("SEOBLOG_ADMIN_PUBLIC_URL")),
 		SMTPAddress:    strings.TrimSpace(os.Getenv("SEOBLOG_SMTP_ADDR")),
 		SMTPUsername:   strings.TrimSpace(os.Getenv("SEOBLOG_SMTP_USERNAME")),
@@ -58,4 +65,16 @@ func stringList(raw string) []string {
 func envBool(key string) bool {
 	value := strings.TrimSpace(os.Getenv(key))
 	return strings.EqualFold(value, "true") || value == "1"
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return fallback
+	}
+	return duration
 }

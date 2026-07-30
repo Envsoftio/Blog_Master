@@ -22,6 +22,7 @@ type Options struct {
 	Logger *slog.Logger
 	Mailer mailer.Sender
 	Store  *store.Store
+	Cache  ResponseCache
 }
 
 type Server struct {
@@ -32,6 +33,7 @@ type Server struct {
 	mailer    mailer.Sender
 	mailSlots chan struct{}
 	store     *store.Store
+	cache     ResponseCache
 }
 
 func New(opts Options) *Server {
@@ -76,6 +78,7 @@ func New(opts Options) *Server {
 		mailer:    messageSender,
 		mailSlots: make(chan struct{}, 8),
 		store:     opts.Store,
+		cache:     opts.Cache,
 	}
 	s.registerRoutes()
 	return s

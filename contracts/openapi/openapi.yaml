@@ -443,6 +443,9 @@ components:
     PageMeta:
       additionalProperties: false
       properties:
+        contentGeneration:
+          format: int64
+          type: integer
         limit:
           format: int64
           type: integer

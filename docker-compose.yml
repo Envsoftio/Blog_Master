@@ -12,6 +12,7 @@ services:
       SEOBLOG_DB_PATH: /data/seoblog.db
       SEOBLOG_DEV_AUTH: "true"
       SEOBLOG_TRUSTED_PROXIES: "172.16.0.0/12"
+      SEOBLOG_REDIS_ADDR: "redis:6379"
       SEOBLOG_ADMIN_PUBLIC_URL: "http://localhost:8088"
       SEOBLOG_SMTP_ADDR: "mailpit:1025"
       SEOBLOG_SMTP_REQUIRE_STARTTLS: "false"

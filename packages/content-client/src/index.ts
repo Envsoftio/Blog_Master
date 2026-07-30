@@ -17,6 +17,7 @@ export type APIListEnvelope<T> = {
   data: T[]
   meta: {
     projectId?: string
+    contentGeneration?: number
     limit: number
     nextCursor?: string
   }

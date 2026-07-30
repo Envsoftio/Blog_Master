@@ -19,6 +19,16 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
+func (s *Store) ContentGeneration(ctx context.Context, projectID string) (int64, error) {
+	var generation int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT content_generation
+		FROM projects
+		WHERE id = ?
+	`, projectID).Scan(&generation)
+	return generation, err
+}
+
 type APIKey struct {
 	ID        string
 	ProjectID string
