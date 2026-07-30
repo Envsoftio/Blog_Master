@@ -17,13 +17,57 @@ type ChangeCursor struct {
 	ID        string `json:"id"`
 }
 
+const publishedDisclosureJSON = `
+	COALESCE((
+		SELECT json_group_array(json_object(
+			'id', disclosure.id,
+			'projectId', disclosure.project_id,
+			'articleId', disclosure.content_id,
+			'revisionId', COALESCE(disclosure.revision_id, ''),
+			'disclosureType', disclosure.disclosure_type,
+			'publicText', disclosure.public_text,
+			'createdBy', disclosure.created_by,
+			'createdAt', disclosure.created_at
+		))
+		FROM (
+			SELECT *
+			FROM disclosures
+			WHERE project_id = pp.project_id
+			  AND content_id = pp.content_id
+			ORDER BY created_at, id
+		) disclosure
+	), cr.disclosure_snapshot_json)
+`
+
+const publishedCorrectionsJSON = `
+	COALESCE((
+		SELECT json_group_array(json_object(
+			'id', correction.id,
+			'projectId', correction.project_id,
+			'articleId', correction.content_id,
+			'affectedRevisionId', COALESCE(correction.affected_revision_id, ''),
+			'publicNote', correction.public_note,
+			'correctedBy', correction.corrected_by,
+			'correctedAt', correction.corrected_at,
+			'supersedesNoticeId', COALESCE(correction.supersedes_notice_id, '')
+		))
+		FROM (
+			SELECT *
+			FROM correction_notices
+			WHERE project_id = pp.project_id
+			  AND content_id = pp.content_id
+			ORDER BY corrected_at, id
+		) correction
+	), cr.correction_summary_json)
+`
+
 const publishedPostColumns = `
 	ci.id, ci.article_type, pp.slug, pp.locale, cr.revision_number, cr.title,
 	COALESCE(cr.deck, ''), COALESCE(cr.excerpt, ''), COALESCE(cr.short_answer, ''),
 	cr.body_document_json, cr.sanitized_html, cr.table_of_contents_json,
 	cr.seo_snapshot_json, cr.taxonomy_snapshot_json, cr.author_snapshot_json,
 	cr.contributor_snapshot_json, cr.source_snapshot_json, cr.claim_snapshot_json,
-	cr.media_snapshot_json, cr.disclosure_snapshot_json, cr.correction_summary_json,
+	cr.media_snapshot_json, ` + publishedDisclosureJSON + `, ` + publishedCorrectionsJSON + `,
 	pp.canonical_url, pp.robots_directive, cr.content_hash,
 	COALESCE(pp.first_published_at, ''), COALESCE(pp.materially_modified_at, ''),
 	COALESCE(pp.first_published_at, pp.created_at)

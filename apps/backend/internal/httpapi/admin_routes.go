@@ -93,12 +93,12 @@ func (s *Server) registerAdminRoutes() {
 	api.Patch("/projects/:projectID/media/:assetID", s.requireAdminSession, s.requireAdminCSRF, s.updateMediaAsset)
 	api.Delete("/projects/:projectID/media/:assetID", s.requireAdminSession, s.requireAdminCSRF, s.deleteMediaAsset)
 
-	api.Get("/projects/:projectID/sources", func(c *fiber.Ctx) error { return notImplemented(c, "source library") })
-	api.Post("/projects/:projectID/sources", func(c *fiber.Ctx) error { return notImplemented(c, "source creation") })
-	api.Patch("/projects/:projectID/sources/:sourceID", func(c *fiber.Ctx) error { return notImplemented(c, "source update") })
-	api.Get("/projects/:projectID/revisions/:revisionID/claims", func(c *fiber.Ctx) error { return notImplemented(c, "revision claims") })
-	api.Post("/projects/:projectID/revisions/:revisionID/claims", func(c *fiber.Ctx) error { return notImplemented(c, "claim creation") })
-	api.Post("/projects/:projectID/claims/:claimID/verify", func(c *fiber.Ctx) error { return notImplemented(c, "claim verification") })
+	api.Get("/projects/:projectID/sources", s.requireAdminSession, s.listSources)
+	api.Post("/projects/:projectID/sources", s.requireAdminSession, s.requireAdminCSRF, s.createSource)
+	api.Patch("/projects/:projectID/sources/:sourceID", s.requireAdminSession, s.requireAdminCSRF, s.updateSource)
+	api.Get("/projects/:projectID/revisions/:revisionID/claims", s.requireAdminSession, s.listRevisionClaims)
+	api.Post("/projects/:projectID/revisions/:revisionID/claims", s.requireAdminSession, s.requireAdminCSRF, s.createRevisionClaim)
+	api.Post("/projects/:projectID/claims/:claimID/verify", s.requireAdminSession, s.requireAdminCSRF, s.verifyClaim)
 
 	api.Get("/projects/:projectID/articles/:articleID/comments", s.requireAdminSession, s.listReviewComments)
 	api.Post("/projects/:projectID/articles/:articleID/comments", s.requireAdminSession, s.requireAdminCSRF, s.createReviewComment)
@@ -107,10 +107,10 @@ func (s *Server) registerAdminRoutes() {
 	api.Get("/projects/:projectID/articles/:articleID/assignments", func(c *fiber.Ctx) error { return notImplemented(c, "review assignments") })
 	api.Post("/projects/:projectID/articles/:articleID/assignments", func(c *fiber.Ctx) error { return notImplemented(c, "review assignment creation") })
 
-	api.Get("/projects/:projectID/articles/:articleID/disclosures", func(c *fiber.Ctx) error { return notImplemented(c, "public disclosures") })
-	api.Post("/projects/:projectID/articles/:articleID/disclosures", func(c *fiber.Ctx) error { return notImplemented(c, "public disclosure creation") })
-	api.Get("/projects/:projectID/articles/:articleID/corrections", func(c *fiber.Ctx) error { return notImplemented(c, "correction notices") })
-	api.Post("/projects/:projectID/articles/:articleID/corrections", func(c *fiber.Ctx) error { return notImplemented(c, "correction notice creation") })
+	api.Get("/projects/:projectID/articles/:articleID/disclosures", s.requireAdminSession, s.listDisclosures)
+	api.Post("/projects/:projectID/articles/:articleID/disclosures", s.requireAdminSession, s.requireAdminCSRF, s.createDisclosure)
+	api.Get("/projects/:projectID/articles/:articleID/corrections", s.requireAdminSession, s.listCorrections)
+	api.Post("/projects/:projectID/articles/:articleID/corrections", s.requireAdminSession, s.requireAdminCSRF, s.createCorrection)
 
 	api.Get("/projects/:projectID/voice-profile", func(c *fiber.Ctx) error { return notImplemented(c, "voice profile") })
 	api.Post("/projects/:projectID/voice-profile", func(c *fiber.Ctx) error { return notImplemented(c, "voice profile version creation") })
@@ -321,6 +321,56 @@ type reviewCommentRequest struct {
 	RevisionID string `json:"revisionId"`
 	BlockID    string `json:"blockId"`
 	Body       string `json:"body"`
+}
+
+type sourceRequest struct {
+	Title                 string `json:"title"`
+	Publisher             string `json:"publisher"`
+	Author                string `json:"author"`
+	URL                   string `json:"url"`
+	PublicationDate       string `json:"publicationDate"`
+	AccessedAt            string `json:"accessedAt"`
+	SourceType            string `json:"sourceType"`
+	IsPrimary             bool   `json:"isPrimary"`
+	ArchivedCopyReference string `json:"archivedCopyReference"`
+	Notes                 string `json:"notes"`
+}
+
+type sourcePatchRequest struct {
+	Title                 *string `json:"title"`
+	Publisher             *string `json:"publisher"`
+	Author                *string `json:"author"`
+	URL                   *string `json:"url"`
+	PublicationDate       *string `json:"publicationDate"`
+	AccessedAt            *string `json:"accessedAt"`
+	SourceType            *string `json:"sourceType"`
+	IsPrimary             *bool   `json:"isPrimary"`
+	ArchivedCopyReference *string `json:"archivedCopyReference"`
+	Notes                 *string `json:"notes"`
+}
+
+type claimRequest struct {
+	ClaimText  string   `json:"claimText"`
+	BlockID    string   `json:"blockId"`
+	Importance string   `json:"importance"`
+	SourceIDs  []string `json:"sourceIds"`
+}
+
+type claimVerificationRequest struct {
+	VerificationState string    `json:"verificationState"`
+	SourceIDs         *[]string `json:"sourceIds"`
+}
+
+type disclosureRequest struct {
+	RevisionID     string `json:"revisionId"`
+	DisclosureType string `json:"disclosureType"`
+	PublicText     string `json:"publicText"`
+}
+
+type correctionRequest struct {
+	AffectedRevisionID string `json:"affectedRevisionId"`
+	PublicNote         string `json:"publicNote"`
+	SupersedesNoticeID string `json:"supersedesNoticeId"`
 }
 
 func (s *Server) login(c *fiber.Ctx) error {
@@ -1136,6 +1186,168 @@ func (s *Server) updateAuthor(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.Author]{Data: author})
 }
 
+func (s *Server) listSources(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	sources, err := s.store.ListSources(c.UserContext(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
+	if err != nil {
+		return s.adminReadError(c, err, "Project not found", "Could not list sources")
+	}
+	nextCursor := ""
+	if len(sources) > limit {
+		sources = sources[:limit]
+		nextCursor = sources[len(sources)-1].ID
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.Source]{
+		Data: sources,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
+	})
+}
+
+func (s *Server) createSource(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input sourceRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	source, err := s.store.CreateSource(c.UserContext(), user.ID, c.Params("projectID"), input.toStoreInput())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not create source")
+	}
+	return writeJSON(c, fiber.StatusCreated, Envelope[store.Source]{Data: source})
+}
+
+func (s *Server) updateSource(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input sourcePatchRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	source, err := s.store.UpdateSource(c.UserContext(), user.ID, c.Params("projectID"), c.Params("sourceID"), input.toStorePatch())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not update source")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.Source]{Data: source})
+}
+
+func (s *Server) listRevisionClaims(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	claims, err := s.store.ListRevisionClaims(c.UserContext(), user.ID, c.Params("projectID"), c.Params("revisionID"))
+	if err != nil {
+		return s.adminReadError(c, err, "Revision not found", "Could not list revision claims")
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.Claim]{
+		Data: claims,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: len(claims)},
+	})
+}
+
+func (s *Server) createRevisionClaim(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input claimRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	claim, err := s.store.CreateRevisionClaim(c.UserContext(), user.ID, c.Params("projectID"), c.Params("revisionID"), input.toStoreInput())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not create claim")
+	}
+	return writeJSON(c, fiber.StatusCreated, Envelope[store.Claim]{Data: claim})
+}
+
+func (s *Server) verifyClaim(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input claimVerificationRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	claim, err := s.store.VerifyClaim(c.UserContext(), user.ID, c.Params("projectID"), c.Params("claimID"), input.toStoreInput())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not verify claim")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.Claim]{Data: claim})
+}
+
+func (s *Server) listDisclosures(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	disclosures, err := s.store.ListDisclosures(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"))
+	if err != nil {
+		return s.adminReadError(c, err, "Article not found", "Could not list disclosures")
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.Disclosure]{
+		Data: disclosures,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: len(disclosures)},
+	})
+}
+
+func (s *Server) createDisclosure(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input disclosureRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	disclosure, err := s.store.CreateDisclosure(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not create disclosure")
+	}
+	return writeJSON(c, fiber.StatusCreated, Envelope[store.Disclosure]{Data: disclosure})
+}
+
+func (s *Server) listCorrections(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	corrections, err := s.store.ListCorrections(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"))
+	if err != nil {
+		return s.adminReadError(c, err, "Article not found", "Could not list corrections")
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.CorrectionNotice]{
+		Data: corrections,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: len(corrections)},
+	})
+}
+
+func (s *Server) createCorrection(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input correctionRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	correction, err := s.store.CreateCorrection(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not create correction")
+	}
+	return writeJSON(c, fiber.StatusCreated, Envelope[store.CorrectionNotice]{Data: correction})
+}
+
 func (s *Server) listReviewComments(c *fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
@@ -1594,6 +1806,68 @@ func (input reviewCommentRequest) toStoreInput() store.ReviewCommentInput {
 		RevisionID: input.RevisionID,
 		BlockID:    input.BlockID,
 		Body:       input.Body,
+	}
+}
+
+func (input sourceRequest) toStoreInput() store.SourceInput {
+	return store.SourceInput{
+		Title:                 input.Title,
+		Publisher:             input.Publisher,
+		Author:                input.Author,
+		URL:                   input.URL,
+		PublicationDate:       input.PublicationDate,
+		AccessedAt:            input.AccessedAt,
+		SourceType:            input.SourceType,
+		IsPrimary:             input.IsPrimary,
+		ArchivedCopyReference: input.ArchivedCopyReference,
+		Notes:                 input.Notes,
+	}
+}
+
+func (input sourcePatchRequest) toStorePatch() store.SourcePatch {
+	return store.SourcePatch{
+		Title:                 input.Title,
+		Publisher:             input.Publisher,
+		Author:                input.Author,
+		URL:                   input.URL,
+		PublicationDate:       input.PublicationDate,
+		AccessedAt:            input.AccessedAt,
+		SourceType:            input.SourceType,
+		IsPrimary:             input.IsPrimary,
+		ArchivedCopyReference: input.ArchivedCopyReference,
+		Notes:                 input.Notes,
+	}
+}
+
+func (input claimRequest) toStoreInput() store.ClaimInput {
+	return store.ClaimInput{
+		ClaimText:  input.ClaimText,
+		BlockID:    input.BlockID,
+		Importance: input.Importance,
+		SourceIDs:  input.SourceIDs,
+	}
+}
+
+func (input claimVerificationRequest) toStoreInput() store.ClaimVerificationInput {
+	return store.ClaimVerificationInput{
+		VerificationState: input.VerificationState,
+		SourceIDs:         input.SourceIDs,
+	}
+}
+
+func (input disclosureRequest) toStoreInput() store.DisclosureInput {
+	return store.DisclosureInput{
+		RevisionID:     input.RevisionID,
+		DisclosureType: input.DisclosureType,
+		PublicText:     input.PublicText,
+	}
+}
+
+func (input correctionRequest) toStoreInput() store.CorrectionInput {
+	return store.CorrectionInput{
+		AffectedRevisionID: input.AffectedRevisionID,
+		PublicNote:         input.PublicNote,
+		SupersedesNoticeID: input.SupersedesNoticeID,
 	}
 }
 

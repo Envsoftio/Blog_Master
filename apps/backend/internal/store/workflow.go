@@ -635,16 +635,33 @@ func (s *Store) ApproveRevision(ctx context.Context, actorUserID, projectID, rev
 	if err != nil {
 		return AdminRevision{}, err
 	}
+	if revision.EditorialState == "approved" {
+		return AdminRevision{}, fmt.Errorf("%w: revision is already approved", ErrInvalidWorkflow)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AdminRevision{}, err
 	}
 	defer tx.Rollback()
+	if err := ensureRevisionClaimsApproved(ctx, tx, projectID, revisionID); err != nil {
+		return AdminRevision{}, err
+	}
+	sourceSnapshotJSON, claimSnapshotJSON, err := buildRevisionTrustSnapshots(ctx, tx, projectID, revisionID)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	approvedContentHash, err := approvalContentHash(revision.ContentHash, sourceSnapshotJSON, claimSnapshotJSON)
+	if err != nil {
+		return AdminRevision{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE content_revisions
-		SET editorial_state = 'approved'
+		SET editorial_state = 'approved',
+		    source_snapshot_json = ?,
+		    claim_snapshot_json = ?,
+		    content_hash = ?
 		WHERE project_id = ? AND id = ?
-	`, projectID, revisionID); err != nil {
+	`, sourceSnapshotJSON, claimSnapshotJSON, approvedContentHash, projectID, revisionID); err != nil {
 		return AdminRevision{}, err
 	}
 	decisionID, err := securityRandomID("appr")
@@ -655,7 +672,7 @@ func (s *Store) ApproveRevision(ctx context.Context, actorUserID, projectID, rev
 		INSERT INTO approval_decisions(
 		  id, project_id, content_id, revision_id, decision, content_hash, decided_by, note
 		) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?)
-	`, decisionID, projectID, revision.ArticleID, revisionID, revision.ContentHash, actorUserID, nullIfEmpty(note)); err != nil {
+	`, decisionID, projectID, revision.ArticleID, revisionID, approvedContentHash, actorUserID, nullIfEmpty(note)); err != nil {
 		return AdminRevision{}, err
 	}
 	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "revision.approve", "revision", revisionID, "success", nil); err != nil {

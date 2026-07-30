@@ -1530,6 +1530,354 @@ func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 	}
 }
 
+func TestSourcesClaimsAndApprovalGate(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct password")
+	ownerBLogin := seedAndLogin(t, server, db, "owner-b@example.test", "owner b correct password")
+	writerLogin := seedAndLogin(t, server, db, "writer@example.test", "writer correct password")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"trust","name":"Trust Project"}`)
+	projectB := createTestProject(t, server, ownerBLogin, `{"slug":"trust-b","name":"Trust Project B"}`)
+	category := createTestCategory(t, server, ownerLogin, project.ID, `{"slug":"guides","name":"Guides"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, writerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/sources",
+		`{"title":"Primary benchmark","url":"https://example.test/benchmark","sourceType":"report","isPrimary":true}`,
+		ownerLogin,
+	)
+	sourceResponse := mustTest(t, server, sourceRequest)
+	if sourceResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected source create 201, got %d: %s", sourceResponse.StatusCode, readBody(t, sourceResponse))
+	}
+	var sourcePayload Envelope[store.Source]
+	decodeJSONResponse(t, sourceResponse, &sourcePayload)
+	source := sourcePayload.Data
+	if source.ID == "" || !source.IsPrimary || source.SourceType != "report" {
+		t.Fatalf("unexpected source payload %#v", source)
+	}
+
+	updateSourceRequest := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+project.ID+"/sources/"+source.ID,
+		`{"title":"Primary benchmark update","notes":"Reviewed for Q3."}`,
+		ownerLogin,
+	)
+	updateSourceResponse := mustTest(t, server, updateSourceRequest)
+	if updateSourceResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected source update 200, got %d: %s", updateSourceResponse.StatusCode, readBody(t, updateSourceResponse))
+	}
+	var updatedSourcePayload Envelope[store.Source]
+	decodeJSONResponse(t, updateSourceResponse, &updatedSourcePayload)
+	if updatedSourcePayload.Data.Title != "Primary benchmark update" || updatedSourcePayload.Data.Notes != "Reviewed for Q3." {
+		t.Fatalf("unexpected updated source %#v", updatedSourcePayload.Data)
+	}
+
+	listSourceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/sources", nil)
+	addCookies(listSourceRequest, ownerLogin.cookies)
+	listSourceResponse := mustTest(t, server, listSourceRequest)
+	if listSourceResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected source list 200, got %d: %s", listSourceResponse.StatusCode, readBody(t, listSourceResponse))
+	}
+	var listedSources ListEnvelope[store.Source]
+	decodeJSONResponse(t, listSourceResponse, &listedSources)
+	foundSource := false
+	for _, listed := range listedSources.Data {
+		if listed.ID == source.ID && listed.Title == "Primary benchmark update" {
+			foundSource = true
+		}
+	}
+	if !foundSource {
+		t.Fatalf("expected updated source in list, got %#v", listedSources.Data)
+	}
+
+	projectBSourceRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectB.ID+"/sources",
+		`{"title":"Project B source","url":"https://example.test/project-b","sourceType":"web"}`,
+		ownerBLogin,
+	)
+	projectBSourceResponse := mustTest(t, server, projectBSourceRequest)
+	if projectBSourceResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected project B source create 201, got %d: %s", projectBSourceResponse.StatusCode, readBody(t, projectBSourceResponse))
+	}
+	var projectBSourcePayload Envelope[store.Source]
+	decodeJSONResponse(t, projectBSourceResponse, &projectBSourcePayload)
+
+	article := createTestArticle(
+		t,
+		server,
+		ownerLogin,
+		project.ID,
+		`{"articleType":"guide","title":"Claimed Guide","slug":"claimed-guide","primaryCategoryId":"`+category.ID+`","html":"<p>Benchmarked result.</p>"}`,
+	)
+	revisionID := article.LatestRevision.ID
+
+	crossProjectClaim := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/revisions/"+revisionID+"/claims",
+		`{"claimText":"Cross-project source should fail.","importance":"material","sourceIds":["`+projectBSourcePayload.Data.ID+`"]}`,
+		ownerLogin,
+	)
+	crossProjectClaimResponse := mustTest(t, server, crossProjectClaim)
+	if crossProjectClaimResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected cross-project source claim to fail with 400, got %d: %s", crossProjectClaimResponse.StatusCode, readBody(t, crossProjectClaimResponse))
+	}
+
+	claimRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/revisions/"+revisionID+"/claims",
+		`{"claimText":"The benchmark improved conversion by 12%.","importance":"material","sourceIds":["`+source.ID+`"]}`,
+		ownerLogin,
+	)
+	claimResponse := mustTest(t, server, claimRequest)
+	if claimResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected claim create 201, got %d: %s", claimResponse.StatusCode, readBody(t, claimResponse))
+	}
+	var claimPayload Envelope[store.Claim]
+	decodeJSONResponse(t, claimResponse, &claimPayload)
+	claim := claimPayload.Data
+	if claim.VerificationState != "unverified" || len(claim.SourceIDs) != 1 || claim.SourceIDs[0] != source.ID {
+		t.Fatalf("unexpected claim payload %#v", claim)
+	}
+
+	listClaimRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/revisions/"+revisionID+"/claims", nil)
+	addCookies(listClaimRequest, ownerLogin.cookies)
+	listClaimResponse := mustTest(t, server, listClaimRequest)
+	if listClaimResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected claim list 200, got %d: %s", listClaimResponse.StatusCode, readBody(t, listClaimResponse))
+	}
+	var listedClaims ListEnvelope[store.Claim]
+	decodeJSONResponse(t, listClaimResponse, &listedClaims)
+	if len(listedClaims.Data) != 1 || listedClaims.Data[0].ID != claim.ID {
+		t.Fatalf("expected created claim in list, got %#v", listedClaims.Data)
+	}
+
+	unverifiedApproval := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/revisions/"+revisionID+"/approve", `{}`, ownerLogin)
+	unverifiedApprovalResponse := mustTest(t, server, unverifiedApproval)
+	if unverifiedApprovalResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected unverified material claim to block approval, got %d: %s", unverifiedApprovalResponse.StatusCode, readBody(t, unverifiedApprovalResponse))
+	}
+
+	writerVerify := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/claims/"+claim.ID+"/verify",
+		`{"verificationState":"supported"}`,
+		writerLogin,
+	)
+	writerVerifyResponse := mustTest(t, server, writerVerify)
+	if writerVerifyResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer claim verification denial, got %d: %s", writerVerifyResponse.StatusCode, readBody(t, writerVerifyResponse))
+	}
+
+	verifyRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/claims/"+claim.ID+"/verify",
+		`{"verificationState":"supported"}`,
+		ownerLogin,
+	)
+	verifyResponse := mustTest(t, server, verifyRequest)
+	if verifyResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected claim verify 200, got %d: %s", verifyResponse.StatusCode, readBody(t, verifyResponse))
+	}
+	var verifiedPayload Envelope[store.Claim]
+	decodeJSONResponse(t, verifyResponse, &verifiedPayload)
+	if verifiedPayload.Data.VerificationState != "supported" || verifiedPayload.Data.VerifiedBy != ownerLogin.userID {
+		t.Fatalf("unexpected verified claim %#v", verifiedPayload.Data)
+	}
+
+	approved := approveTestRevision(t, server, ownerLogin, project.ID, revisionID)
+	if approved.EditorialState != "approved" {
+		t.Fatalf("expected approved revision, got %#v", approved)
+	}
+	secondApproval := newMemberMutationRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/revisions/"+revisionID+"/approve", `{}`, ownerLogin)
+	secondApprovalResponse := mustTest(t, server, secondApproval)
+	if secondApprovalResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected repeated approval to fail with 409, got %d: %s", secondApprovalResponse.StatusCode, readBody(t, secondApprovalResponse))
+	}
+
+	detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/revisions/"+revisionID, nil)
+	addCookies(detailRequest, ownerLogin.cookies)
+	detailResponse := mustTest(t, server, detailRequest)
+	if detailResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected revision detail 200, got %d: %s", detailResponse.StatusCode, readBody(t, detailResponse))
+	}
+	var detail Envelope[store.AdminRevisionDetail]
+	decodeJSONResponse(t, detailResponse, &detail)
+	if detail.Data.ContentHash != approved.ContentHash {
+		t.Fatalf("expected repeated approval denial to preserve content hash %q, got %q", approved.ContentHash, detail.Data.ContentHash)
+	}
+	if !jsonContainsID(detail.Data.SourceSnapshot, source.ID) {
+		t.Fatalf("expected source snapshot to include %q, got %#v", source.ID, detail.Data.SourceSnapshot)
+	}
+	if !jsonContainsID(detail.Data.ClaimSnapshot, claim.ID) {
+		t.Fatalf("expected claim snapshot to include %q, got %#v", claim.ID, detail.Data.ClaimSnapshot)
+	}
+
+	lateClaim := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/revisions/"+revisionID+"/claims",
+		`{"claimText":"Late change","importance":"normal"}`,
+		ownerLogin,
+	)
+	lateClaimResponse := mustTest(t, server, lateClaim)
+	if lateClaimResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected approved revision claim mutation to fail with 409, got %d: %s", lateClaimResponse.StatusCode, readBody(t, lateClaimResponse))
+	}
+
+	var claimAuditCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ?
+		  AND target_id = ?
+		  AND action IN ('claim.create', 'claim.verify')
+	`, project.ID, claim.ID).Scan(&claimAuditCount); err != nil {
+		t.Fatal(err)
+	}
+	if claimAuditCount != 2 {
+		t.Fatalf("expected claim create and verify audit events, got %d", claimAuditCount)
+	}
+}
+
+func TestDisclosuresAndCorrectionsReachPublishedJSON(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct password")
+	writerLogin := seedAndLogin(t, server, db, "writer@example.test", "writer correct password")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"public-trust","name":"Public Trust"}`)
+	category := createTestCategory(t, server, ownerLogin, project.ID, `{"slug":"updates","name":"Updates"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, writerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	article := createTestArticle(
+		t,
+		server,
+		ownerLogin,
+		project.ID,
+		`{"articleType":"standard","title":"Trust Update","slug":"trust-update","primaryCategoryId":"`+category.ID+`","html":"<p>Visible update.</p>"}`,
+	)
+	revisionID := article.LatestRevision.ID
+	approveTestRevision(t, server, ownerLogin, project.ID, revisionID)
+	publishTestArticle(t, server, ownerLogin, project.ID, article.ID, revisionID, "trust-update")
+
+	writerDisclosure := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/disclosures",
+		`{"disclosureType":"affiliate","publicText":"Writer should not append public disclosure."}`,
+		writerLogin,
+	)
+	writerDisclosureResponse := mustTest(t, server, writerDisclosure)
+	if writerDisclosureResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer disclosure creation denial, got %d: %s", writerDisclosureResponse.StatusCode, readBody(t, writerDisclosureResponse))
+	}
+
+	disclosureRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/disclosures",
+		`{"revisionId":"`+revisionID+`","disclosureType":"affiliate","publicText":"This article includes affiliate links."}`,
+		ownerLogin,
+	)
+	disclosureResponse := mustTest(t, server, disclosureRequest)
+	if disclosureResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected disclosure create 201, got %d: %s", disclosureResponse.StatusCode, readBody(t, disclosureResponse))
+	}
+	var disclosurePayload Envelope[store.Disclosure]
+	decodeJSONResponse(t, disclosureResponse, &disclosurePayload)
+	if disclosurePayload.Data.RevisionID != revisionID {
+		t.Fatalf("expected revision-bound disclosure, got %#v", disclosurePayload.Data)
+	}
+
+	listDisclosuresRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/disclosures", nil)
+	addCookies(listDisclosuresRequest, ownerLogin.cookies)
+	listDisclosuresResponse := mustTest(t, server, listDisclosuresRequest)
+	if listDisclosuresResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected disclosure list 200, got %d: %s", listDisclosuresResponse.StatusCode, readBody(t, listDisclosuresResponse))
+	}
+	var listedDisclosures ListEnvelope[store.Disclosure]
+	decodeJSONResponse(t, listDisclosuresResponse, &listedDisclosures)
+	if len(listedDisclosures.Data) != 1 || listedDisclosures.Data[0].ID != disclosurePayload.Data.ID {
+		t.Fatalf("expected created disclosure in list, got %#v", listedDisclosures.Data)
+	}
+
+	correctionRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/corrections",
+		`{"affectedRevisionId":"`+revisionID+`","publicNote":"Corrected an outdated benchmark date."}`,
+		ownerLogin,
+	)
+	correctionResponse := mustTest(t, server, correctionRequest)
+	if correctionResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected correction create 201, got %d: %s", correctionResponse.StatusCode, readBody(t, correctionResponse))
+	}
+	var correctionPayload Envelope[store.CorrectionNotice]
+	decodeJSONResponse(t, correctionResponse, &correctionPayload)
+	if correctionPayload.Data.AffectedRevisionID != revisionID {
+		t.Fatalf("expected revision-bound correction, got %#v", correctionPayload.Data)
+	}
+
+	listCorrectionsRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/corrections", nil)
+	addCookies(listCorrectionsRequest, ownerLogin.cookies)
+	listCorrectionsResponse := mustTest(t, server, listCorrectionsRequest)
+	if listCorrectionsResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected correction list 200, got %d: %s", listCorrectionsResponse.StatusCode, readBody(t, listCorrectionsResponse))
+	}
+	var listedCorrections ListEnvelope[store.CorrectionNotice]
+	decodeJSONResponse(t, listCorrectionsResponse, &listedCorrections)
+	if len(listedCorrections.Data) != 1 || listedCorrections.Data[0].ID != correctionPayload.Data.ID {
+		t.Fatalf("expected created correction in list, got %#v", listedCorrections.Data)
+	}
+
+	publishedRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts/trust-update", nil)
+	publishedRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	publishedResponse := mustTest(t, server, publishedRequest)
+	if publishedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected published article 200, got %d: %s", publishedResponse.StatusCode, readBody(t, publishedResponse))
+	}
+	var published Envelope[store.PublishedPost]
+	decodeJSONResponse(t, publishedResponse, &published)
+	if !jsonContainsID(published.Data.Disclosures, disclosurePayload.Data.ID) {
+		t.Fatalf("expected published JSON to include disclosure %q, got %#v", disclosurePayload.Data.ID, published.Data.Disclosures)
+	}
+	if !jsonContainsID(published.Data.Corrections, correctionPayload.Data.ID) {
+		t.Fatalf("expected published JSON to include correction %q, got %#v", correctionPayload.Data.ID, published.Data.Corrections)
+	}
+
+	changesRequest := httptest.NewRequest(http.MethodGet, "/content/v1/changes", nil)
+	changesRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	changesResponse := mustTest(t, server, changesRequest)
+	if changesResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected changes list 200, got %d: %s", changesResponse.StatusCode, readBody(t, changesResponse))
+	}
+	var changes ListEnvelope[store.ChangeRecord]
+	decodeJSONResponse(t, changesResponse, &changes)
+	contentUpdates := 0
+	for _, change := range changes.Data {
+		if change.AggregateID == article.ID && change.Type == "content.updated" {
+			contentUpdates++
+		}
+	}
+	if contentUpdates < 2 {
+		t.Fatalf("expected disclosure and correction content.updated events, got %#v", changes.Data)
+	}
+
+	var contentGeneration int64
+	if err := db.QueryRow(`SELECT content_generation FROM projects WHERE id = ?`, project.ID).Scan(&contentGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if contentGeneration < 5 {
+		t.Fatalf("expected public trust writes to advance content generation, got %d", contentGeneration)
+	}
+}
+
 func TestAuthorManagementAuthorizationAndCrossProjectScoping(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerALogin := seedAndLogin(t, server, db, "owner-a@example.test", "owner a correct password")
@@ -3079,6 +3427,20 @@ func findSeries(items []store.Series, seriesID string) store.Series {
 		}
 	}
 	return store.Series{}
+}
+
+func jsonContainsID(value any, id string) bool {
+	items, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range items {
+		fields, ok := item.(map[string]any)
+		if ok && fields["id"] == id {
+			return true
+		}
+	}
+	return false
 }
 
 func createTestArticle(t *testing.T, server *Server, login adminLoginResult, projectID, body string) store.AdminArticle {
