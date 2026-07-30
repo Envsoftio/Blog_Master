@@ -111,11 +111,21 @@ jobs:
         env:
           TARGET_GOARCH: ${{ steps.target.outputs.goarch }}
         run: |
+          release_id="${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
           rm -rf .deploy-artifact seoblog-release.tar.gz
-          mkdir -p .deploy-artifact/admin .deploy-artifact/backend
+          mkdir -p \
+            .deploy-artifact/admin \
+            .deploy-artifact/backend \
+            .deploy-artifact/contracts/openapi \
+            .deploy-artifact/packages/content-client \
+            .deploy-artifact/scripts
 
           cp -R apps/admin/.output .deploy-artifact/admin/.output
           cp infra/pm2/ecosystem.config.cjs .deploy-artifact/ecosystem.config.cjs
+          cp contracts/openapi/openapi.yaml .deploy-artifact/contracts/openapi/openapi.yaml
+          cp packages/content-client/package.json .deploy-artifact/packages/content-client/package.json
+          cp -R packages/content-client/dist .deploy-artifact/packages/content-client/dist
+          cp scripts/release-manifest.mjs .deploy-artifact/scripts/release-manifest.mjs
           printf '%s\n' "$GITHUB_SHA" > .deploy-artifact/REVISION
 
           (
@@ -125,6 +135,8 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH="$TARGET_GOARCH" go build -trimpath -ldflags="-s -w" -o ../../.deploy-artifact/backend/admincli ./cmd/admincli
           )
 
+          RELEASE_ID="$release_id" TARGET_GOARCH="$TARGET_GOARCH" node scripts/release-manifest.mjs generate .deploy-artifact
+          node scripts/release-manifest.mjs verify .deploy-artifact "$release_id"
           tar -C .deploy-artifact -czf seoblog-release.tar.gz .
 
       - name: Upload release artifact
@@ -174,6 +186,7 @@ jobs:
           key_file="${RUNNER_TEMP}/vps_key"
           remote_archive="/tmp/seoblog-release-${GITHUB_SHA}.tar.gz"
           remote_script="${deploy_path%/}/deploy.sh"
+          release_id="${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
 
           quote() {
             printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
@@ -193,4 +206,4 @@ jobs:
 
           scp -P "$port" -i "$key_file" seoblog-release.tar.gz "${VPS_USER}@${VPS_HOST}:${remote_archive}"
           ssh -p "$port" -i "$key_file" "${VPS_USER}@${VPS_HOST}" \
-            "DEPLOY_PATH=$(quote "$deploy_path") RELEASE_SHA=$(quote "$GITHUB_SHA") $(quote "$remote_script") $(quote "$remote_archive")"
+            "DEPLOY_PATH=$(quote "$deploy_path") RELEASE=$(quote "$release_id") RELEASE_SHA=$(quote "$GITHUB_SHA") $(quote "$remote_script") $(quote "$remote_archive")"

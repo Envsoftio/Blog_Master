@@ -4,7 +4,9 @@ This repo deploys as one artifact:
 
 - `admin/.output` from the Nuxt build.
 - `backend/api`, `backend/worker` and `backend/admincli` Linux binaries.
+- `contracts/openapi/openapi.yaml` and the built `packages/content-client` package.
 - `ecosystem.config.cjs` for PM2.
+- `release.json` with release ID, commit SHA, build metadata and SHA-256 checksums.
 
 The VPS keeps releases under `/srv/seoblog/releases`, points `/srv/seoblog/current` at the active release, and keeps persistent data in `/srv/seoblog/shared`.
 
@@ -66,8 +68,14 @@ SEOBLOG_SMTP_USERNAME=emailapikey
 SEOBLOG_SMTP_PASSWORD=
 SEOBLOG_SMTP_REQUIRE_STARTTLS=true
 SEOBLOG_SMTP_FROM=noreply@proctorplus.io
-SEOBLOG_SMTP_FROM_NAME=Example Team
+SEOBLOG_SMTP_FROM_NAME='Example Team'
 SEOBLOG_WEBHOOK_ENCRYPTION_KEY=xqhcQ/knhyV37B0W4qeA73cLHgFyMwPojXHnW0xVv/Y=
+SEOBLOG_DEPLOY_BACKUP_COMMAND=
+SEOBLOG_DEPLOY_BACKUP_VERIFY_COMMAND=
+SEOBLOG_DEPLOY_REQUIRE_BACKUP=false
+SEOBLOG_DEPLOY_SKIP_BACKUP=false
+SEOBLOG_DEPLOY_DRAIN_COMMAND=
+SEOBLOG_DEPLOY_CONTENT_SMOKE_COMMAND=
 NITRO_HOST=127.0.0.1
 NITRO_PORT=3000
 NUXT_API_BASE_URL=http://127.0.0.1:8080
@@ -75,6 +83,14 @@ SEOBLOG_RELEASE_ROOT=/srv/seoblog/current
 ```
 
 Set the public admin URL and ZeptoMail API-key password before enabling invitation or password-recovery email. Generate `SEOBLOG_WEBHOOK_ENCRYPTION_KEY` as 32 random bytes encoded with standard Base64 and provide the same value to the API and worker. Staging must also set `SEOBLOG_WEBHOOK_ALLOWED_HOSTS` to its non-production receiver hosts; an empty staging allowlist blocks all delivery. Production SMTP requires STARTTLS and the API never returns reset tokens in an API response. The signing and receiver contract is documented in [webhooks.md](webhooks.md).
+
+## Release safety
+
+`task deploy:prod RELEASE=<immutable-release-id>` calls the VPS deploy script with `/tmp/seoblog-release-<release-id>.tar.gz` unless `ARCHIVE=<path>` is supplied. The archive must contain `release.json`, and the deploy script verifies every listed checksum before installing it.
+
+For an existing SQLite database, set `SEOBLOG_DEPLOY_BACKUP_COMMAND` to a host-local command that creates a WAL-aware recovery point in the dedicated backup target. Set `SEOBLOG_DEPLOY_BACKUP_VERIFY_COMMAND` when the backup command does not already verify the recovery point. To make this a hard production gate, set `SEOBLOG_DEPLOY_REQUIRE_BACKUP=true`; until then, the deploy script logs a compatibility warning and continues if no backup hook is configured.
+
+The deploy script stops the worker before migrations, runs the new release's `backend/admincli migrate` before switching `/srv/seoblog/current`, restarts only `seoblog-admin`, `seoblog-api` and `seoblog-worker`, checks API readiness, API health and Nuxt SSR, then records the result in `/srv/seoblog/shared/deployments.jsonl`.
 
 ## First owner
 
@@ -89,4 +105,4 @@ export SEOBLOG_BOOTSTRAP_PASSWORD
 unset SEOBLOG_BOOTSTRAP_PASSWORD
 ```
 
-Every push to `main` runs tests, builds the release artifact, uploads it to the VPS, flips the `current` symlink, reloads PM2, and checks `/healthz`.
+Every push to `main` runs tests, builds the checksummed release artifact, uploads it to the VPS, verifies the manifest, runs the guarded deploy flow and checks the API plus Nuxt SSR before recording success.

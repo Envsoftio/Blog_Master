@@ -58,3 +58,10 @@ tasks:
     dir: apps/backend
     cmds:
       - go run ./cmd/admincli openapi
+
+  deploy:prod:
+    desc: Deploy one immutable release archive to production
+    requires:
+      vars: [RELEASE]
+    cmds:
+      - RELEASE={{.RELEASE}} infra/deploy/deploy-release.sh {{.ARCHIVE | default (printf "/tmp/seoblog-release-%s.tar.gz" .RELEASE)}}

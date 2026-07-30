@@ -35,6 +35,14 @@ pnpm --filter @seoblog/content-client build
 pnpm --filter @seoblog/admin build
 ```
 
+Production releases are deployed as immutable, checksummed artifacts through:
+
+```bash
+task deploy:prod RELEASE=<release-id> ARCHIVE=/tmp/seoblog-release-<release-id>.tar.gz
+```
+
+The VPS deploy script verifies `release.json`, runs a configured backup hook before migrations for existing databases, switches the application symlink only after migrations succeed and restarts only the three `seoblog-*` PM2 processes. Existing VPS installs can keep deploying without a backup hook until `SEOBLOG_DEPLOY_REQUIRE_BACKUP=true` is enabled.
+
 Create the first admin owner with the one-time CLI command after migrations:
 
 ```bash
