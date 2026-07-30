@@ -1,15 +1,13 @@
 package b2
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestPresignPostBuildsB2S3CompatibleUploadPolicy(t *testing.T) {
+func TestPresignPutBuildsB2S3CompatibleUploadURL(t *testing.T) {
 	client, err := New(Config{
 		Endpoint:             "https://s3.us-west-004.backblazeb2.com",
 		Region:               "us-west-004",
@@ -21,7 +19,7 @@ func TestPresignPostBuildsB2S3CompatibleUploadPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	signed, err := client.PresignPost("blogSEO/projects/project-a/media/originals/hero image.png", "image/png", 2048, time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC))
+	signed, err := client.PresignPut("blogSEO/projects/project-a/media/originals/hero image.png", "image/png", 2048, time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,33 +27,29 @@ func TestPresignPostBuildsB2S3CompatibleUploadPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if signed.Method != "POST" || signed.MaxBytes != 2048 {
+	if signed.Method != "PUT" || signed.MaxBytes != 2048 {
 		t.Fatalf("unexpected signed target %#v", signed)
 	}
-	if parsed.EscapedPath() != "/media-bucket" {
+	if parsed.EscapedPath() != "/media-bucket/blogSEO/projects/project-a/media/originals/hero%20image.png" {
 		t.Fatalf("unexpected bucket path %q", parsed.EscapedPath())
 	}
-	if signed.Fields["key"] != "blogSEO/projects/project-a/media/originals/hero image.png" ||
-		signed.Fields["Content-Type"] != "image/png" ||
-		signed.Fields["x-amz-algorithm"] != awsAlgorithm ||
-		!strings.Contains(signed.Fields["x-amz-credential"], "/us-west-004/s3/aws4_request") ||
-		signed.Fields["x-amz-signature"] == "" {
-		t.Fatalf("unexpected signed fields %#v", signed.Fields)
+	if len(signed.Fields) != 0 {
+		t.Fatalf("expected raw PUT upload without form fields, got %#v", signed.Fields)
 	}
-	rawPolicy, err := base64.StdEncoding.DecodeString(signed.Fields["policy"])
-	if err != nil {
-		t.Fatal(err)
+	if signed.Headers["Content-Type"] != "image/png" ||
+		signed.Headers["X-Amz-Server-Side-Encryption"] != "AES256" {
+		t.Fatalf("unexpected signed headers %#v", signed.Headers)
 	}
-	var policy struct {
-		Conditions []any `json:"conditions"`
+	query := parsed.Query()
+	if query.Get("X-Amz-Algorithm") != awsAlgorithm ||
+		!strings.Contains(query.Get("X-Amz-Credential"), "/us-west-004/s3/aws4_request") ||
+		query.Get("X-Amz-Date") != "20260731T100000Z" ||
+		query.Get("X-Amz-Expires") != "900" ||
+		query.Get("X-Amz-SignedHeaders") != "content-type;host;x-amz-server-side-encryption" ||
+		query.Get("X-Amz-Signature") == "" {
+		t.Fatalf("unexpected signed query %s", parsed.RawQuery)
 	}
-	if err := json.Unmarshal(rawPolicy, &policy); err != nil {
-		t.Fatal(err)
-	}
-	policyJSON := string(rawPolicy)
-	if !strings.Contains(policyJSON, `"content-length-range",1,2048`) ||
-		!strings.Contains(policyJSON, `"bucket":"media-bucket"`) ||
-		!strings.Contains(policyJSON, `"x-amz-server-side-encryption":"AES256"`) {
-		t.Fatalf("expected bounded upload policy, got %s", policyJSON)
+	if signed.ExpiresAt != "2026-07-31T10:15:00Z" {
+		t.Fatalf("unexpected expiration %q", signed.ExpiresAt)
 	}
 }

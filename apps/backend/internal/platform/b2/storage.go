@@ -5,14 +5,13 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -101,7 +100,7 @@ func (c *Client) PublicURL(key string) string {
 	return c.publicBaseURL + "/" + escapeKey(key)
 }
 
-func (c *Client) PresignPost(key, contentType string, maxBytes int64, now time.Time) (SignedUpload, error) {
+func (c *Client) PresignPut(key, contentType string, maxBytes int64, now time.Time) (SignedUpload, error) {
 	if c == nil {
 		return SignedUpload{}, fmt.Errorf("B2 media storage is not configured")
 	}
@@ -111,49 +110,46 @@ func (c *Client) PresignPost(key, contentType string, maxBytes int64, now time.T
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	expiresAt := now.Add(c.presignTTL).UTC()
+	expiresSeconds := int64(c.presignTTL / time.Second)
+	if expiresSeconds <= 0 {
+		expiresSeconds = 1
+	}
+	expiresAt := now.Add(time.Duration(expiresSeconds) * time.Second).UTC()
 	amzDate := now.UTC().Format("20060102T150405Z")
 	shortDate := now.UTC().Format("20060102")
 	credentialScope := shortDate + "/" + c.region + "/" + awsService + "/aws4_request"
 	credential := c.keyID + "/" + credentialScope
-	fields := map[string]string{
-		"key":              key,
-		"Content-Type":     contentType,
-		"x-amz-algorithm":  awsAlgorithm,
-		"x-amz-credential": credential,
-		"x-amz-date":       amzDate,
+	headers := map[string]string{}
+	if contentType != "" {
+		headers["content-type"] = contentType
 	}
 	if c.serverSideEncryption != "" {
-		fields["x-amz-server-side-encryption"] = c.serverSideEncryption
+		headers["x-amz-server-side-encryption"] = c.serverSideEncryption
 	}
-	conditions := []any{
-		map[string]string{"bucket": c.bucket},
-		map[string]string{"key": key},
-		[]any{"content-length-range", 1, maxBytes},
-		map[string]string{"Content-Type": contentType},
-		map[string]string{"x-amz-algorithm": awsAlgorithm},
-		map[string]string{"x-amz-credential": credential},
-		map[string]string{"x-amz-date": amzDate},
-	}
-	if c.serverSideEncryption != "" {
-		conditions = append(conditions, map[string]string{"x-amz-server-side-encryption": c.serverSideEncryption})
-	}
-	policy, err := json.Marshal(map[string]any{
-		"expiration": expiresAt.Format(time.RFC3339),
-		"conditions": conditions,
-	})
-	if err != nil {
-		return SignedUpload{}, fmt.Errorf("build B2 upload policy: %w", err)
-	}
-	encodedPolicy := base64.StdEncoding.EncodeToString(policy)
-	fields["policy"] = encodedPolicy
-	fields["x-amz-signature"] = hex.EncodeToString(hmacSHA256(signingKey(c.applicationKey, shortDate, c.region), []byte(encodedPolicy)))
+
+	signedHeaders := signedHeaderNames(headers, c.endpoint.Host)
+	query := url.Values{}
+	query.Set("X-Amz-Algorithm", awsAlgorithm)
+	query.Set("X-Amz-Credential", credential)
+	query.Set("X-Amz-Date", amzDate)
+	query.Set("X-Amz-Expires", strconv.FormatInt(expiresSeconds, 10))
+	query.Set("X-Amz-SignedHeaders", strings.Join(signedHeaders, ";"))
+	canonicalRequest := strings.Join([]string{
+		http.MethodPut,
+		canonicalPath(c.bucket, key),
+		query.Encode(),
+		canonicalHeaders(headers, c.endpoint.Host),
+		strings.Join(signedHeaders, ";"),
+		unsignedPayload,
+	}, "\n")
+	query.Set("X-Amz-Signature", c.signature(shortDate, credentialScope, amzDate, canonicalRequest))
+	uploadURL := c.objectURL(key)
+	uploadURL.RawQuery = query.Encode()
 
 	return SignedUpload{
-		URL:       c.bucketURL().String(),
-		Method:    http.MethodPost,
-		Headers:   map[string]string{},
-		Fields:    fields,
+		URL:       uploadURL.String(),
+		Method:    http.MethodPut,
+		Headers:   publicHeaders(headers),
 		ExpiresAt: expiresAt.Format(time.RFC3339),
 		MaxBytes:  maxBytes,
 	}, nil

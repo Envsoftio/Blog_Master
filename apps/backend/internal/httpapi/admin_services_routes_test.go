@@ -132,8 +132,9 @@ func TestAdminMediaUploadCompletionScansAndCreatesVariants(t *testing.T) {
 	if created.Data.Status != "uploading" ||
 		created.Data.Upload == nil ||
 		created.Data.Upload.URL == "" ||
-		created.Data.Upload.Method != http.MethodPost ||
-		created.Data.Upload.Fields["key"] != created.Data.ObjectKey {
+		created.Data.Upload.Method != http.MethodPut ||
+		created.Data.Upload.Headers["Content-Type"] != "image/png" ||
+		len(created.Data.Upload.Fields) != 0 {
 		t.Fatalf("expected signed upload target, got %#v", created.Data)
 	}
 	mediaStorage.objects[created.Data.ObjectKey] = imageBytes
@@ -407,12 +408,11 @@ func (s *fakeMediaStorage) PublicURL(key string) string {
 	return "https://cdn.example.test/" + key
 }
 
-func (s *fakeMediaStorage) PresignPost(key, contentType string, maxBytes int64, now time.Time) (b2.SignedUpload, error) {
+func (s *fakeMediaStorage) PresignPut(key, contentType string, maxBytes int64, now time.Time) (b2.SignedUpload, error) {
 	return b2.SignedUpload{
 		URL:       "https://uploads.example.test/" + key,
-		Method:    http.MethodPost,
-		Headers:   map[string]string{},
-		Fields:    map[string]string{"key": key, "Content-Type": contentType},
+		Method:    http.MethodPut,
+		Headers:   map[string]string{"Content-Type": contentType},
 		ExpiresAt: now.Add(15 * time.Minute).Format(time.RFC3339),
 		MaxBytes:  maxBytes,
 	}, nil

@@ -95,7 +95,7 @@ func (s *Server) createMediaAsset(c *fiber.Ctx) error {
 		return s.adminMutationError(c, err, "Could not register media")
 	}
 	if s.mediaStorage != nil {
-		signed, err := s.mediaStorage.PresignPost(asset.ObjectKey, asset.ContentType, asset.Bytes, now)
+		signed, err := s.mediaStorage.PresignPut(asset.ObjectKey, asset.ContentType, asset.Bytes, now)
 		if err != nil {
 			_, _ = s.store.FailMediaAsset(c.UserContext(), user.ID, c.Params("projectID"), asset.ID, "could not sign B2 upload")
 			return problem(c, fiber.StatusInternalServerError, "Could not sign media upload", "")

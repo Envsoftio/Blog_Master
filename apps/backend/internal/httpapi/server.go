@@ -43,7 +43,7 @@ type Server struct {
 type mediaStorage interface {
 	Bucket() string
 	PublicURL(key string) string
-	PresignPost(key, contentType string, maxBytes int64, now time.Time) (b2.SignedUpload, error)
+	PresignPut(key, contentType string, maxBytes int64, now time.Time) (b2.SignedUpload, error)
 	GetObject(ctx context.Context, key string, maxBytes int64) ([]byte, string, error)
 	PutObject(ctx context.Context, key string, body []byte, contentType string) error
 	DeleteObject(ctx context.Context, key string) error
