@@ -212,12 +212,22 @@ export type AIJob = {
   id: string
   projectId: string
   contentId?: string
+  revisionId?: string
   type: string
+  articleType?: string
   status: string
+  promptTemplateVersion?: string
+  voiceProfileId?: string
+  voiceProfileVersion?: number
+  evidencePacketId?: string
+  evidencePacketVersion?: number
+  inputHash?: string
+  sourceRevisionHash?: string
   createdAt?: string
   updatedAt?: string
   result?: unknown
   error?: string
+  reused?: boolean
 }
 
 export type AIJobEvent = {

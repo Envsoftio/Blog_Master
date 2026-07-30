@@ -57,9 +57,18 @@
           </label>
           <label class="field field--wide">
             <span>Article</span>
-            <select v-model="brief.contentId">
-              <option value="">No article selected</option>
+            <select v-model="brief.contentId" required>
+              <option value="" disabled>Select an article</option>
               <option v-for="article in articles" :key="article.id" :value="article.id">{{ article.title }}</option>
+            </select>
+          </label>
+          <label class="field field--wide">
+            <span>Approved evidence</span>
+            <select v-model="brief.evidencePacketId" required :disabled="!brief.contentId">
+              <option value="" disabled>Select an evidence version</option>
+              <option v-for="packet in approvedBriefEvidence" :key="packet.id" :value="packet.id">
+                Version {{ packet.version }} - {{ packet.packet.thesis }}
+              </option>
             </select>
           </label>
           <label class="field field--wide">
@@ -80,13 +89,13 @@
           </label>
           <label class="field field--wide">
             <span>Call to action</span>
-            <input v-model.trim="brief.cta" placeholder="Optional next step for the reader">
+            <input v-model.trim="brief.cta" required placeholder="Relevant next step for the reader">
           </label>
         </div>
 
         <div class="form-footer">
           <span><ShieldCheck :size="15" />AI output remains a proposal until reviewed.</span>
-          <button class="button button--primary" type="submit" :disabled="creatingJob || !canSubmit">
+          <button class="button button--primary" type="submit" :disabled="creatingJob || !canSubmit || !canWriteEvidence">
             <LoaderCircle v-if="creatingJob" class="spin" :size="16" />
             <WandSparkles v-else :size="16" />
             Create job
@@ -416,7 +425,12 @@
       <div v-if="jobs.length" class="jobs-table">
         <div class="jobs-row jobs-row--header"><span>Job</span><span>Status</span><span>Model</span><span>Updated</span><span>ID</span></div>
         <div v-for="job in jobs" :key="job.id" class="jobs-row">
-          <span><strong>{{ labelize(job.type) }}</strong></span>
+          <span>
+            <strong>{{ labelize(job.type) }}</strong>
+            <small v-if="job.voiceProfileVersion && job.evidencePacketVersion">
+              Voice v{{ job.voiceProfileVersion }} / Evidence v{{ job.evidencePacketVersion }}
+            </small>
+          </span>
           <span><i class="job-status" :class="`job-status--${job.status}`" />{{ labelize(job.status) }}</span>
           <span :title="modelForJob(job.id)">{{ modelForJob(job.id) }}</span>
           <span>{{ relativeDate(job.updatedAt || job.createdAt) }}</span>
@@ -526,6 +540,7 @@ const brief = reactive({
   articleType: 'standard',
   jobType: 'outline',
   contentId: '',
+  evidencePacketId: '',
   purpose: '',
   audience: '',
   angle: '',
@@ -573,15 +588,23 @@ const evidenceForm = reactive({
   callToAction: '',
   publicationRecommendation: '' as EvidencePacketDocument['publicationRecommendation'] | ''
 })
+const approvedBriefEvidence = computed(() => evidencePackets.value.filter(packet =>
+  packet.contentId === brief.contentId &&
+  Boolean(packet.approvedAt) &&
+  packet.packet.publicationRecommendation === 'ready'
+))
 const readinessChecks = computed(() => [
+  { label: 'Article selected', ready: brief.contentId.length > 0 },
   { label: 'Clear purpose', ready: brief.purpose.trim().length >= 20 },
   { label: 'Defined audience', ready: brief.audience.trim().length >= 10 },
   { label: 'Unique angle', ready: brief.angle.trim().length >= 15 },
-  { label: 'Evidence supplied', ready: brief.evidence.trim().length >= 20 },
-  { label: 'Working title', ready: brief.title.trim().length >= 8 }
+  { label: 'Approved evidence', ready: brief.evidencePacketId.length > 0 },
+  { label: 'Voice profile', ready: Boolean(voiceProfile.value) },
+  { label: 'Working title', ready: brief.title.trim().length >= 8 },
+  { label: 'Call to action', ready: brief.cta.trim().length >= 5 }
 ])
 const readinessScore = computed(() => Math.round(readinessChecks.value.filter(item => item.ready).length / readinessChecks.value.length * 100))
-const canSubmit = computed(() => readinessChecks.value.slice(0, 3).every(item => item.ready))
+const canSubmit = computed(() => readinessChecks.value.every(item => item.ready))
 const canManageVoice = computed(() => project.value?.role === 'project_owner' || project.value?.role === 'project_admin')
 const canWriteEvidence = computed(() => ['project_owner', 'project_admin', 'editor', 'writer'].includes(project.value?.role || ''))
 const canApproveEvidence = computed(() => ['project_owner', 'project_admin', 'editor', 'reviewer'].includes(project.value?.role || ''))
@@ -638,6 +661,12 @@ const latestQualityChecks = computed(() => {
 })
 
 onMounted(loadWorkspace)
+
+watch(() => brief.contentId, (contentID) => {
+  const article = articles.value.find(item => item.id === contentID)
+  if (article) brief.articleType = article.articleType
+  brief.evidencePacketId = approvedBriefEvidence.value[0]?.id || ''
+})
 
 async function loadWorkspace() {
   jobsPending.value = true
@@ -705,6 +734,8 @@ async function createJob() {
       type: brief.jobType,
       contentId: brief.contentId,
       articleType: brief.articleType,
+      evidencePacketId: brief.evidencePacketId,
+      voiceProfileVersion: voiceProfile.value?.version || 0,
       brief: {
         title: brief.title,
         purpose: brief.purpose,
@@ -714,8 +745,8 @@ async function createJob() {
         cta: brief.cta
       }
     })
-    jobs.value = [response.data, ...jobs.value]
-    successMessage.value = 'AI job created.'
+    jobs.value = [response.data, ...jobs.value.filter(job => job.id !== response.data.id)]
+    successMessage.value = response.data.reused ? 'Matching AI job reused.' : 'AI job created.'
     activeTab.value = 'jobs'
   } catch (error) {
     errorMessage.value = apiStatus(error) === 501
@@ -999,6 +1030,8 @@ function relativeDate(value?: string) {
 .jobs-table { overflow-x: auto; }
 .jobs-row { display: grid; min-width: 760px; grid-template-columns: 1fr .65fr 1fr .7fr 1fr; gap: 16px; align-items: center; padding: 11px 16px; border-bottom: 1px solid var(--border); font-size: 10px; }
 .jobs-row > span { display: flex; min-width: 0; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jobs-row:not(.jobs-row--header) > span:first-child { align-items: flex-start; flex-direction: column; gap: 2px; }
+.jobs-row:not(.jobs-row--header) > span:first-child small { color: var(--text-soft); font-size: 8px; }
 .jobs-row--header { background: var(--surface-subtle); color: var(--text-soft); font-size: 9px; font-weight: 650; text-transform: uppercase; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-soft); }
 .quality-section { display: grid; gap: 12px; }

@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -62,16 +64,49 @@ func TestAdminAIJobRoutesPersistAndCancelJobs(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "ai-owner@example.test", "correct horse battery staple")
 	project := createTestProject(t, server, login, `{"slug":"ai-project","name":"AI Project"}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"ai-jobs","name":"AI Jobs"}`)
+	article := createTestArticle(
+		t,
+		server,
+		login,
+		project.ID,
+		`{"articleType":"guide","title":"AI Job Guide","slug":"ai-job-guide","primaryCategoryId":"`+category.ID+`","html":"<p>Initial AI job source.</p>"}`,
+	)
+	voiceProfile, evidencePacket := createApprovedAIJobContext(t, server, db, login, project.ID, article.ID)
 	basePath := "/api/v1/projects/" + project.ID + "/ai/jobs"
+	jobBody := validAIJobRequestBody("outline", article.ID, "guide", evidencePacket.ID, voiceProfile.Version, "A practical angle grounded in the approved evidence packet.")
 
-	createResponse := mustTest(t, server, newMemberMutationRequest(http.MethodPost, basePath, `{"type":"outline","brief":{"title":"A useful guide"}}`, login))
+	createResponse := mustTest(t, server, newMemberMutationRequest(http.MethodPost, basePath, jobBody, login))
 	if createResponse.StatusCode != http.StatusAccepted {
 		t.Fatalf("expected AI job create 202, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
 	}
 	var created Envelope[store.AdminAIJob]
 	decodeJSONResponse(t, createResponse, &created)
-	if created.Data.Status != "queued" || created.Data.Type != "outline" {
+	if created.Data.Status != "queued" ||
+		created.Data.Type != "outline" ||
+		created.Data.RevisionID != article.LatestRevision.ID ||
+		created.Data.VoiceProfileVersion != voiceProfile.Version ||
+		created.Data.EvidencePacketVersion != evidencePacket.Version ||
+		len(created.Data.InputHash) != 64 {
 		t.Fatalf("unexpected AI job %#v", created.Data)
+	}
+	snapshot, err := server.store.GetAIJobInputSnapshot(context.Background(), project.ID, created.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Brief.Title != "A useful evidence-backed guide" ||
+		snapshot.Content.RevisionHash != created.Data.SourceRevisionHash ||
+		snapshot.Evidence.ID != evidencePacket.ID {
+		t.Fatalf("unexpected AI input snapshot %#v", snapshot)
+	}
+	reusedResponse := mustTest(t, server, newMemberMutationRequest(http.MethodPost, basePath, jobBody, login))
+	if reusedResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected duplicate AI job request 202, got %d", reusedResponse.StatusCode)
+	}
+	var reused Envelope[store.AdminAIJob]
+	decodeJSONResponse(t, reusedResponse, &reused)
+	if reused.Data.ID != created.Data.ID || !reused.Data.Reused {
+		t.Fatalf("expected matching input to reuse job %q, got %#v", created.Data.ID, reused.Data)
 	}
 
 	eventsRequest := httptest.NewRequest(http.MethodGet, basePath+"/"+created.Data.ID+"/events", nil)
@@ -111,6 +146,9 @@ func TestAdminAIJobRoutesPersistAndCancelJobs(t *testing.T) {
 	listRequest := httptest.NewRequest(http.MethodGet, basePath, nil)
 	addCookies(listRequest, login.cookies)
 	listResponse := mustTest(t, server, listRequest)
+	if cacheControl := listResponse.Header.Get("Cache-Control"); cacheControl != "private, no-store" {
+		t.Fatalf("expected private no-store AI job list, got %q", cacheControl)
+	}
 	var jobs ListEnvelope[store.AdminAIJob]
 	decodeJSONResponse(t, listResponse, &jobs)
 	if len(jobs.Data) != 1 || jobs.Data[0].ID != created.Data.ID {
@@ -181,6 +219,226 @@ func TestAdminAIJobRoutesPersistAndCancelJobs(t *testing.T) {
 	}
 }
 
+func TestAdminAIJobsBindLiveApprovedContextAndRevisionHash(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "ai-context-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"ai-context","name":"AI Context"}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"context","name":"Context"}`)
+	article := createTestArticle(
+		t,
+		server,
+		login,
+		project.ID,
+		`{"articleType":"guide","title":"Context Guide","slug":"context-guide","primaryCategoryId":"`+category.ID+`","html":"<p>Original context.</p>"}`,
+	)
+	voice, approvedEvidence := createApprovedAIJobContext(t, server, db, login, project.ID, article.ID)
+	path := "/api/v1/projects/" + project.ID + "/ai/jobs"
+	validBody := validAIJobRequestBody(
+		"draft",
+		article.ID,
+		"guide",
+		approvedEvidence.ID,
+		voice.Version,
+		"Use the approved project evidence to make one concrete implementation argument.",
+	)
+
+	draftEvidenceResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/evidence-packets",
+		validEvidencePacketBody(article.ID, "source-"+article.ID, "A newer evidence thesis that has not been approved yet."),
+		login,
+	))
+	if draftEvidenceResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected draft evidence create 201, got %d: %s", draftEvidenceResponse.StatusCode, readBody(t, draftEvidenceResponse))
+	}
+	var draftEvidence Envelope[store.EvidencePacket]
+	decodeJSONResponse(t, draftEvidenceResponse, &draftEvidence)
+	unapprovedResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		path,
+		validAIJobRequestBody(
+			"draft",
+			article.ID,
+			"guide",
+			draftEvidence.Data.ID,
+			voice.Version,
+			"Use the pending packet even though a reviewer has not approved its factual basis.",
+		),
+		login,
+	))
+	if unapprovedResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected unapproved evidence to fail with 409, got %d", unapprovedResponse.StatusCode)
+	}
+
+	otherProject := createTestProject(t, server, login, `{"slug":"other-ai-context","name":"Other AI Context"}`)
+	otherCategory := createTestCategory(t, server, login, otherProject.ID, `{"slug":"other-context","name":"Other Context"}`)
+	otherArticle := createTestArticle(
+		t,
+		server,
+		login,
+		otherProject.ID,
+		`{"articleType":"guide","title":"Other Context Guide","slug":"other-context-guide","primaryCategoryId":"`+otherCategory.ID+`","html":"<p>Other context.</p>"}`,
+	)
+	_, otherEvidence := createApprovedAIJobContext(t, server, db, login, otherProject.ID, otherArticle.ID)
+	crossProjectResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		path,
+		validAIJobRequestBody(
+			"draft",
+			article.ID,
+			"guide",
+			otherEvidence.ID,
+			voice.Version,
+			"Attempt to bind evidence owned by another project into this draft request.",
+		),
+		login,
+	))
+	if crossProjectResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected cross-project evidence to fail with 400, got %d", crossProjectResponse.StatusCode)
+	}
+
+	missingVoiceResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		path,
+		validAIJobRequestBody(
+			"draft",
+			article.ID,
+			"guide",
+			approvedEvidence.ID,
+			voice.Version+99,
+			"Attempt to bind a voice profile version that does not exist for this project.",
+		),
+		login,
+	))
+	if missingVoiceResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected missing voice version to fail with 409, got %d", missingVoiceResponse.StatusCode)
+	}
+
+	if _, err := db.Exec(`DELETE FROM sources WHERE project_id = ? AND id = ?`, project.ID, "source-"+article.ID); err != nil {
+		t.Fatal(err)
+	}
+	staleEvidenceResponse := mustTest(t, server, newMemberMutationRequest(http.MethodPost, path, validBody, login))
+	if staleEvidenceResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected stale evidence sources to fail with 400, got %d", staleEvidenceResponse.StatusCode)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO sources(id, project_id, title, url, source_type, is_primary)
+		VALUES (?, ?, 'AI job evidence', 'https://example.test/ai-job-evidence', 'web', 1)
+	`, "source-"+article.ID, project.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	createResponse := mustTest(t, server, newMemberMutationRequest(http.MethodPost, path, validBody, login))
+	if createResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected context-bound job 202, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminAIJob]
+	decodeJSONResponse(t, createResponse, &created)
+	if created.Data.RevisionID != article.LatestRevision.ID ||
+		created.Data.SourceRevisionHash != article.LatestRevision.ContentHash ||
+		created.Data.PromptTemplateVersion != "section-draft-v1" ||
+		created.Data.EvidencePacketID != approvedEvidence.ID ||
+		created.Data.VoiceProfileID != voice.ID {
+		t.Fatalf("unexpected bound AI job %#v", created.Data)
+	}
+	if _, err := server.store.RecordAIJobProgress(context.Background(), project.ID, created.Data.ID, store.AIJobProgressInput{
+		Type:     "started",
+		Status:   "running",
+		Progress: 10,
+		Message:  "Validating the bound context",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.store.RecordAIJobProgress(context.Background(), project.ID, created.Data.ID, store.AIJobProgressInput{
+		Type:     "needs_input",
+		Status:   "needs_input",
+		Progress: 15,
+		Message:  "Waiting for a subject-matter detail",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	needsInputReuseResponse := mustTest(t, server, newMemberMutationRequest(http.MethodPost, path, validBody, login))
+	var needsInputReuse Envelope[store.AdminAIJob]
+	decodeJSONResponse(t, needsInputReuseResponse, &needsInputReuse)
+	if needsInputReuseResponse.StatusCode != http.StatusAccepted ||
+		needsInputReuse.Data.ID != created.Data.ID ||
+		!needsInputReuse.Data.Reused {
+		t.Fatalf("expected needs-input job to be reused, got %#v", needsInputReuse.Data)
+	}
+
+	changedBriefResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		path,
+		validAIJobRequestBody(
+			"draft",
+			article.ID,
+			"guide",
+			approvedEvidence.ID,
+			voice.Version,
+			"A materially different angle should produce a distinct canonical input hash.",
+		),
+		login,
+	))
+	var changedBrief Envelope[store.AdminAIJob]
+	decodeJSONResponse(t, changedBriefResponse, &changedBrief)
+	if changedBriefResponse.StatusCode != http.StatusAccepted ||
+		changedBrief.Data.ID == created.Data.ID ||
+		changedBrief.Data.InputHash == created.Data.InputHash {
+		t.Fatalf("expected changed brief to create a distinct job, got %#v", changedBrief.Data)
+	}
+
+	newRevision := createTestRevision(t, server, login, project.ID, article.ID, `{
+		"title":"Context Guide Updated",
+		"html":"<p>Updated source context for a new AI request.</p>"
+	}`)
+	newRevisionResponse := mustTest(t, server, newMemberMutationRequest(http.MethodPost, path, validBody, login))
+	var revisionBound Envelope[store.AdminAIJob]
+	decodeJSONResponse(t, newRevisionResponse, &revisionBound)
+	if newRevisionResponse.StatusCode != http.StatusAccepted ||
+		revisionBound.Data.ID == created.Data.ID ||
+		revisionBound.Data.RevisionID != newRevision.ID ||
+		revisionBound.Data.SourceRevisionHash != newRevision.ContentHash ||
+		revisionBound.Data.InputHash == created.Data.InputHash {
+		t.Fatalf("expected new revision to change the AI job binding, got %#v", revisionBound.Data)
+	}
+
+	if _, err := db.Exec(`
+		UPDATE ai_jobs
+		SET input_json = '{}'
+		WHERE project_id = ? AND id = ?
+	`, project.ID, created.Data.ID); err == nil {
+		t.Fatal("expected persisted AI job inputs to be immutable")
+	}
+	if _, err := db.Exec(`
+		INSERT INTO ai_jobs(
+		  id, project_id, content_id, revision_id, task_type, article_type, status,
+		  prompt_template_version, voice_profile_id, voice_profile_version,
+		  evidence_packet_id, evidence_packet_version, input_hash, input_json,
+		  source_revision_hash, started_by
+		) VALUES (
+		  'mismatched-article-type-job', ?, ?, ?, 'outline', 'comparison', 'queued',
+		  'outline-v1', ?, ?, ?, ?, 'mismatched-article-type-hash', '{}', ?, ?
+		)
+	`, project.ID, article.ID, newRevision.ID, voice.ID, voice.Version,
+		approvedEvidence.ID, approvedEvidence.Version, newRevision.ContentHash, login.userID); err == nil {
+		t.Fatal("expected the database to reject an AI job with a mismatched article type")
+	}
+	if _, err := db.Exec(`
+		INSERT INTO ai_jobs(
+		  id, project_id, content_id, revision_id, task_type, article_type, status,
+		  prompt_template_version, voice_profile_id, voice_profile_version,
+		  evidence_packet_id, evidence_packet_version, input_hash, input_json,
+		  source_revision_hash, started_by
+		) VALUES (
+		  'cross-context-job', ?, ?, ?, 'outline', 'guide', 'queued',
+		  'outline-v1', ?, ?, ?, ?, 'cross-context-hash', '{}', ?, ?
+		)
+	`, project.ID, article.ID, newRevision.ID, voice.ID, voice.Version,
+		otherEvidence.ID, otherEvidence.Version, newRevision.ContentHash, login.userID); err == nil {
+		t.Fatal("expected the database to reject a cross-project evidence binding")
+	}
+}
+
 func TestAdminAIProvenanceQualityResultsAndApprovalGate(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "ai-reviewer@example.test", "correct horse battery staple")
@@ -194,11 +452,19 @@ func TestAdminAIProvenanceQualityResultsAndApprovalGate(t *testing.T) {
 		`{"articleType":"guide","title":"Reviewed Guide","slug":"reviewed-guide","primaryCategoryId":"`+category.ID+`","html":"<p>Reviewed material.</p>"}`,
 	)
 	revisionID := article.LatestRevision.ID
+	voiceProfile, evidencePacket := createApprovedAIJobContext(t, server, db, login, project.ID, article.ID)
 	jobPath := "/api/v1/projects/" + project.ID + "/ai/jobs"
 	jobResponse := mustTest(t, server, newMemberMutationRequest(
 		http.MethodPost,
 		jobPath,
-		`{"type":"quality_check","contentId":"`+article.ID+`"}`,
+		validAIJobRequestBody(
+			"quality_check",
+			article.ID,
+			"guide",
+			evidencePacket.ID,
+			voiceProfile.Version,
+			"Review factual support and voice alignment before human approval.",
+		),
 		login,
 	))
 	if jobResponse.StatusCode != http.StatusAccepted {
@@ -556,4 +822,78 @@ func hasWebhookAttempt(attempts []store.WebhookAttempt, attemptID, status string
 		}
 	}
 	return false
+}
+
+func createApprovedAIJobContext(
+	t *testing.T,
+	server *Server,
+	db *sql.DB,
+	login adminLoginResult,
+	projectID, articleID string,
+) (store.VoiceProfile, store.EvidencePacket) {
+	t.Helper()
+	voiceResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectID+"/voice-profile",
+		validVoiceProfileBody("en", "Direct, exact, and practical"),
+		login,
+	))
+	if voiceResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected AI test voice profile 201, got %d: %s", voiceResponse.StatusCode, readBody(t, voiceResponse))
+	}
+	var voice Envelope[store.VoiceProfile]
+	decodeJSONResponse(t, voiceResponse, &voice)
+
+	sourceID := "source-" + articleID
+	if _, err := db.Exec(`
+		INSERT INTO sources(id, project_id, title, url, source_type, is_primary)
+		VALUES (?, ?, 'AI job evidence', 'https://example.test/ai-job-evidence', 'web', 1)
+	`, sourceID, projectID); err != nil {
+		t.Fatal(err)
+	}
+	evidenceResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectID+"/evidence-packets",
+		validEvidencePacketBody(articleID, sourceID, "An evidence-backed thesis for a bounded AI job request."),
+		login,
+	))
+	if evidenceResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected AI test evidence packet 201, got %d: %s", evidenceResponse.StatusCode, readBody(t, evidenceResponse))
+	}
+	var evidence Envelope[store.EvidencePacket]
+	decodeJSONResponse(t, evidenceResponse, &evidence)
+
+	approvalResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectID+"/evidence-packets/"+evidence.Data.ID+"/approve",
+		`{}`,
+		login,
+	))
+	if approvalResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected AI test evidence approval 200, got %d: %s", approvalResponse.StatusCode, readBody(t, approvalResponse))
+	}
+	decodeJSONResponse(t, approvalResponse, &evidence)
+	return voice.Data, evidence.Data
+}
+
+func validAIJobRequestBody(
+	taskType, articleID, articleType, evidencePacketID string,
+	voiceProfileVersion int64,
+	uniqueAngle string,
+) string {
+	return `{
+		"type":"` + taskType + `",
+		"contentId":"` + articleID + `",
+		"articleType":"` + articleType + `",
+		"evidencePacketId":"` + evidencePacketID + `",
+		"voiceProfileVersion":` + strconv.FormatInt(voiceProfileVersion, 10) + `,
+		"brief":{
+			"title":"A useful evidence-backed guide",
+			"purpose":"Help implementation teams make a documented and defensible decision.",
+			"audience":"Product and engineering teams",
+			"uniqueAngle":"` + uniqueAngle + `",
+			"evidence":"Use only the approved packet and clearly identify its limitations.",
+			"cta":"Review the evidence before accepting the proposed output."
+		}
+	}`
 }

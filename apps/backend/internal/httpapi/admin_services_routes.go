@@ -24,8 +24,12 @@ type mediaPatchRequest struct {
 }
 
 type aiJobRequest struct {
-	Type      string `json:"type"`
-	ContentID string `json:"contentId"`
+	Type                string           `json:"type"`
+	ContentID           string           `json:"contentId"`
+	ArticleType         string           `json:"articleType"`
+	EvidencePacketID    string           `json:"evidencePacketId"`
+	VoiceProfileVersion int64            `json:"voiceProfileVersion"`
+	Brief               store.AIJobBrief `json:"brief"`
 }
 
 type webhookRequest struct {
@@ -123,6 +127,7 @@ func (s *Server) listAIJobs(c *fiber.Ctx) error {
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list AI jobs")
 	}
+	c.Set(fiber.HeaderCacheControl, "private, no-store")
 	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.AdminAIJob]{
 		Data: jobs,
 		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: len(jobs)},
@@ -135,12 +140,16 @@ func (s *Server) createAIJob(c *fiber.Ctx) error {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	var input aiJobRequest
-	if err := decodeRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	if err := decodeStrictRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
 	}
 	job, err := s.store.CreateAIJob(c.UserContext(), user.ID, c.Params("projectID"), store.AIJobInput{
-		Type:      input.Type,
-		ContentID: strings.TrimSpace(input.ContentID),
+		Type:                input.Type,
+		ContentID:           strings.TrimSpace(input.ContentID),
+		ArticleType:         input.ArticleType,
+		EvidencePacketID:    input.EvidencePacketID,
+		VoiceProfileVersion: input.VoiceProfileVersion,
+		Brief:               input.Brief,
 	})
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create AI job")
@@ -157,6 +166,7 @@ func (s *Server) getAIJob(c *fiber.Ctx) error {
 	if err != nil {
 		return s.adminReadError(c, err, "AI job not found", "Could not load AI job")
 	}
+	c.Set(fiber.HeaderCacheControl, "private, no-store")
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminAIJob]{Data: job})
 }
 

@@ -110,6 +110,57 @@ func TestProjectScopedOperationalForeignKeys(t *testing.T) {
 	`, "foreign key")
 }
 
+func TestAIJobContextMigrationAllowsLegacyDuplicateHashesAndGuardsUpgrades(t *testing.T) {
+	db, err := OpenSQLite(filepath.Join(t.TempDir(), "legacy-ai-jobs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`
+		CREATE TABLE schema_migrations(
+		  version TEXT PRIMARY KEY,
+		  applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []migration{
+		{version: "0001_initial", statements: initialMigration},
+		{version: "0002_session_reauthentication", statements: sessionReauthenticationMigration},
+		{version: "0003_invitation_revocation", statements: invitationRevocationMigration},
+		{version: "0004_audit_event_ids", statements: auditEventIDsMigration},
+		{version: "0005_author_photo_asset_guard", statements: authorPhotoAssetGuardMigration},
+		{version: "0006_review_comments_index", statements: reviewCommentsIndexMigration},
+		{version: "0007_revision_base_guard", statements: revisionBaseGuardMigration},
+		{version: "0008_admin_frontend_services", statements: adminFrontendServicesMigration},
+		{version: "0009_preview_tokens", statements: previewTokensMigration},
+		{version: "0010_ai_observability", statements: aiObservabilityMigration},
+		{version: "0011_ai_context", statements: aiContextMigration},
+	} {
+		if err := applyMigration(db, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedProjects(t, db)
+	if _, err := db.Exec(`
+		INSERT INTO ai_jobs(id, project_id, task_type, status, input_hash, started_by)
+		VALUES
+		  ('legacy-ai-job-one', 'project-a', 'outline', 'queued', 'legacy-duplicate-hash', 'user'),
+		  ('legacy-ai-job-two', 'project-a', 'outline', 'queued', 'legacy-duplicate-hash', 'user'),
+		  ('legacy-ai-job-unbound', 'project-a', 'outline', 'queued', NULL, 'user')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigration(db, migration{version: "0012_ai_job_context", statements: aiJobContextMigration}); err != nil {
+		t.Fatalf("expected legacy duplicate hashes not to block migration: %v", err)
+	}
+	assertSQLFails(t, db, `
+		UPDATE ai_jobs
+		SET input_hash = 'newly-bound-without-context'
+		WHERE id = 'legacy-ai-job-unbound'
+	`, "context is incomplete")
+}
+
 func TestRevisionBaseMustBeEarlierAndBelongToSameProjectArticle(t *testing.T) {
 	db := testDatabase(t)
 	seedProjects(t, db)

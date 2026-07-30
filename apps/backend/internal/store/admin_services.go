@@ -47,19 +47,42 @@ type MediaPatch struct {
 }
 
 type AdminAIJob struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"projectId"`
-	ContentID string `json:"contentId,omitempty"`
-	Type      string `json:"type"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"createdAt"`
-	UpdatedAt string `json:"updatedAt"`
-	Error     string `json:"error,omitempty"`
+	ID                    string `json:"id"`
+	ProjectID             string `json:"projectId"`
+	ContentID             string `json:"contentId,omitempty"`
+	RevisionID            string `json:"revisionId,omitempty"`
+	Type                  string `json:"type"`
+	ArticleType           string `json:"articleType,omitempty"`
+	Status                string `json:"status"`
+	PromptTemplateVersion string `json:"promptTemplateVersion,omitempty"`
+	VoiceProfileID        string `json:"voiceProfileId,omitempty"`
+	VoiceProfileVersion   int64  `json:"voiceProfileVersion,omitempty"`
+	EvidencePacketID      string `json:"evidencePacketId,omitempty"`
+	EvidencePacketVersion int64  `json:"evidencePacketVersion,omitempty"`
+	InputHash             string `json:"inputHash,omitempty"`
+	SourceRevisionHash    string `json:"sourceRevisionHash,omitempty"`
+	CreatedAt             string `json:"createdAt"`
+	UpdatedAt             string `json:"updatedAt"`
+	Error                 string `json:"error,omitempty"`
+	Reused                bool   `json:"reused,omitempty"`
+}
+
+type AIJobBrief struct {
+	Title       string `json:"title"`
+	Purpose     string `json:"purpose"`
+	Audience    string `json:"audience"`
+	UniqueAngle string `json:"uniqueAngle"`
+	Evidence    string `json:"evidence"`
+	CTA         string `json:"cta"`
 }
 
 type AIJobInput struct {
-	Type      string
-	ContentID string
+	Type                string
+	ContentID           string
+	ArticleType         string
+	EvidencePacketID    string
+	VoiceProfileVersion int64
+	Brief               AIJobBrief
 }
 
 type AIJobProgressInput struct {
@@ -370,9 +393,7 @@ func (s *Store) ListAIJobs(ctx context.Context, userID, projectID string) ([]Adm
 	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, project_id, COALESCE(content_id, ''), task_type, status,
-		       started_at, COALESCE(completed_at, started_at), COALESCE(error_category, '')
+	rows, err := s.db.QueryContext(ctx, `SELECT `+adminAIJobSelectColumns+`
 		FROM ai_jobs
 		WHERE project_id = ?
 		ORDER BY started_at DESC, id DESC
@@ -384,8 +405,8 @@ func (s *Store) ListAIJobs(ctx context.Context, userID, projectID string) ([]Adm
 	defer rows.Close()
 	jobs := []AdminAIJob{}
 	for rows.Next() {
-		var job AdminAIJob
-		if err := rows.Scan(&job.ID, &job.ProjectID, &job.ContentID, &job.Type, &job.Status, &job.CreatedAt, &job.UpdatedAt, &job.Error); err != nil {
+		job, err := scanAdminAIJob(rows)
+		if err != nil {
 			return nil, err
 		}
 		jobs = append(jobs, job)
@@ -397,22 +418,9 @@ func (s *Store) CreateAIJob(ctx context.Context, userID, projectID string, input
 	if err := s.requireContentWrite(ctx, userID, projectID); err != nil {
 		return AdminAIJob{}, err
 	}
-	input.Type = strings.TrimSpace(input.Type)
+	input = normalizeAIJobInput(input)
 	if input.Type != "outline" && input.Type != "draft" && input.Type != "quality_check" {
 		return AdminAIJob{}, fmt.Errorf("%w: unsupported AI job type", ErrValidation)
-	}
-	if input.ContentID != "" {
-		var count int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM content_items WHERE project_id = ? AND id = ?`, projectID, input.ContentID).Scan(&count); err != nil {
-			return AdminAIJob{}, err
-		}
-		if count != 1 {
-			return AdminAIJob{}, fmt.Errorf("%w: article does not belong to this project", ErrValidation)
-		}
-	}
-	jobID, err := security.RandomID("aijob")
-	if err != nil {
-		return AdminAIJob{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -424,16 +432,174 @@ func (s *Store) CreateAIJob(ctx context.Context, userID, projectID string, input
 	} else if status != "active" {
 		return AdminAIJob{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
 	}
+	if err := validateAIJobInput(input); err != nil {
+		return AdminAIJob{}, err
+	}
+
+	var articleType, revisionID, revisionHash string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT content.article_type, revision.id, revision.content_hash
+		FROM content_items content
+		JOIN content_revisions revision
+		  ON revision.project_id = content.project_id
+		 AND revision.content_id = content.id
+		WHERE content.project_id = ? AND content.id = ?
+		ORDER BY revision.revision_number DESC
+		LIMIT 1
+	`, projectID, input.ContentID).Scan(&articleType, &revisionID, &revisionHash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AdminAIJob{}, fmt.Errorf("%w: article does not belong to this project", ErrValidation)
+		}
+		return AdminAIJob{}, err
+	}
+	if input.ArticleType != "" && input.ArticleType != articleType {
+		return AdminAIJob{}, fmt.Errorf("%w: articleType does not match the selected article", ErrValidation)
+	}
+
+	var voiceProfile VoiceProfile
+	if input.VoiceProfileVersion > 0 {
+		voiceProfile, err = scanVoiceProfile(tx.QueryRowContext(ctx, `
+			SELECT id, project_id, version, profile_json, created_by, created_at
+			FROM voice_profiles
+			WHERE project_id = ? AND version = ?
+		`, projectID, input.VoiceProfileVersion))
+	} else {
+		voiceProfile, err = scanVoiceProfile(tx.QueryRowContext(ctx, `
+			SELECT id, project_id, version, profile_json, created_by, created_at
+			FROM voice_profiles
+			WHERE project_id = ?
+			ORDER BY version DESC
+			LIMIT 1
+		`, projectID))
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return AdminAIJob{}, fmt.Errorf("%w: a project voice profile is required before creating an AI job", ErrInvalidWorkflow)
+	}
+	if err != nil {
+		return AdminAIJob{}, err
+	}
+	voiceProfile.Profile = normalizeVoiceProfile(voiceProfile.Profile)
+	if err := validateVoiceProfile(voiceProfile.Profile); err != nil {
+		return AdminAIJob{}, err
+	}
+
+	evidencePacket, err := scanEvidencePacket(tx.QueryRowContext(ctx, `
+		SELECT id, project_id, COALESCE(content_id, ''), version, packet_json,
+		       COALESCE(approved_by, ''), COALESCE(approved_at, ''),
+		       created_by, created_at
+		FROM evidence_packets
+		WHERE project_id = ? AND id = ?
+	`, projectID, input.EvidencePacketID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return AdminAIJob{}, fmt.Errorf("%w: evidence packet does not belong to this project", ErrValidation)
+	}
+	if err != nil {
+		return AdminAIJob{}, err
+	}
+	if evidencePacket.ContentID != input.ContentID {
+		return AdminAIJob{}, fmt.Errorf("%w: evidence packet does not belong to the selected article", ErrValidation)
+	}
+	evidencePacket.Packet = normalizeEvidencePacket(evidencePacket.Packet)
+	if err := validateEvidencePacket(evidencePacket.Packet); err != nil {
+		return AdminAIJob{}, err
+	}
+	if evidencePacket.ApprovedAt == "" || evidencePacket.Packet.PublicationRecommendation != "ready" {
+		return AdminAIJob{}, fmt.Errorf("%w: an approved, ready evidence packet is required before creating an AI job", ErrInvalidWorkflow)
+	}
+	if err := ensureEvidenceSources(ctx, tx, projectID, evidenceSourceIDs(evidencePacket.Packet)); err != nil {
+		return AdminAIJob{}, err
+	}
+
+	promptTemplateVersion := aiPromptTemplateVersion(input.Type)
+	inputJSON, inputHash, err := encodeAIJobSnapshot(AIJobInputSnapshot{
+		SchemaVersion:         "ai-job-input-v1",
+		TaskType:              input.Type,
+		ArticleType:           articleType,
+		PromptTemplateVersion: promptTemplateVersion,
+		Content: AIJobContentContext{
+			ID:           input.ContentID,
+			RevisionID:   revisionID,
+			RevisionHash: revisionHash,
+		},
+		Brief: input.Brief,
+		Voice: AIJobVoiceContext{
+			ID:      voiceProfile.ID,
+			Version: voiceProfile.Version,
+			Profile: voiceProfile.Profile,
+		},
+		Evidence: AIJobEvidenceContext{
+			ID:      evidencePacket.ID,
+			Version: evidencePacket.Version,
+			Packet:  evidencePacket.Packet,
+		},
+	})
+	if err != nil {
+		return AdminAIJob{}, err
+	}
+	if len(inputJSON) > 512*1024 {
+		return AdminAIJob{}, fmt.Errorf("%w: AI job input snapshot exceeds 512 KB", ErrValidation)
+	}
+
+	existing, err := findReusableAIJob(ctx, tx, projectID, inputHash)
+	if err == nil {
+		if err := insertAuditEventTx(ctx, tx, projectID, "user", userID, "ai_job.reuse", "ai_job", existing.ID, "success", map[string]any{
+			"input_hash": inputHash,
+			"status":     existing.Status,
+		}); err != nil {
+			return AdminAIJob{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return AdminAIJob{}, err
+		}
+		existing.Reused = true
+		return existing, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return AdminAIJob{}, err
+	}
+
+	jobID, err := security.RandomID("aijob")
+	if err != nil {
+		return AdminAIJob{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO ai_jobs(id, project_id, content_id, task_type, status, started_by)
-		VALUES (?, ?, ?, ?, 'queued', ?)
-	`, jobID, projectID, nullIfEmpty(input.ContentID), input.Type, userID); err != nil {
+		INSERT INTO ai_jobs(
+		  id, project_id, content_id, revision_id, task_type, article_type, status,
+		  prompt_template_version, voice_profile_id, voice_profile_version,
+		  evidence_packet_id, evidence_packet_version, input_hash, input_json,
+		  source_revision_hash, started_by
+		) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, jobID, projectID, input.ContentID, revisionID, input.Type, articleType,
+		promptTemplateVersion, voiceProfile.ID, voiceProfile.Version,
+		evidencePacket.ID, evidencePacket.Version, inputHash, inputJSON,
+		revisionHash, userID); err != nil {
+		insertErr := err
+		_ = tx.Rollback()
+		existing, reuseErr := findReusableAIJob(ctx, s.db, projectID, inputHash)
+		if reuseErr == nil {
+			if auditErr := s.recordAIJobReuse(ctx, projectID, userID, existing); auditErr != nil {
+				return AdminAIJob{}, auditErr
+			}
+			existing.Reused = true
+			return existing, nil
+		}
+		return AdminAIJob{}, insertErr
+	}
+	if err := appendAIJobEventTx(ctx, tx, projectID, jobID, "queued", "queued", 0, "AI job queued", map[string]any{
+		"inputHash":             inputHash,
+		"revisionId":            revisionID,
+		"voiceProfileVersion":   voiceProfile.Version,
+		"evidencePacketVersion": evidencePacket.Version,
+	}); err != nil {
 		return AdminAIJob{}, err
 	}
-	if err := appendAIJobEventTx(ctx, tx, projectID, jobID, "queued", "queued", 0, "AI job queued", nil); err != nil {
-		return AdminAIJob{}, err
-	}
-	if err := insertAuditEventTx(ctx, tx, projectID, "user", userID, "ai_job.create", "ai_job", jobID, "success", map[string]string{"type": input.Type}); err != nil {
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", userID, "ai_job.create", "ai_job", jobID, "success", map[string]any{
+		"type":                    input.Type,
+		"input_hash":              inputHash,
+		"revision_id":             revisionID,
+		"voice_profile_version":   voiceProfile.Version,
+		"evidence_packet_version": evidencePacket.Version,
+	}); err != nil {
 		return AdminAIJob{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -446,14 +612,10 @@ func (s *Store) GetAIJob(ctx context.Context, userID, projectID, jobID string) (
 	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
 		return AdminAIJob{}, err
 	}
-	var job AdminAIJob
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, project_id, COALESCE(content_id, ''), task_type, status,
-		       started_at, COALESCE(completed_at, started_at), COALESCE(error_category, '')
+	return scanAdminAIJob(s.db.QueryRowContext(ctx, `SELECT `+adminAIJobSelectColumns+`
 		FROM ai_jobs
 		WHERE project_id = ? AND id = ?
-	`, projectID, jobID).Scan(&job.ID, &job.ProjectID, &job.ContentID, &job.Type, &job.Status, &job.CreatedAt, &job.UpdatedAt, &job.Error)
-	return job, err
+	`, projectID, jobID))
 }
 
 func (s *Store) CancelAIJob(ctx context.Context, userID, projectID, jobID string) (AdminAIJob, error) {
