@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -73,6 +74,40 @@ func TestAdminAIJobRoutesPersistAndCancelJobs(t *testing.T) {
 		t.Fatalf("unexpected AI job %#v", created.Data)
 	}
 
+	eventsRequest := httptest.NewRequest(http.MethodGet, basePath+"/"+created.Data.ID+"/events", nil)
+	addCookies(eventsRequest, login.cookies)
+	eventsResponse := mustTest(t, server, eventsRequest)
+	if eventsResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected AI job events 200, got %d: %s", eventsResponse.StatusCode, readBody(t, eventsResponse))
+	}
+	if cacheControl := eventsResponse.Header.Get("Cache-Control"); cacheControl != "private, no-store" {
+		t.Fatalf("expected private no-store AI events, got %q", cacheControl)
+	}
+	var createdEvents ListEnvelope[store.AIJobEvent]
+	decodeJSONResponse(t, eventsResponse, &createdEvents)
+	if len(createdEvents.Data) != 1 ||
+		createdEvents.Data[0].Sequence != 1 ||
+		createdEvents.Data[0].Status != "queued" ||
+		createdEvents.Data[0].Progress != 0 {
+		t.Fatalf("unexpected queued event %#v", createdEvents.Data)
+	}
+	progressEvent, err := server.store.RecordAIJobProgress(context.Background(), project.ID, created.Data.ID, store.AIJobProgressInput{
+		Type:     "provider_progress",
+		Status:   "running",
+		Progress: 40,
+		Message:  "Reviewing evidence",
+		Metadata: map[string]any{"stage": "evidence"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progressEvent.Sequence != 2 ||
+		progressEvent.Status != "running" ||
+		progressEvent.Progress != 40 ||
+		!strings.Contains(string(progressEvent.Metadata), "evidence") {
+		t.Fatalf("unexpected worker progress event %#v", progressEvent)
+	}
+
 	listRequest := httptest.NewRequest(http.MethodGet, basePath, nil)
 	addCookies(listRequest, login.cookies)
 	listResponse := mustTest(t, server, listRequest)
@@ -95,6 +130,251 @@ func TestAdminAIJobRoutesPersistAndCancelJobs(t *testing.T) {
 	decodeJSONResponse(t, cancelResponse, &cancelled)
 	if cancelled.Data.Status != "cancelled" {
 		t.Fatalf("expected cancelled status, got %#v", cancelled.Data)
+	}
+
+	cancelledEventsRequest := httptest.NewRequest(http.MethodGet, basePath+"/"+created.Data.ID+"/events?after=1", nil)
+	addCookies(cancelledEventsRequest, login.cookies)
+	cancelledEventsResponse := mustTest(t, server, cancelledEventsRequest)
+	var cancelledEvents ListEnvelope[store.AIJobEvent]
+	decodeJSONResponse(t, cancelledEventsResponse, &cancelledEvents)
+	if len(cancelledEvents.Data) != 2 ||
+		cancelledEvents.Data[0].Sequence != 2 ||
+		cancelledEvents.Data[0].Status != "running" ||
+		cancelledEvents.Data[1].Sequence != 3 ||
+		cancelledEvents.Data[1].Status != "cancelled" {
+		t.Fatalf("unexpected cancellation events %#v", cancelledEvents.Data)
+	}
+	if _, err := server.store.RecordAIJobProgress(context.Background(), project.ID, created.Data.ID, store.AIJobProgressInput{
+		Status:   "running",
+		Progress: 60,
+	}); err == nil {
+		t.Fatal("expected a cancelled AI job to reject later worker progress")
+	}
+
+	invalidCursorRequest := httptest.NewRequest(http.MethodGet, basePath+"/"+created.Data.ID+"/events?after=-1", nil)
+	addCookies(invalidCursorRequest, login.cookies)
+	if response := mustTest(t, server, invalidCursorRequest); response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected negative AI event cursor to fail with 400, got %d", response.StatusCode)
+	}
+
+	otherProject := createTestProject(t, server, login, `{"slug":"other-ai-project","name":"Other AI Project"}`)
+	crossProjectRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+otherProject.ID+"/ai/jobs/"+created.Data.ID+"/events",
+		nil,
+	)
+	addCookies(crossProjectRequest, login.cookies)
+	if response := mustTest(t, server, crossProjectRequest); response.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project AI events to fail with 404, got %d", response.StatusCode)
+	}
+	if _, err := db.Exec(`UPDATE projects SET status = 'suspended' WHERE id = ?`, otherProject.ID); err != nil {
+		t.Fatal(err)
+	}
+	suspendedCreate := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+otherProject.ID+"/ai/jobs",
+		`{"type":"outline"}`,
+		login,
+	))
+	if suspendedCreate.StatusCode != http.StatusConflict {
+		t.Fatalf("expected suspended project to reject new AI jobs with 409, got %d", suspendedCreate.StatusCode)
+	}
+}
+
+func TestAdminAIProvenanceQualityResultsAndApprovalGate(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "ai-reviewer@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"ai-review","name":"AI Review"}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"research","name":"Research"}`)
+	article := createTestArticle(
+		t,
+		server,
+		login,
+		project.ID,
+		`{"articleType":"guide","title":"Reviewed Guide","slug":"reviewed-guide","primaryCategoryId":"`+category.ID+`","html":"<p>Reviewed material.</p>"}`,
+	)
+	revisionID := article.LatestRevision.ID
+	jobPath := "/api/v1/projects/" + project.ID + "/ai/jobs"
+	jobResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		jobPath,
+		`{"type":"quality_check","contentId":"`+article.ID+`"}`,
+		login,
+	))
+	if jobResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected quality job create 202, got %d: %s", jobResponse.StatusCode, readBody(t, jobResponse))
+	}
+	var job Envelope[store.AdminAIJob]
+	decodeJSONResponse(t, jobResponse, &job)
+
+	if _, err := db.Exec(`
+		INSERT INTO ai_runs(
+		  id, project_id, content_id, revision_id, job_id, task_type,
+		  provider, model_identifier, prompt_template_version, input_hash,
+		  output_hash, source_ids, started_by, started_at, completed_at,
+		  status, input_tokens, output_tokens, estimated_cost_cents
+		) VALUES (?, ?, ?, ?, ?, 'quality_check', 'test-provider', 'quality-model-v1',
+		          'quality-v3', 'input-hash-new', 'output-hash-new', '["source-1"]',
+		          ?, '2026-07-30 10:05:00', '2026-07-30 10:06:00',
+		          'succeeded', 120, 45, 3)
+	`, "run-new", project.ID, article.ID, revisionID, job.Data.ID, login.userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO ai_runs(
+		  id, project_id, content_id, revision_id, job_id, task_type,
+		  provider, model_identifier, prompt_template_version, input_hash,
+		  source_ids, started_by, started_at, status
+		) VALUES (?, ?, ?, ?, ?, 'quality_check', 'test-provider', 'quality-model-v0',
+		          'quality-v2', 'input-hash-old', '[]', ?,
+		          '2026-07-30 10:00:00', 'failed')
+	`, "run-old", project.ID, article.ID, revisionID, job.Data.ID, login.userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO quality_check_results(
+		  id, project_id, content_id, revision_id, check_type,
+		  severity, status, message, evidence_json, created_at
+		) VALUES (?, ?, ?, ?, 'source_coverage', 'blocking', 'failed',
+		          'A material claim has no source.', '{"claimId":"claim-1"}',
+		          '2026-07-30 10:06:00')
+	`, "quality-failed", project.ID, article.ID, revisionID); err != nil {
+		t.Fatal(err)
+	}
+
+	runsRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/ai/runs?limit=1", nil)
+	addCookies(runsRequest, login.cookies)
+	runsResponse := mustTest(t, server, runsRequest)
+	if runsResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected AI runs 200, got %d: %s", runsResponse.StatusCode, readBody(t, runsResponse))
+	}
+	if cacheControl := runsResponse.Header.Get("Cache-Control"); cacheControl != "private, no-store" {
+		t.Fatalf("expected private no-store AI runs, got %q", cacheControl)
+	}
+	var firstRuns ListEnvelope[store.AIRun]
+	decodeJSONResponse(t, runsResponse, &firstRuns)
+	if len(firstRuns.Data) != 1 ||
+		firstRuns.Data[0].ID != "run-new" ||
+		firstRuns.Data[0].ModelIdentifier != "quality-model-v1" ||
+		len(firstRuns.Data[0].SourceIDs) != 1 ||
+		firstRuns.Meta.NextCursor == "" {
+		t.Fatalf("unexpected first AI run page %#v", firstRuns)
+	}
+
+	secondRunsRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/ai/runs?limit=1&cursor="+firstRuns.Meta.NextCursor,
+		nil,
+	)
+	addCookies(secondRunsRequest, login.cookies)
+	secondRunsResponse := mustTest(t, server, secondRunsRequest)
+	var secondRuns ListEnvelope[store.AIRun]
+	decodeJSONResponse(t, secondRunsResponse, &secondRuns)
+	if len(secondRuns.Data) != 1 || secondRuns.Data[0].ID != "run-old" {
+		t.Fatalf("expected stable AI run pagination, got %#v", secondRuns.Data)
+	}
+
+	invalidRunStatusRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/ai/runs?status=published",
+		nil,
+	)
+	addCookies(invalidRunStatusRequest, login.cookies)
+	if response := mustTest(t, server, invalidRunStatusRequest); response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected invalid AI run status to fail with 400, got %d", response.StatusCode)
+	}
+
+	checksRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/quality-checks?revisionId="+revisionID,
+		nil,
+	)
+	addCookies(checksRequest, login.cookies)
+	checksResponse := mustTest(t, server, checksRequest)
+	if checksResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected quality checks 200, got %d: %s", checksResponse.StatusCode, readBody(t, checksResponse))
+	}
+	if cacheControl := checksResponse.Header.Get("Cache-Control"); cacheControl != "private, no-store" {
+		t.Fatalf("expected private no-store quality checks, got %q", cacheControl)
+	}
+	var checks ListEnvelope[store.QualityCheckResult]
+	decodeJSONResponse(t, checksResponse, &checks)
+	if len(checks.Data) != 1 ||
+		checks.Data[0].Status != "failed" ||
+		checks.Data[0].Severity != "blocking" ||
+		!strings.Contains(string(checks.Data[0].Evidence), "claim-1") {
+		t.Fatalf("unexpected quality-check results %#v", checks.Data)
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO quality_check_results(
+		  id, project_id, content_id, revision_id, check_type,
+		  severity, status, message, created_at
+		) VALUES
+		  ('quality-policy-failed', ?, ?, ?, 'editorial_policy', 'critical', 'failed',
+		   'A prohibited claim was detected.', '2026-07-30 10:06:00'),
+		  ('quality-policy-passed', ?, ?, ?, 'editorial_policy', 'critical', 'passed',
+		   'No prohibited claims remain.', '2026-07-30 10:06:00')
+	`, project.ID, article.ID, revisionID, project.ID, article.ID, revisionID); err != nil {
+		t.Fatal(err)
+	}
+	latestChecksRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/quality-checks?revisionId="+revisionID+"&limit=1",
+		nil,
+	)
+	addCookies(latestChecksRequest, login.cookies)
+	latestChecksResponse := mustTest(t, server, latestChecksRequest)
+	var latestChecks ListEnvelope[store.QualityCheckResult]
+	decodeJSONResponse(t, latestChecksResponse, &latestChecks)
+	if len(latestChecks.Data) != 1 ||
+		latestChecks.Data[0].ID != "quality-policy-passed" ||
+		latestChecks.Meta.NextCursor == "" {
+		t.Fatalf("expected same-second quality results to use insertion order, got %#v", latestChecks)
+	}
+
+	blockedApproval := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/revisions/"+revisionID+"/approve",
+		`{}`,
+		login,
+	))
+	if blockedApproval.StatusCode != http.StatusConflict {
+		t.Fatalf("expected failed blocking quality check to prevent approval, got %d: %s", blockedApproval.StatusCode, readBody(t, blockedApproval))
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO quality_check_results(
+		  id, project_id, content_id, revision_id, check_type,
+		  severity, status, message, evidence_json, created_at
+		) VALUES (?, ?, ?, ?, 'source_coverage', 'blocking', 'passed',
+		          'All material claims have sources.', '{}',
+		          '2026-07-30 10:07:00')
+	`, "quality-passed", project.ID, article.ID, revisionID); err != nil {
+		t.Fatal(err)
+	}
+	approved := approveTestRevision(t, server, login, project.ID, revisionID)
+	if approved.EditorialState != "approved" {
+		t.Fatalf("expected newer passing check to allow approval, got %#v", approved)
+	}
+
+	otherProject := createTestProject(t, server, login, `{"slug":"ai-review-other","name":"AI Review Other"}`)
+	if _, err := db.Exec(`
+		INSERT INTO quality_check_results(
+		  id, project_id, content_id, revision_id, check_type,
+		  severity, status, message
+		) VALUES ('cross-project-check', ?, ?, ?, 'scope', 'critical', 'failed', 'invalid')
+	`, otherProject.ID, article.ID, revisionID); err == nil {
+		t.Fatal("expected database guard to reject cross-project quality-check ownership")
+	}
+
+	otherProjectRunsRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+otherProject.ID+"/ai/runs", nil)
+	addCookies(otherProjectRunsRequest, login.cookies)
+	otherProjectRunsResponse := mustTest(t, server, otherProjectRunsRequest)
+	var otherProjectRuns ListEnvelope[store.AIRun]
+	decodeJSONResponse(t, otherProjectRunsResponse, &otherProjectRuns)
+	if len(otherProjectRuns.Data) != 0 {
+		t.Fatalf("expected project-scoped AI run history, got %#v", otherProjectRuns.Data)
 	}
 }
 

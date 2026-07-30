@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -169,6 +170,107 @@ func (s *Server) cancelAIJob(c *fiber.Ctx) error {
 		return s.adminMutationError(c, err, "Could not cancel AI job")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminAIJob]{Data: job})
+}
+
+func (s *Server) listAIJobEvents(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	after, err := strconv.ParseInt(c.Query("after", "0"), 10, 64)
+	if err != nil || after < 0 {
+		return problem(c, fiber.StatusBadRequest, "Invalid event cursor", "after must be a non-negative event sequence")
+	}
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	events, err := s.store.ListAIJobEvents(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("jobID"),
+		after,
+		limit+1,
+	)
+	if err != nil {
+		return s.adminReadError(c, err, "AI job not found", "Could not load AI job events")
+	}
+	nextCursor := ""
+	if len(events) > limit {
+		events = events[:limit]
+		nextCursor = strconv.FormatInt(events[len(events)-1].Sequence, 10)
+	}
+	c.Set(fiber.HeaderCacheControl, "private, no-store")
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.AIJobEvent]{
+		Data: events,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
+	})
+}
+
+func (s *Server) listAIRuns(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	runs, err := s.store.ListAIRuns(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		c.Query("cursor"),
+		limit+1,
+		store.AIRunFilter{
+			ContentID:  c.Query("contentId"),
+			RevisionID: c.Query("revisionId"),
+			JobID:      c.Query("jobId"),
+			Status:     c.Query("status"),
+		},
+	)
+	if err != nil {
+		return s.adminReadError(c, err, "Project not found", "Could not list AI runs")
+	}
+	nextCursor := ""
+	if len(runs) > limit {
+		runs = runs[:limit]
+		nextCursor = runs[len(runs)-1].ID
+	}
+	c.Set(fiber.HeaderCacheControl, "private, no-store")
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.AIRun]{
+		Data: runs,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
+	})
+}
+
+func (s *Server) listQualityCheckResults(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	results, err := s.store.ListQualityCheckResults(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		c.Query("cursor"),
+		limit+1,
+		store.QualityCheckFilter{
+			ContentID:  c.Query("contentId"),
+			RevisionID: c.Query("revisionId"),
+			Severity:   c.Query("severity"),
+			Status:     c.Query("status"),
+		},
+	)
+	if err != nil {
+		return s.adminReadError(c, err, "Project not found", "Could not list quality checks")
+	}
+	nextCursor := ""
+	if len(results) > limit {
+		results = results[:limit]
+		nextCursor = results[len(results)-1].ID
+	}
+	c.Set(fiber.HeaderCacheControl, "private, no-store")
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.QualityCheckResult]{
+		Data: results,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
+	})
 }
 
 func (s *Server) listWebhooks(c *fiber.Ctx) error {

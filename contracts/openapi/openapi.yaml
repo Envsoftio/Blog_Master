@@ -1128,8 +1128,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/ai/jobs/{jobID}/events
       tags:
         - Administration
@@ -1149,8 +1147,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/ai/jobs/{jobID}/events
       tags:
         - Administration
@@ -1171,8 +1167,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/ai/runs
       tags:
         - Administration
@@ -1192,8 +1186,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/ai/runs
       tags:
         - Administration
@@ -2939,8 +2931,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/quality-checks
       tags:
         - Administration
@@ -2960,8 +2950,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/quality-checks
       tags:
         - Administration

@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -60,6 +62,81 @@ type AIJobInput struct {
 	ContentID string
 }
 
+type AIJobProgressInput struct {
+	Type          string
+	Status        string
+	Progress      int64
+	Message       string
+	Metadata      any
+	ErrorCategory string
+}
+
+type AIJobEvent struct {
+	ID        string          `json:"id"`
+	ProjectID string          `json:"projectId"`
+	JobID     string          `json:"jobId"`
+	Sequence  int64           `json:"sequence"`
+	Type      string          `json:"type"`
+	Status    string          `json:"status"`
+	Progress  int64           `json:"progress"`
+	Message   string          `json:"message,omitempty"`
+	Metadata  json.RawMessage `json:"metadata"`
+	CreatedAt string          `json:"createdAt"`
+}
+
+type AIRun struct {
+	ID                    string   `json:"id"`
+	ProjectID             string   `json:"projectId"`
+	ContentID             string   `json:"contentId,omitempty"`
+	RevisionID            string   `json:"revisionId,omitempty"`
+	JobID                 string   `json:"jobId,omitempty"`
+	Type                  string   `json:"type"`
+	Provider              string   `json:"provider"`
+	ModelIdentifier       string   `json:"modelIdentifier"`
+	PromptTemplateVersion string   `json:"promptTemplateVersion"`
+	VoiceProfileVersion   int64    `json:"voiceProfileVersion,omitempty"`
+	EvidencePacketVersion int64    `json:"evidencePacketVersion,omitempty"`
+	InputHash             string   `json:"inputHash"`
+	OutputHash            string   `json:"outputHash,omitempty"`
+	SourceIDs             []string `json:"sourceIds"`
+	StartedBy             string   `json:"startedBy"`
+	StartedAt             string   `json:"startedAt"`
+	CompletedAt           string   `json:"completedAt,omitempty"`
+	Status                string   `json:"status"`
+	InputTokens           int64    `json:"inputTokens,omitempty"`
+	OutputTokens          int64    `json:"outputTokens,omitempty"`
+	EstimatedCostCents    int64    `json:"estimatedCostCents,omitempty"`
+	ErrorCategory         string   `json:"errorCategory,omitempty"`
+}
+
+type AIRunFilter struct {
+	ContentID  string
+	RevisionID string
+	JobID      string
+	Status     string
+}
+
+type QualityCheckResult struct {
+	ID             string          `json:"id"`
+	ProjectID      string          `json:"projectId"`
+	ContentID      string          `json:"contentId,omitempty"`
+	RevisionID     string          `json:"revisionId,omitempty"`
+	CheckType      string          `json:"checkType"`
+	Severity       string          `json:"severity"`
+	Status         string          `json:"status"`
+	Message        string          `json:"message"`
+	Evidence       json.RawMessage `json:"evidence"`
+	OverrideReason string          `json:"overrideReason,omitempty"`
+	CreatedAt      string          `json:"createdAt"`
+}
+
+type QualityCheckFilter struct {
+	ContentID  string
+	RevisionID string
+	Severity   string
+	Status     string
+}
+
 type WebhookEndpoint struct {
 	ID              string   `json:"id"`
 	ProjectID       string   `json:"projectId"`
@@ -112,6 +189,30 @@ var allowedWebhookEvents = map[string]struct{}{
 	"content.restored":     {},
 	"content.slug_changed": {},
 	"content.archived":     {},
+}
+
+var allowedAIStatuses = map[string]struct{}{
+	"queued":         {},
+	"running":        {},
+	"needs_input":    {},
+	"succeeded":      {},
+	"failed":         {},
+	"cancelled":      {},
+	"budget_blocked": {},
+	"safety_blocked": {},
+}
+
+var allowedQualitySeverities = map[string]struct{}{
+	"info":     {},
+	"warning":  {},
+	"blocking": {},
+	"critical": {},
+}
+
+var allowedQualityStatuses = map[string]struct{}{
+	"passed":     {},
+	"failed":     {},
+	"overridden": {},
 }
 
 func (s *Store) ListMediaAssets(ctx context.Context, userID, projectID string) ([]AdminMediaAsset, error) {
@@ -318,10 +419,18 @@ func (s *Store) CreateAIJob(ctx context.Context, userID, projectID string, input
 		return AdminAIJob{}, err
 	}
 	defer tx.Rollback()
+	if status, err := projectStatus(ctx, tx, projectID); err != nil {
+		return AdminAIJob{}, err
+	} else if status != "active" {
+		return AdminAIJob{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO ai_jobs(id, project_id, content_id, task_type, status, started_by)
 		VALUES (?, ?, ?, ?, 'queued', ?)
 	`, jobID, projectID, nullIfEmpty(input.ContentID), input.Type, userID); err != nil {
+		return AdminAIJob{}, err
+	}
+	if err := appendAIJobEventTx(ctx, tx, projectID, jobID, "queued", "queued", 0, "AI job queued", nil); err != nil {
 		return AdminAIJob{}, err
 	}
 	if err := insertAuditEventTx(ctx, tx, projectID, "user", userID, "ai_job.create", "ai_job", jobID, "success", map[string]string{"type": input.Type}); err != nil {
@@ -351,20 +460,383 @@ func (s *Store) CancelAIJob(ctx context.Context, userID, projectID, jobID string
 	if err := s.requireContentWrite(ctx, userID, projectID); err != nil {
 		return AdminAIJob{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE ai_jobs
-		SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
-		WHERE project_id = ? AND id = ? AND status IN ('queued', 'running')
-	`, projectID, jobID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AdminAIJob{}, err
 	}
-	if changed, err := result.RowsAffected(); err != nil {
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT status
+		FROM ai_jobs
+		WHERE project_id = ? AND id = ?
+	`, projectID, jobID).Scan(&status); err != nil {
 		return AdminAIJob{}, err
-	} else if changed != 1 {
+	}
+	if status != "queued" && status != "running" {
 		return AdminAIJob{}, fmt.Errorf("%w: AI job is not cancellable", ErrInvalidWorkflow)
 	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE ai_jobs
+		SET status = 'cancelled', completed_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND id = ?
+	`, projectID, jobID); err != nil {
+		return AdminAIJob{}, err
+	}
+	if err := appendAIJobEventTx(ctx, tx, projectID, jobID, "cancelled", "cancelled", 0, "AI job cancelled", nil); err != nil {
+		return AdminAIJob{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", userID, "ai_job.cancel", "ai_job", jobID, "success", nil); err != nil {
+		return AdminAIJob{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminAIJob{}, err
+	}
 	return s.GetAIJob(ctx, userID, projectID, jobID)
+}
+
+func (s *Store) ListAIJobEvents(ctx context.Context, userID, projectID, jobID string, after int64, limit int) ([]AIJobEvent, error) {
+	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	if after < 0 {
+		return nil, fmt.Errorf("%w: event cursor cannot be negative", ErrValidation)
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("%w: event limit must be positive", ErrValidation)
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM ai_jobs
+		WHERE project_id = ? AND id = ?
+	`, projectID, jobID).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists != 1 {
+		return nil, sql.ErrNoRows
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, project_id, job_id, sequence, event_type, status,
+		       progress, message, metadata_json, created_at
+		FROM ai_job_events
+		WHERE project_id = ? AND job_id = ? AND sequence > ?
+		ORDER BY sequence ASC
+		LIMIT ?
+	`, projectID, jobID, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := []AIJobEvent{}
+	for rows.Next() {
+		event, err := scanAIJobEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
+func (s *Store) RecordAIJobProgress(ctx context.Context, projectID, jobID string, input AIJobProgressInput) (AIJobEvent, error) {
+	projectID = strings.TrimSpace(projectID)
+	jobID = strings.TrimSpace(jobID)
+	input.Type = strings.TrimSpace(input.Type)
+	input.Status = strings.TrimSpace(input.Status)
+	input.Message = strings.TrimSpace(input.Message)
+	input.ErrorCategory = strings.TrimSpace(input.ErrorCategory)
+	if projectID == "" || jobID == "" {
+		return AIJobEvent{}, fmt.Errorf("%w: project and AI job IDs are required", ErrValidation)
+	}
+	if input.Type == "" {
+		input.Type = "progress"
+	}
+	if len(input.Type) > 80 || len(input.Message) > 2000 || len(input.ErrorCategory) > 120 {
+		return AIJobEvent{}, fmt.Errorf("%w: AI job progress fields exceed their size limits", ErrValidation)
+	}
+	if _, ok := allowedAIStatuses[input.Status]; !ok {
+		return AIJobEvent{}, fmt.Errorf("%w: unsupported AI job status", ErrValidation)
+	}
+	if input.Progress < 0 || input.Progress > 100 {
+		return AIJobEvent{}, fmt.Errorf("%w: AI job progress must be between 0 and 100", ErrValidation)
+	}
+	if input.Status == "succeeded" && input.Progress != 100 {
+		return AIJobEvent{}, fmt.Errorf("%w: succeeded AI jobs must report 100 percent progress", ErrValidation)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AIJobEvent{}, err
+	}
+	defer tx.Rollback()
+
+	var currentStatus, currentProjectStatus string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT job.status, project.status
+		FROM ai_jobs job
+		JOIN projects project ON project.id = job.project_id
+		WHERE job.project_id = ? AND job.id = ?
+	`, projectID, jobID).Scan(&currentStatus, &currentProjectStatus); err != nil {
+		return AIJobEvent{}, err
+	}
+	if currentProjectStatus != "active" && !isTerminalAIJobStatus(input.Status) {
+		return AIJobEvent{}, fmt.Errorf("%w: inactive projects may only terminate AI jobs", ErrInvalidWorkflow)
+	}
+	if !canTransitionAIJob(currentStatus, input.Status) {
+		return AIJobEvent{}, fmt.Errorf("%w: AI job cannot transition from %s to %s", ErrInvalidWorkflow, currentStatus, input.Status)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE ai_jobs
+		SET status = ?,
+		    completed_at = CASE
+		      WHEN ? IN ('succeeded', 'failed', 'cancelled', 'budget_blocked', 'safety_blocked')
+		      THEN CURRENT_TIMESTAMP
+		      ELSE NULL
+		    END,
+		    error_category = ?
+		WHERE project_id = ? AND id = ?
+	`, input.Status, input.Status, nullIfEmpty(input.ErrorCategory), projectID, jobID); err != nil {
+		return AIJobEvent{}, err
+	}
+	if err := appendAIJobEventTx(
+		ctx,
+		tx,
+		projectID,
+		jobID,
+		input.Type,
+		input.Status,
+		input.Progress,
+		input.Message,
+		input.Metadata,
+	); err != nil {
+		return AIJobEvent{}, err
+	}
+	event, err := scanAIJobEvent(tx.QueryRowContext(ctx, `
+		SELECT id, project_id, job_id, sequence, event_type, status,
+		       progress, message, metadata_json, created_at
+		FROM ai_job_events
+		WHERE project_id = ? AND job_id = ?
+		ORDER BY sequence DESC
+		LIMIT 1
+	`, projectID, jobID))
+	if err != nil {
+		return AIJobEvent{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AIJobEvent{}, err
+	}
+	return event, nil
+}
+
+func (s *Store) ListAIRuns(ctx context.Context, userID, projectID, cursor string, limit int, filter AIRunFilter) ([]AIRun, error) {
+	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	cursor = strings.TrimSpace(cursor)
+	filter.ContentID = strings.TrimSpace(filter.ContentID)
+	filter.RevisionID = strings.TrimSpace(filter.RevisionID)
+	filter.JobID = strings.TrimSpace(filter.JobID)
+	filter.Status = strings.TrimSpace(filter.Status)
+	if filter.Status != "" {
+		if _, ok := allowedAIStatuses[filter.Status]; !ok {
+			return nil, fmt.Errorf("%w: unsupported AI run status", ErrValidation)
+		}
+	}
+	if cursor != "" {
+		var exists int
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM ai_runs
+			WHERE project_id = ? AND id = ?
+		`, projectID, cursor).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if exists != 1 {
+			return nil, fmt.Errorf("%w: AI run cursor is not valid for this project", ErrValidation)
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT run.id, run.project_id, COALESCE(run.content_id, ''),
+		       COALESCE(run.revision_id, ''), COALESCE(run.job_id, ''),
+		       run.task_type, run.provider, run.model_identifier,
+		       run.prompt_template_version, COALESCE(run.voice_profile_version, 0),
+		       COALESCE(run.evidence_packet_version, 0), run.input_hash,
+		       COALESCE(run.output_hash, ''), run.source_ids, run.started_by,
+		       run.started_at, COALESCE(run.completed_at, ''), run.status,
+		       COALESCE(run.input_tokens, 0), COALESCE(run.output_tokens, 0),
+		       COALESCE(run.estimated_cost_cents, 0), COALESCE(run.error_category, '')
+		FROM ai_runs run
+		WHERE run.project_id = ?
+		  AND (? = '' OR run.content_id = ?)
+		  AND (? = '' OR run.revision_id = ?)
+		  AND (? = '' OR run.job_id = ?)
+		  AND (? = '' OR run.status = ?)
+		  AND (
+		    ? = ''
+		    OR run.started_at < (
+		      SELECT cursor_run.started_at
+		      FROM ai_runs cursor_run
+		      WHERE cursor_run.project_id = ? AND cursor_run.id = ?
+		    )
+		    OR (
+		      run.started_at = (
+		        SELECT cursor_run.started_at
+		        FROM ai_runs cursor_run
+		        WHERE cursor_run.project_id = ? AND cursor_run.id = ?
+		      )
+		      AND run.id < ?
+		    )
+		  )
+		ORDER BY run.started_at DESC, run.id DESC
+		LIMIT ?
+	`, projectID,
+		filter.ContentID, filter.ContentID,
+		filter.RevisionID, filter.RevisionID,
+		filter.JobID, filter.JobID,
+		filter.Status, filter.Status,
+		cursor, projectID, cursor, projectID, cursor, cursor,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	runs := []AIRun{}
+	for rows.Next() {
+		run, err := scanAIRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+func (s *Store) ListQualityCheckResults(ctx context.Context, userID, projectID, cursor string, limit int, filter QualityCheckFilter) ([]QualityCheckResult, error) {
+	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	cursor = strings.TrimSpace(cursor)
+	filter.ContentID = strings.TrimSpace(filter.ContentID)
+	filter.RevisionID = strings.TrimSpace(filter.RevisionID)
+	filter.Severity = strings.TrimSpace(filter.Severity)
+	filter.Status = strings.TrimSpace(filter.Status)
+	if filter.Severity != "" {
+		if _, ok := allowedQualitySeverities[filter.Severity]; !ok {
+			return nil, fmt.Errorf("%w: unsupported quality-check severity", ErrValidation)
+		}
+	}
+	if filter.Status != "" {
+		if _, ok := allowedQualityStatuses[filter.Status]; !ok {
+			return nil, fmt.Errorf("%w: unsupported quality-check status", ErrValidation)
+		}
+	}
+	if cursor != "" {
+		var exists int
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM quality_check_results
+			WHERE project_id = ? AND id = ?
+		`, projectID, cursor).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if exists != 1 {
+			return nil, fmt.Errorf("%w: quality-check cursor is not valid for this project", ErrValidation)
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT result.id, result.project_id, COALESCE(result.content_id, ''),
+		       COALESCE(result.revision_id, ''), result.check_type,
+		       result.severity, result.status, result.message,
+		       result.evidence_json, COALESCE(result.override_reason, ''),
+		       result.created_at
+		FROM quality_check_results result
+		WHERE result.project_id = ?
+		  AND (? = '' OR result.content_id = ?)
+		  AND (? = '' OR result.revision_id = ?)
+		  AND (? = '' OR result.severity = ?)
+		  AND (? = '' OR result.status = ?)
+		  AND (
+		    ? = ''
+		    OR result.created_at < (
+		      SELECT cursor_result.created_at
+		      FROM quality_check_results cursor_result
+		      WHERE cursor_result.project_id = ? AND cursor_result.id = ?
+		    )
+		    OR (
+		      result.created_at = (
+		        SELECT cursor_result.created_at
+		        FROM quality_check_results cursor_result
+		        WHERE cursor_result.project_id = ? AND cursor_result.id = ?
+		      )
+		      AND result.rowid < (
+		        SELECT cursor_result.rowid
+		        FROM quality_check_results cursor_result
+		        WHERE cursor_result.project_id = ? AND cursor_result.id = ?
+		      )
+		    )
+		  )
+		ORDER BY result.created_at DESC, result.rowid DESC
+		LIMIT ?
+	`, projectID,
+		filter.ContentID, filter.ContentID,
+		filter.RevisionID, filter.RevisionID,
+		filter.Severity, filter.Severity,
+		filter.Status, filter.Status,
+		cursor, projectID, cursor, projectID, cursor, projectID, cursor,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := []QualityCheckResult{}
+	for rows.Next() {
+		result, err := scanQualityCheckResult(rows)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, rows.Err()
+}
+
+func ensureRevisionQualityApproved(ctx context.Context, tx *sql.Tx, projectID, revisionID string) error {
+	var checkType string
+	err := tx.QueryRowContext(ctx, `
+		SELECT result.check_type
+		FROM quality_check_results result
+		WHERE result.project_id = ?
+		  AND result.revision_id = ?
+		  AND result.severity IN ('blocking', 'critical')
+		  AND result.status = 'failed'
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM quality_check_results newer
+		    WHERE newer.project_id = result.project_id
+		      AND newer.revision_id = result.revision_id
+		      AND newer.check_type = result.check_type
+		      AND (
+		        newer.created_at > result.created_at
+		        OR (newer.created_at = result.created_at AND newer.rowid > result.rowid)
+		      )
+		  )
+		ORDER BY CASE result.severity WHEN 'critical' THEN 0 ELSE 1 END,
+		         result.created_at DESC,
+		         result.id DESC
+		LIMIT 1
+	`, projectID, revisionID).Scan(&checkType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: latest %s quality check must pass or be overridden before approval", ErrInvalidWorkflow, checkType)
 }
 
 func (s *Store) ListWebhooks(ctx context.Context, userID, projectID string) ([]WebhookEndpoint, error) {
@@ -626,6 +1098,170 @@ func (s *Store) getWebhook(ctx context.Context, projectID, endpointID string) (W
 		FROM webhook_endpoints endpoint
 		WHERE endpoint.project_id = ? AND endpoint.id = ?
 	`, projectID, endpointID))
+}
+
+func appendAIJobEventTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID, jobID, eventType, status string,
+	progress int64,
+	message string,
+	metadata any,
+) error {
+	eventID, err := security.RandomID("aije")
+	if err != nil {
+		return err
+	}
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadataJSON, err := jsonString(metadata)
+	if err != nil {
+		return err
+	}
+	if eventType == "" || status == "" ||
+		len(eventType) > 80 ||
+		len(status) > 40 ||
+		len(message) > 2000 ||
+		len(metadataJSON) > 64*1024 {
+		return fmt.Errorf("%w: AI job event exceeds its field limits", ErrValidation)
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO ai_job_events(
+		  id, project_id, job_id, sequence, event_type, status,
+		  progress, message, metadata_json
+		)
+		SELECT ?, ?, ?, COALESCE(MAX(sequence), 0) + 1, ?, ?, ?, ?, ?
+		FROM ai_job_events
+		WHERE project_id = ? AND job_id = ?
+	`, eventID, projectID, jobID, eventType, status, progress, message, metadataJSON, projectID, jobID)
+	return err
+}
+
+func canTransitionAIJob(current, next string) bool {
+	if current == next {
+		return current == "queued" || current == "running" || current == "needs_input"
+	}
+	switch current {
+	case "queued":
+		return next == "running" ||
+			next == "succeeded" ||
+			next == "failed" ||
+			next == "cancelled" ||
+			next == "budget_blocked" ||
+			next == "safety_blocked"
+	case "running":
+		return next == "needs_input" ||
+			next == "succeeded" ||
+			next == "failed" ||
+			next == "cancelled" ||
+			next == "budget_blocked" ||
+			next == "safety_blocked"
+	case "needs_input":
+		return next == "queued" ||
+			next == "running" ||
+			next == "failed" ||
+			next == "cancelled" ||
+			next == "budget_blocked" ||
+			next == "safety_blocked"
+	default:
+		return false
+	}
+}
+
+func isTerminalAIJobStatus(status string) bool {
+	return status == "succeeded" ||
+		status == "failed" ||
+		status == "cancelled" ||
+		status == "budget_blocked" ||
+		status == "safety_blocked"
+}
+
+func scanAIJobEvent(row rowScanner) (AIJobEvent, error) {
+	var event AIJobEvent
+	var metadataJSON string
+	if err := row.Scan(
+		&event.ID,
+		&event.ProjectID,
+		&event.JobID,
+		&event.Sequence,
+		&event.Type,
+		&event.Status,
+		&event.Progress,
+		&event.Message,
+		&metadataJSON,
+		&event.CreatedAt,
+	); err != nil {
+		return AIJobEvent{}, err
+	}
+	if !json.Valid([]byte(metadataJSON)) {
+		return AIJobEvent{}, fmt.Errorf("decode AI job event metadata: invalid JSON")
+	}
+	event.Metadata = json.RawMessage(metadataJSON)
+	return event, nil
+}
+
+func scanAIRun(row rowScanner) (AIRun, error) {
+	var run AIRun
+	var sourceIDsJSON string
+	if err := row.Scan(
+		&run.ID,
+		&run.ProjectID,
+		&run.ContentID,
+		&run.RevisionID,
+		&run.JobID,
+		&run.Type,
+		&run.Provider,
+		&run.ModelIdentifier,
+		&run.PromptTemplateVersion,
+		&run.VoiceProfileVersion,
+		&run.EvidencePacketVersion,
+		&run.InputHash,
+		&run.OutputHash,
+		&sourceIDsJSON,
+		&run.StartedBy,
+		&run.StartedAt,
+		&run.CompletedAt,
+		&run.Status,
+		&run.InputTokens,
+		&run.OutputTokens,
+		&run.EstimatedCostCents,
+		&run.ErrorCategory,
+	); err != nil {
+		return AIRun{}, err
+	}
+	if err := json.Unmarshal([]byte(sourceIDsJSON), &run.SourceIDs); err != nil {
+		return AIRun{}, fmt.Errorf("decode AI run source IDs: %w", err)
+	}
+	if run.SourceIDs == nil {
+		run.SourceIDs = []string{}
+	}
+	return run, nil
+}
+
+func scanQualityCheckResult(row rowScanner) (QualityCheckResult, error) {
+	var result QualityCheckResult
+	var evidenceJSON string
+	if err := row.Scan(
+		&result.ID,
+		&result.ProjectID,
+		&result.ContentID,
+		&result.RevisionID,
+		&result.CheckType,
+		&result.Severity,
+		&result.Status,
+		&result.Message,
+		&evidenceJSON,
+		&result.OverrideReason,
+		&result.CreatedAt,
+	); err != nil {
+		return QualityCheckResult{}, err
+	}
+	if !json.Valid([]byte(evidenceJSON)) {
+		return QualityCheckResult{}, fmt.Errorf("decode quality-check evidence: invalid JSON")
+	}
+	result.Evidence = json.RawMessage(evidenceJSON)
+	return result, nil
 }
 
 func scanAdminMediaAsset(row rowScanner) (AdminMediaAsset, error) {

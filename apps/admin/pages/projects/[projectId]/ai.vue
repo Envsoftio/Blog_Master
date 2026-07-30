@@ -165,16 +165,17 @@
           <span>Run history</span>
           <h3>AI jobs</h3>
         </div>
-        <button class="button button--compact" type="button" :disabled="jobsPending" @click="loadJobs">
+        <button class="button button--compact" type="button" :disabled="jobsPending" @click="loadWorkspace">
           <RefreshCw :class="{ spin: jobsPending }" :size="15" />
           Refresh
         </button>
       </div>
       <div v-if="jobs.length" class="jobs-table">
-        <div class="jobs-row jobs-row--header"><span>Job</span><span>Status</span><span>Updated</span><span>ID</span></div>
+        <div class="jobs-row jobs-row--header"><span>Job</span><span>Status</span><span>Model</span><span>Updated</span><span>ID</span></div>
         <div v-for="job in jobs" :key="job.id" class="jobs-row">
           <span><strong>{{ labelize(job.type) }}</strong></span>
           <span><i class="job-status" :class="`job-status--${job.status}`" />{{ labelize(job.status) }}</span>
+          <span :title="modelForJob(job.id)">{{ modelForJob(job.id) }}</span>
           <span>{{ relativeDate(job.updatedAt || job.createdAt) }}</span>
           <span class="mono">{{ job.id }}</span>
         </div>
@@ -184,15 +185,31 @@
       </div>
     </section>
 
-    <section v-else class="quality-grid">
-      <article v-for="check in qualityChecks" :key="check.title" class="surface quality-card">
-        <span class="quality-card__icon"><component :is="check.icon" :size="18" /></span>
+    <section v-else class="quality-section">
+      <div class="quality-heading">
         <div>
-          <h3>{{ check.title }}</h3>
-          <p>{{ check.description }}</p>
+          <span>Latest by check</span>
+          <h3>Quality results</h3>
         </div>
-        <span class="status-pill">No runs</span>
-      </article>
+        <button class="button button--compact" type="button" :disabled="jobsPending" @click="loadWorkspace">
+          <RefreshCw :class="{ spin: jobsPending }" :size="15" />
+          Refresh
+        </button>
+      </div>
+      <div v-if="latestQualityChecks.length" class="quality-grid">
+        <article v-for="check in latestQualityChecks" :key="check.id" class="surface quality-card">
+          <span class="quality-card__icon"><component :is="qualityIcon(check.checkType)" :size="18" /></span>
+          <div>
+            <h3>{{ labelize(check.checkType) }}</h3>
+            <p>{{ check.message }}</p>
+            <small>{{ labelize(check.severity) }} - {{ relativeDate(check.createdAt) }}</small>
+          </div>
+          <span class="status-pill" :class="qualityStatusClass(check.status)">{{ labelize(check.status) }}</span>
+        </article>
+      </div>
+      <div v-else class="empty-state empty-state--embedded">
+        <div><span class="empty-state__icon"><ListChecks :size="20" /></span><h3>No quality results</h3><p>Completed checks will appear here.</p></div>
+      </div>
     </section>
   </div>
 </template>
@@ -216,13 +233,15 @@ import {
   Sparkles,
   WandSparkles
 } from 'lucide-vue-next'
-import { ARTICLE_TYPES, type AIJob } from '~/composables/useAdminApi'
+import { ARTICLE_TYPES, type AIJob, type AIRun, type QualityCheckResult } from '~/composables/useAdminApi'
 
 const route = useRoute()
 const api = useAdminApi()
 const projectID = computed(() => String(route.params.projectId || ''))
 const activeTab = ref('brief')
 const jobs = ref<AIJob[]>([])
+const runs = ref<AIRun[]>([])
+const qualityResults = ref<QualityCheckResult[]>([])
 const jobsPending = ref(true)
 const creatingJob = ref(false)
 const serviceAvailable = ref(true)
@@ -253,23 +272,42 @@ const readinessChecks = computed(() => [
 ])
 const readinessScore = computed(() => Math.round(readinessChecks.value.filter(item => item.ready).length / readinessChecks.value.length * 100))
 const canSubmit = computed(() => readinessChecks.value.slice(0, 3).every(item => item.ready))
-const qualityChecks = [
-  { title: 'Source coverage', description: 'Claims mapped to accessible evidence.', icon: Link2 },
-  { title: 'Content clarity', description: 'Readability, filler, and structural checks.', icon: ScanText },
-  { title: 'Duplication', description: 'Project content similarity and topic overlap.', icon: FileSearch },
-  { title: 'Editorial policy', description: 'Voice, prohibited claims, and disclosure checks.', icon: ShieldCheck }
-]
+const runsByJob = computed(() => {
+  const mapped = new Map<string, AIRun>()
+  for (const run of runs.value) {
+    if (run.jobId && !mapped.has(run.jobId)) mapped.set(run.jobId, run)
+  }
+  return mapped
+})
+const latestQualityChecks = computed(() => {
+  const seen = new Set<string>()
+  return qualityResults.value.filter((check) => {
+    if (seen.has(check.checkType)) return false
+    seen.add(check.checkType)
+    return true
+  })
+})
 
-onMounted(loadJobs)
+onMounted(loadWorkspace)
 
-async function loadJobs() {
+async function loadWorkspace() {
   jobsPending.value = true
+  errorMessage.value = ''
   try {
-    jobs.value = (await api.listAIJobs(projectID.value)).data
+    const [jobResponse, runResponse, qualityResponse] = await Promise.all([
+      api.listAIJobs(projectID.value),
+      api.listAIRuns(projectID.value),
+      api.listQualityChecks(projectID.value)
+    ])
+    jobs.value = jobResponse.data
+    runs.value = runResponse.data
+    qualityResults.value = qualityResponse.data
     serviceAvailable.value = true
   } catch (error) {
     if (apiStatus(error) === 501) {
       jobs.value = []
+      runs.value = []
+      qualityResults.value = []
       serviceAvailable.value = false
     } else {
       errorMessage.value = normalizeAPIError(error, 'Could not load AI jobs.')
@@ -307,6 +345,24 @@ async function createJob() {
   } finally {
     creatingJob.value = false
   }
+}
+
+function modelForJob(jobID: string) {
+  const run = runsByJob.value.get(jobID)
+  return run ? `${run.provider} / ${run.modelIdentifier}` : 'Pending'
+}
+
+function qualityIcon(checkType: string) {
+  if (checkType.includes('source') || checkType.includes('claim')) return Link2
+  if (checkType.includes('duplicate') || checkType.includes('similar')) return FileSearch
+  if (checkType.includes('clarity') || checkType.includes('readability')) return ScanText
+  return ShieldCheck
+}
+
+function qualityStatusClass(status: QualityCheckResult['status']) {
+  if (status === 'passed') return 'status-pill--success'
+  if (status === 'overridden') return 'status-pill--warning'
+  return 'status-pill--danger'
 }
 
 function relativeDate(value?: string) {
@@ -374,15 +430,20 @@ function relativeDate(value?: string) {
 .jobs-header span { color: var(--text-soft); font-size: 9px; }
 .jobs-header h3 { margin: 1px 0 0; font-size: 14px; }
 .jobs-table { overflow-x: auto; }
-.jobs-row { display: grid; min-width: 680px; grid-template-columns: 1.2fr .7fr .7fr 1fr; gap: 16px; align-items: center; padding: 11px 16px; border-bottom: 1px solid var(--border); font-size: 10px; }
+.jobs-row { display: grid; min-width: 760px; grid-template-columns: 1fr .65fr 1fr .7fr 1fr; gap: 16px; align-items: center; padding: 11px 16px; border-bottom: 1px solid var(--border); font-size: 10px; }
 .jobs-row > span { display: flex; min-width: 0; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jobs-row--header { background: var(--surface-subtle); color: var(--text-soft); font-size: 9px; font-weight: 650; text-transform: uppercase; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-soft); }
+.quality-section { display: grid; gap: 12px; }
+.quality-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.quality-heading span { color: var(--text-soft); font-size: 9px; }
+.quality-heading h3 { margin: 1px 0 0; font-size: 14px; }
 .quality-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .quality-card { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 16px; }
 .quality-card__icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 7px; background: var(--surface-subtle); color: var(--text-soft); }
 .quality-card h3 { margin: 0; font-size: 12px; }
 .quality-card p { margin: 3px 0 0; color: var(--text-soft); font-size: 9px; }
+.quality-card small { display: block; margin-top: 5px; color: var(--text-faint); font-size: 8px; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 1000px) { .ai-layout, .evidence-grid { grid-template-columns: 1fr; } .ai-rail { grid-template-columns: 1fr 1fr; } }

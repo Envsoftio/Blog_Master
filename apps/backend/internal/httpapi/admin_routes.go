@@ -122,9 +122,9 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/projects/:projectID/ai/jobs", s.requireAdminSession, s.requireAdminCSRF, s.createAIJob)
 	api.Get("/projects/:projectID/ai/jobs/:jobID", s.requireAdminSession, s.getAIJob)
 	api.Post("/projects/:projectID/ai/jobs/:jobID/cancel", s.requireAdminSession, s.requireAdminCSRF, s.cancelAIJob)
-	api.Get("/projects/:projectID/ai/jobs/:jobID/events", func(c *fiber.Ctx) error { return notImplemented(c, "AI job event stream") })
-	api.Get("/projects/:projectID/ai/runs", func(c *fiber.Ctx) error { return notImplemented(c, "AI run history") })
-	api.Get("/projects/:projectID/quality-checks", func(c *fiber.Ctx) error { return notImplemented(c, "quality check results") })
+	api.Get("/projects/:projectID/ai/jobs/:jobID/events", s.requireAdminSession, s.listAIJobEvents)
+	api.Get("/projects/:projectID/ai/runs", s.requireAdminSession, s.listAIRuns)
+	api.Get("/projects/:projectID/quality-checks", s.requireAdminSession, s.listQualityCheckResults)
 
 	api.Get("/projects/:projectID/webhooks", s.requireAdminSession, s.listWebhooks)
 	api.Post("/projects/:projectID/webhooks", s.requireAdminSession, s.requireAdminCSRF, s.createWebhook)
@@ -1517,6 +1517,9 @@ func (s *Server) adminReadError(c *fiber.Ctx, err error, notFoundTitle, internal
 	}
 	if errors.Is(err, store.ErrForbidden) {
 		return problem(c, fiber.StatusForbidden, "Insufficient permission", "")
+	}
+	if errors.Is(err, store.ErrValidation) {
+		return problem(c, fiber.StatusBadRequest, "Invalid request", err.Error())
 	}
 	s.logger.Error("admin read failed", "error", err)
 	return problem(c, fiber.StatusInternalServerError, internalTitle, "")

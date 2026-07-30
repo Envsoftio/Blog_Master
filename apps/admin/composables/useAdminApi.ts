@@ -211,12 +211,60 @@ export type WebhookWithSecret = WebhookEndpoint & {
 export type AIJob = {
   id: string
   projectId: string
+  contentId?: string
   type: string
   status: string
   createdAt?: string
   updatedAt?: string
   result?: unknown
   error?: string
+}
+
+export type AIJobEvent = {
+  id: string
+  projectId: string
+  jobId: string
+  sequence: number
+  type: string
+  status: string
+  progress: number
+  message?: string
+  metadata: Record<string, unknown>
+  createdAt: string
+}
+
+export type AIRun = {
+  id: string
+  projectId: string
+  contentId?: string
+  revisionId?: string
+  jobId?: string
+  type: string
+  provider: string
+  modelIdentifier: string
+  promptTemplateVersion: string
+  sourceIds: string[]
+  startedAt: string
+  completedAt?: string
+  status: string
+  inputTokens?: number
+  outputTokens?: number
+  estimatedCostCents?: number
+  errorCategory?: string
+}
+
+export type QualityCheckResult = {
+  id: string
+  projectId: string
+  contentId?: string
+  revisionId?: string
+  checkType: string
+  severity: 'info' | 'warning' | 'blocking' | 'critical'
+  status: 'passed' | 'failed' | 'overridden'
+  message: string
+  evidence: Record<string, unknown>
+  overrideReason?: string
+  createdAt: string
 }
 
 export type ProjectCreatePayload = {
@@ -567,6 +615,30 @@ export function useAdminApi() {
     }))
   }
 
+  async function listAIJobEvents(projectID: string, jobID: string, after = 0) {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AIJobEvent>>(
+      `/api/v1/projects/${projectID}/ai/jobs/${jobID}/events?after=${after}`
+    ))
+  }
+
+  async function listAIRuns(projectID: string, filters: { contentId?: string, revisionId?: string, jobId?: string, status?: string } = {}) {
+    const query = new URLSearchParams()
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) query.set(key, value)
+    }
+    const suffix = query.size ? `?${query.toString()}` : ''
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AIRun>>(`/api/v1/projects/${projectID}/ai/runs${suffix}`))
+  }
+
+  async function listQualityChecks(projectID: string, filters: { contentId?: string, revisionId?: string, severity?: string, status?: string } = {}) {
+    const query = new URLSearchParams()
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) query.set(key, value)
+    }
+    const suffix = query.size ? `?${query.toString()}` : ''
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<QualityCheckResult>>(`/api/v1/projects/${projectID}/quality-checks${suffix}`))
+  }
+
   return {
     request,
     getCSRFToken,
@@ -611,7 +683,10 @@ export function useAdminApi() {
     createWebhook,
     deliveryStatus,
     listAIJobs,
-    createAIJob
+    createAIJob,
+    listAIJobEvents,
+    listAIRuns,
+    listQualityChecks
   }
 }
 

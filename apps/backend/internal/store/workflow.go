@@ -646,6 +646,9 @@ func (s *Store) ApproveRevision(ctx context.Context, actorUserID, projectID, rev
 	if err := ensureRevisionClaimsApproved(ctx, tx, projectID, revisionID); err != nil {
 		return AdminRevision{}, err
 	}
+	if err := ensureRevisionQualityApproved(ctx, tx, projectID, revisionID); err != nil {
+		return AdminRevision{}, err
+	}
 	sourceSnapshotJSON, claimSnapshotJSON, err := buildRevisionTrustSnapshots(ctx, tx, projectID, revisionID)
 	if err != nil {
 		return AdminRevision{}, err
