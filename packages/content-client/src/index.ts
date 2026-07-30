@@ -37,6 +37,69 @@ export type ListPostsParams = {
   limit?: number
 }
 
+export type TaxonomyTerm = {
+  id: string
+  type: string
+  slug: string
+  name: string
+  description?: string
+  parentId?: string
+  ancestors?: TaxonomyTerm[]
+  children?: TaxonomyTerm[]
+  indexable: boolean
+}
+
+export type Author = {
+  id: string
+  slug: string
+  displayName: string
+  shortBio?: string
+  fullBio?: string
+  photoAssetId?: string
+  jobTitle?: string
+  organization?: string
+  credentials?: string[]
+  expertise?: string[]
+  profileUrl?: string
+  externalProfiles?: string[]
+  sameAs?: string[]
+  status?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type Contributor = {
+  author: Author
+  role: string
+}
+
+export type Series = {
+  id: string
+  slug: string
+  name: string
+  description?: string
+  indexable: boolean
+}
+
+export type PublishedTaxonomy = {
+  primaryCategory: TaxonomyTerm | null
+  categories: TaxonomyTerm[]
+  tags: TaxonomyTerm[]
+  series?: Series
+  topics: TaxonomyTerm[]
+}
+
+export type PublishedSEO = {
+  title: string
+  description?: string
+  canonicalUrl: string
+  robots: string
+  index: boolean
+  openGraph: unknown
+  structuredData: unknown
+  hreflang: unknown
+}
+
 export type PublishedPost = {
   id: string
   articleType: string
@@ -53,26 +116,55 @@ export type PublishedPost = {
     html: string
     tableOfContents: unknown
   }
-  taxonomy: unknown
-  authors: unknown[]
-  contributors: unknown[]
+  taxonomy: PublishedTaxonomy
+  authors: Author[]
+  contributors: Contributor[]
   media: unknown
   sources: unknown
   claims: unknown
   disclosures: unknown
   corrections: unknown
-  seo: {
-    title: string
-    description?: string
-    canonicalUrl: string
-    robots: string
-    index: boolean
-    openGraph: unknown
-    structuredData: unknown
-    hreflang: unknown
-  }
+  seo: PublishedSEO
   publishedAt?: string
   modifiedAt?: string
+}
+
+export type RelatedPost = {
+  post: PublishedPost
+  origin: 'manual' | 'deterministic' | 'imported'
+}
+
+export type DiscoveryEntry = {
+  id: string
+  locale: string
+  canonicalUrl: string
+  lastModified: string
+}
+
+export type RedirectRecord = {
+  sourcePath: string
+  targetPath: string
+  statusCode: number
+}
+
+export type ChangeRecord = {
+  id: string
+  type: string
+  aggregateId: string
+  createdAt: string
+}
+
+export type HeadPostOptions = {
+  locale?: string
+  ifNoneMatch?: string
+  ifModifiedSince?: string
+}
+
+export type HeadPostResult = {
+  status: 200 | 304
+  etag?: string
+  lastModified?: string
+  cacheControl?: string
 }
 
 export class ContentClient {
@@ -93,6 +185,28 @@ export class ContentClient {
     return this.request<APIEnvelope<PublishedPost>>(`/content/v1/posts/${encodeURIComponent(slug)}?locale=${encodeURIComponent(locale)}`)
   }
 
+  async headPost(slug: string, options: HeadPostOptions = {}): Promise<HeadPostResult> {
+    const headers = new Headers({
+      Authorization: `Bearer ${this.apiKey}`,
+      Accept: 'application/json'
+    })
+    if (options.ifNoneMatch) headers.set('If-None-Match', options.ifNoneMatch)
+    if (options.ifModifiedSince) headers.set('If-Modified-Since', options.ifModifiedSince)
+    const response = await this.fetcher(
+      `${this.baseUrl}/content/v1/posts/${encodeURIComponent(slug)}${query({ locale: options.locale ?? 'en' })}`,
+      { method: 'HEAD', headers }
+    )
+    if (!response.ok && response.status !== 304) {
+      throw new Error(`Content API request failed: ${response.status}`)
+    }
+    return {
+      status: response.status as 200 | 304,
+      etag: response.headers.get('ETag') ?? undefined,
+      lastModified: response.headers.get('Last-Modified') ?? undefined,
+      cacheControl: response.headers.get('Cache-Control') ?? undefined
+    }
+  }
+
   getPostByID(contentID: string, locale = 'en') {
     return this.request<APIEnvelope<PublishedPost>>(`/content/v1/posts/by-id/${encodeURIComponent(contentID)}?locale=${encodeURIComponent(locale)}`)
   }
@@ -109,37 +223,57 @@ export class ContentClient {
   }
 
   relatedPosts(slug: string, locale = 'en', limit = 6) {
-    return this.request<APIListEnvelope<{ post: PublishedPost, origin: 'manual' | 'deterministic' | 'imported' }>>(
+    return this.request<APIListEnvelope<RelatedPost>>(
       `/content/v1/posts/${encodeURIComponent(slug)}/related${query({ locale, limit })}`
     )
   }
 
   categories(params: { cursor?: string, limit?: number } = {}) {
-    return this.request<APIListEnvelope<unknown>>(`/content/v1/categories${query(params)}`)
+    return this.request<APIListEnvelope<TaxonomyTerm>>(`/content/v1/categories${query(params)}`)
+  }
+
+  getCategory(slug: string) {
+    return this.request<APIEnvelope<TaxonomyTerm>>(`/content/v1/categories/${encodeURIComponent(slug)}`)
   }
 
   tags(params: { cursor?: string, limit?: number } = {}) {
-    return this.request<APIListEnvelope<unknown>>(`/content/v1/tags${query(params)}`)
+    return this.request<APIListEnvelope<TaxonomyTerm>>(`/content/v1/tags${query(params)}`)
+  }
+
+  getTag(slug: string) {
+    return this.request<APIEnvelope<TaxonomyTerm>>(`/content/v1/tags/${encodeURIComponent(slug)}`)
   }
 
   authors(params: { cursor?: string, limit?: number } = {}) {
-    return this.request<APIListEnvelope<unknown>>(`/content/v1/authors${query(params)}`)
+    return this.request<APIListEnvelope<Author>>(`/content/v1/authors${query(params)}`)
+  }
+
+  getAuthor(slug: string) {
+    return this.request<APIEnvelope<Author>>(`/content/v1/authors/${encodeURIComponent(slug)}`)
   }
 
   series(params: { cursor?: string, limit?: number } = {}) {
-    return this.request<APIListEnvelope<unknown>>(`/content/v1/series${query(params)}`)
+    return this.request<APIListEnvelope<Series>>(`/content/v1/series${query(params)}`)
+  }
+
+  getSeries(slug: string) {
+    return this.request<APIEnvelope<Series>>(`/content/v1/series/${encodeURIComponent(slug)}`)
+  }
+
+  feedData(params: ListPostsParams = {}) {
+    return this.request<APIListEnvelope<PublishedPost>>(`/content/v1/feed-data${query(params)}`)
   }
 
   discoveryManifest(locale?: string) {
-    return this.request<APIEnvelope<{ urls: unknown[] }>>(`/content/v1/discovery-manifest${query({ locale })}`)
+    return this.request<APIEnvelope<{ urls: DiscoveryEntry[] }>>(`/content/v1/discovery-manifest${query({ locale })}`)
   }
 
   redirects(params: { cursor?: string, limit?: number } = {}) {
-    return this.request<APIListEnvelope<unknown>>(`/content/v1/redirects${query(params)}`)
+    return this.request<APIListEnvelope<RedirectRecord>>(`/content/v1/redirects${query(params)}`)
   }
 
   changes(after?: string, limit = 100) {
-    return this.request<APIListEnvelope<unknown>>(`/content/v1/changes${query({ after, limit })}`)
+    return this.request<APIListEnvelope<ChangeRecord>>(`/content/v1/changes${query({ after, limit })}`)
   }
 
   private async request<T>(path: string): Promise<T> {

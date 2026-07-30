@@ -34,6 +34,7 @@ type Server struct {
 	mailSlots chan struct{}
 	store     *store.Store
 	cache     ResponseCache
+	cacheFill cacheFlightGroup
 }
 
 func New(opts Options) *Server {

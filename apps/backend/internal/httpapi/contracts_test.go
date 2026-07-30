@@ -104,6 +104,32 @@ func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
 	}
 }
 
+func TestAdminOpenAPIDoesNotAdvertiseScaffoldedRoutes(t *testing.T) {
+	server, _ := newAdminTestServer(t)
+	for path, item := range server.openAPI.Paths {
+		if !strings.HasPrefix(path, "/api/v1/") {
+			continue
+		}
+		for _, method := range []string{
+			http.MethodGet,
+			http.MethodPost,
+			http.MethodPatch,
+			http.MethodPut,
+			http.MethodDelete,
+			http.MethodHead,
+			http.MethodOptions,
+		} {
+			operation := operationForMethod(item, method)
+			if operation == nil {
+				continue
+			}
+			if response := operation.Responses["501"]; response != nil {
+				t.Fatalf("%s %s advertises scaffolded 501 response: %s", method, path, response.Description)
+			}
+		}
+	}
+}
+
 func TestPasswordResetOpenAPIContracts(t *testing.T) {
 	server, _ := newAdminTestServer(t)
 	routes := []struct {

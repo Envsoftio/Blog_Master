@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -33,6 +35,102 @@ const (
 type cachedPublishedPost struct {
 	Found    bool                          `json:"found"`
 	Envelope Envelope[store.PublishedPost] `json:"envelope,omitempty"`
+}
+
+type cacheFlightGroup struct {
+	mu    sync.Mutex
+	calls map[string]*cacheFlightCall
+}
+
+type cacheFlightCall struct {
+	done  chan struct{}
+	value any
+	err   error
+}
+
+func (g *cacheFlightGroup) do(ctx context.Context, key string, fn func(context.Context) (any, error)) (any, error, bool) {
+	if key == "" {
+		value, err := fn(ctx)
+		return value, err, false
+	}
+
+	g.mu.Lock()
+	if g.calls == nil {
+		g.calls = map[string]*cacheFlightCall{}
+	}
+	if call := g.calls[key]; call != nil {
+		g.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.value, call.err, true
+		case <-ctx.Done():
+			return nil, ctx.Err(), true
+		}
+	}
+	call := &cacheFlightCall{done: make(chan struct{})}
+	g.calls[key] = call
+	g.mu.Unlock()
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			call.err = errors.New("content cache fill failed")
+			close(call.done)
+			g.mu.Lock()
+			delete(g.calls, key)
+			g.mu.Unlock()
+			panic(recovered)
+		}
+	}()
+	call.value, call.err = fn(ctx)
+	close(call.done)
+
+	g.mu.Lock()
+	delete(g.calls, key)
+	g.mu.Unlock()
+	return call.value, call.err, false
+}
+
+func contentCacheFill[T any](ctx context.Context, group *cacheFlightGroup, key string, fill func(context.Context) (T, error)) (T, error, bool) {
+	var zero T
+	value, err, shared := group.do(ctx, key, func(ctx context.Context) (any, error) {
+		return fill(ctx)
+	})
+	if err != nil {
+		return zero, err, shared
+	}
+	typed, ok := value.(T)
+	if !ok {
+		return zero, fmt.Errorf("content cache singleflight type mismatch for key %q", key), shared
+	}
+	return typed, nil, shared
+}
+
+func cachedContentJSON[T any](ctx context.Context, server *Server, key string, fill func(context.Context) (T, time.Duration, error)) (T, error) {
+	var zero T
+	if key != "" {
+		var cached T
+		if server.cacheGetJSON(ctx, key, &cached) {
+			return cached, nil
+		}
+	}
+
+	value, err, _ := contentCacheFill(ctx, &server.cacheFill, key, func(ctx context.Context) (T, error) {
+		if key != "" {
+			var cached T
+			if server.cacheGetJSON(ctx, key, &cached) {
+				return cached, nil
+			}
+		}
+		value, ttl, err := fill(ctx)
+		if err != nil {
+			return zero, err
+		}
+		if ttl > 0 {
+			server.cacheSetJSON(ctx, key, value, ttl)
+		}
+		return value, nil
+	})
+	return value, err
 }
 
 func (s *Server) projectGeneration(ctx context.Context, projectID string) int64 {

@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -104,50 +106,57 @@ func (s *Server) listPublishedPosts(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	locale := c.Query("locale")
+	category := c.Query("category")
+	tag := c.Query("tag")
+	author := c.Query("author")
+	articleType := c.Query("articleType")
+	series := c.Query("series")
+	exactCategory := c.Query("categoryMode") == "exact"
+	publishedFrom := c.Query("publishedFrom")
+	publishedTo := c.Query("publishedTo")
 	limit := boundedLimit(c.Query("limit", "20"), 50)
 	cursor, err := decodeCursor[store.PublishedCursor](c.Query("cursor"))
 	if err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "The cursor is malformed")
 	}
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(project.ProjectID, generation, "list", c.Path(), normalizedContentQuery(c), cacheLimit(limit))
-	if cacheOK {
-		var cached ListEnvelope[store.PublishedPost]
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			return writePublishedJSON(c, cached)
+	generation := s.projectGeneration(ctx, projectID)
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "list", c.Path(), normalizedContentQuery(c), cacheLimit(limit))
+	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (ListEnvelope[store.PublishedPost], time.Duration, error) {
+		posts, err := s.store.ListPublishedPosts(
+			ctx,
+			projectID,
+			locale,
+			category,
+			tag,
+			author,
+			articleType,
+			series,
+			exactCategory,
+			publishedFrom,
+			publishedTo,
+			cursor,
+			limit+1,
+		)
+		if err != nil {
+			return ListEnvelope[store.PublishedPost]{}, 0, err
 		}
-	}
-	posts, err := s.store.ListPublishedPosts(
-		c.UserContext(),
-		project.ProjectID,
-		c.Query("locale"),
-		c.Query("category"),
-		c.Query("tag"),
-		c.Query("author"),
-		c.Query("articleType"),
-		c.Query("series"),
-		c.Query("categoryMode") == "exact",
-		c.Query("publishedFrom"),
-		c.Query("publishedTo"),
-		cursor,
-		limit+1,
-	)
+		nextCursor := ""
+		if len(posts) > limit {
+			posts = posts[:limit]
+			last := posts[len(posts)-1]
+			nextCursor = encodeCursor(store.PublishedCursor{SortAt: last.PaginationKey, ID: last.ID})
+		}
+		return ListEnvelope[store.PublishedPost]{
+			Data: posts,
+			Meta: PageMeta{ProjectID: projectID, ContentGeneration: generation, Limit: limit, NextCursor: nextCursor},
+		}, publishedListCacheTTL, nil
+	})
 	if err != nil {
-		s.logger.Error("list published posts", "project_id", project.ProjectID, "error", err)
+		s.logger.Error("list published posts", "project_id", projectID, "error", err)
 		return problem(c, fiber.StatusInternalServerError, "Could not list posts", "")
-	}
-	nextCursor := ""
-	if len(posts) > limit {
-		posts = posts[:limit]
-		last := posts[len(posts)-1]
-		nextCursor = encodeCursor(store.PublishedCursor{SortAt: last.PaginationKey, ID: last.ID})
-	}
-	response := ListEnvelope[store.PublishedPost]{
-		Data: posts,
-		Meta: PageMeta{ProjectID: project.ProjectID, ContentGeneration: generation, Limit: limit, NextCursor: nextCursor},
-	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, response, publishedListCacheTTL)
 	}
 	return writePublishedJSON(c, response)
 }
@@ -157,46 +166,23 @@ func (s *Server) getPublishedPostBySlug(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(
-		project.ProjectID,
-		generation,
-		"post",
-		"slug",
-		c.Params("slug"),
-		c.Query("locale", "en"),
-	)
-	if cacheOK {
-		var cached cachedPublishedPost
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			if !cached.Found {
-				return problem(c, fiber.StatusNotFound, "Post not found", "")
-			}
-			cached.Envelope.Data.ContentHash = unquotedETag(cached.Envelope.Meta.ETag)
-			if setPublishedValidators(c, cached.Envelope.Data) {
-				return c.SendStatus(fiber.StatusNotModified)
-			}
-			return writeJSON(c, fiber.StatusOK, cached.Envelope)
-		}
-	}
-	post, err := s.store.GetPublishedPostBySlug(c.UserContext(), project.ProjectID, c.Params("slug"), c.Query("locale", "en"))
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	slug := c.Params("slug")
+	locale := c.Query("locale", "en")
+	generation := s.projectGeneration(ctx, projectID)
+	cached, err := s.cachedPublishedPostBySlug(ctx, projectID, generation, slug, locale)
 	if err != nil {
-		if err == sql.ErrNoRows && cacheOK {
-			s.cacheSetJSON(c.UserContext(), cacheKey, cachedPublishedPost{Found: false}, publishedLookupMissTTL)
-		}
 		return s.publishedReadError(c, err, "Post not found", "Could not load post")
 	}
-	response := Envelope[store.PublishedPost]{
-		Data: post,
-		Meta: MetaData{ProjectID: project.ProjectID, ContentGeneration: generation, ETag: quotedETag(post.ContentHash)},
+	if !cached.Found {
+		return problem(c, fiber.StatusNotFound, "Post not found", "")
 	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, cachedPublishedPost{Found: true, Envelope: response}, publishedPostCacheTTL)
-	}
-	if setPublishedValidators(c, post) {
+	cached.Envelope.Data.ContentHash = unquotedETag(cached.Envelope.Meta.ETag)
+	if setPublishedValidators(c, cached.Envelope.Data) {
 		return c.SendStatus(fiber.StatusNotModified)
 	}
-	return writeJSON(c, fiber.StatusOK, response)
+	return writeJSON(c, fiber.StatusOK, cached.Envelope)
 }
 
 func (s *Server) headPublishedPostBySlug(c *fiber.Ctx) error {
@@ -204,14 +190,18 @@ func (s *Server) headPublishedPostBySlug(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	post, err := s.store.GetPublishedPostBySlug(c.UserContext(), project.ProjectID, c.Params("slug"), c.Query("locale", "en"))
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	generation := s.projectGeneration(ctx, projectID)
+	cached, err := s.cachedPublishedPostBySlug(ctx, projectID, generation, c.Params("slug"), c.Query("locale", "en"))
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return c.SendStatus(fiber.StatusNotFound)
-		}
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
-	if setPublishedValidators(c, post) {
+	if !cached.Found {
+		return c.SendStatus(fiber.StatusNotFound)
+	}
+	cached.Envelope.Data.ContentHash = unquotedETag(cached.Envelope.Meta.ETag)
+	if setPublishedValidators(c, cached.Envelope.Data) {
 		return c.SendStatus(fiber.StatusNotModified)
 	}
 	return c.SendStatus(fiber.StatusOK)
@@ -222,46 +212,59 @@ func (s *Server) getPublishedPostByID(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(
-		project.ProjectID,
-		generation,
-		"post",
-		"id",
-		c.Params("contentID"),
-		c.Query("locale", "en"),
-	)
-	if cacheOK {
-		var cached cachedPublishedPost
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			if !cached.Found {
-				return problem(c, fiber.StatusNotFound, "Post not found", "")
-			}
-			cached.Envelope.Data.ContentHash = unquotedETag(cached.Envelope.Meta.ETag)
-			if setPublishedValidators(c, cached.Envelope.Data) {
-				return c.SendStatus(fiber.StatusNotModified)
-			}
-			return writeJSON(c, fiber.StatusOK, cached.Envelope)
-		}
-	}
-	post, err := s.store.GetPublishedPostByID(c.UserContext(), project.ProjectID, c.Params("contentID"), c.Query("locale", "en"))
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	contentID := c.Params("contentID")
+	locale := c.Query("locale", "en")
+	generation := s.projectGeneration(ctx, projectID)
+	cached, err := s.cachedPublishedPostByID(ctx, projectID, generation, contentID, locale)
 	if err != nil {
-		if err == sql.ErrNoRows && cacheOK {
-			s.cacheSetJSON(c.UserContext(), cacheKey, cachedPublishedPost{Found: false}, publishedLookupMissTTL)
-		}
 		return s.publishedReadError(c, err, "Post not found", "Could not load post")
 	}
-	response := Envelope[store.PublishedPost]{
-		Data: post,
-		Meta: MetaData{ProjectID: project.ProjectID, ContentGeneration: generation, ETag: quotedETag(post.ContentHash)},
+	if !cached.Found {
+		return problem(c, fiber.StatusNotFound, "Post not found", "")
 	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, cachedPublishedPost{Found: true, Envelope: response}, publishedPostCacheTTL)
-	}
-	if setPublishedValidators(c, post) {
+	cached.Envelope.Data.ContentHash = unquotedETag(cached.Envelope.Meta.ETag)
+	if setPublishedValidators(c, cached.Envelope.Data) {
 		return c.SendStatus(fiber.StatusNotModified)
 	}
-	return writeJSON(c, fiber.StatusOK, response)
+	return writeJSON(c, fiber.StatusOK, cached.Envelope)
+}
+
+func (s *Server) cachedPublishedPostBySlug(ctx context.Context, projectID string, generation int64, slug string, locale string) (cachedPublishedPost, error) {
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "post", "slug", slug, locale)
+	return cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (cachedPublishedPost, time.Duration, error) {
+		post, err := s.store.GetPublishedPostBySlug(ctx, projectID, slug, locale)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return cachedPublishedPost{Found: false}, publishedLookupMissTTL, nil
+			}
+			return cachedPublishedPost{}, 0, err
+		}
+		response := Envelope[store.PublishedPost]{
+			Data: post,
+			Meta: MetaData{ProjectID: projectID, ContentGeneration: generation, ETag: quotedETag(post.ContentHash)},
+		}
+		return cachedPublishedPost{Found: true, Envelope: response}, publishedPostCacheTTL, nil
+	})
+}
+
+func (s *Server) cachedPublishedPostByID(ctx context.Context, projectID string, generation int64, contentID string, locale string) (cachedPublishedPost, error) {
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "post", "id", contentID, locale)
+	return cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (cachedPublishedPost, time.Duration, error) {
+		post, err := s.store.GetPublishedPostByID(ctx, projectID, contentID, locale)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return cachedPublishedPost{Found: false}, publishedLookupMissTTL, nil
+			}
+			return cachedPublishedPost{}, 0, err
+		}
+		response := Envelope[store.PublishedPost]{
+			Data: post,
+			Meta: MetaData{ProjectID: projectID, ContentGeneration: generation, ETag: quotedETag(post.ContentHash)},
+		}
+		return cachedPublishedPost{Found: true, Envelope: response}, publishedPostCacheTTL, nil
+	})
 }
 
 func (s *Server) publishedReadError(c *fiber.Ctx, err error, notFoundTitle, internalTitle string) error {
@@ -277,25 +280,25 @@ func (s *Server) getRelatedPosts(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	slug := c.Params("slug")
+	locale := c.Query("locale", "en")
 	limit := boundedLimit(c.Query("limit", "6"), 12)
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(project.ProjectID, generation, "related", c.Params("slug"), c.Query("locale", "en"), cacheLimit(limit))
-	if cacheOK {
-		var cached ListEnvelope[store.RelatedPost]
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			return writePublishedJSON(c, cached)
+	generation := s.projectGeneration(ctx, projectID)
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "related", slug, locale, cacheLimit(limit))
+	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (ListEnvelope[store.RelatedPost], time.Duration, error) {
+		posts, err := s.store.ListRelatedPosts(ctx, projectID, slug, locale, limit)
+		if err != nil {
+			return ListEnvelope[store.RelatedPost]{}, 0, err
 		}
-	}
-	posts, err := s.store.ListRelatedPosts(c.UserContext(), project.ProjectID, c.Params("slug"), c.Query("locale", "en"), limit)
+		return ListEnvelope[store.RelatedPost]{
+			Data: posts,
+			Meta: PageMeta{ProjectID: projectID, ContentGeneration: generation, Limit: limit},
+		}, publishedListCacheTTL, nil
+	})
 	if err != nil {
 		return problem(c, fiber.StatusInternalServerError, "Could not load related posts", "")
-	}
-	response := ListEnvelope[store.RelatedPost]{
-		Data: posts,
-		Meta: PageMeta{ProjectID: project.ProjectID, ContentGeneration: generation, Limit: limit},
-	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, response, publishedListCacheTTL)
 	}
 	return writePublishedJSON(c, response)
 }
@@ -310,28 +313,31 @@ func (s *Server) listTerms(c *fiber.Ctx, termType string) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(project.ProjectID, generation, "taxonomy", termType, normalizedContentQuery(c))
-	if cacheOK {
-		var cached ListEnvelope[store.TaxonomyTerm]
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			return writePublishedJSON(c, cached)
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	cursor := c.Query("cursor")
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	generation := s.projectGeneration(ctx, projectID)
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "taxonomy", termType, normalizedContentQuery(c))
+	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (ListEnvelope[store.TaxonomyTerm], time.Duration, error) {
+		terms, err := s.store.ListTerms(ctx, projectID, termType)
+		if err != nil {
+			return ListEnvelope[store.TaxonomyTerm]{}, 0, err
 		}
-	}
-	terms, err := s.store.ListTerms(c.UserContext(), project.ProjectID, termType)
+		page, next, pageErr := paginateByID(terms, cursor, limit, func(term store.TaxonomyTerm) string { return term.ID })
+		if pageErr != nil {
+			return ListEnvelope[store.TaxonomyTerm]{}, 0, pageErr
+		}
+		return ListEnvelope[store.TaxonomyTerm]{
+			Data: page,
+			Meta: PageMeta{ProjectID: projectID, ContentGeneration: generation, Limit: len(page), NextCursor: next},
+		}, publishedTaxonomyCacheTTL, nil
+	})
 	if err != nil {
+		if errors.Is(err, errInvalidCursor) {
+			return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
+		}
 		return problem(c, fiber.StatusInternalServerError, "Could not list taxonomy", "")
-	}
-	page, next, pageErr := paginateByID(terms, c.Query("cursor"), boundedLimit(c.Query("limit", "50"), 100), func(term store.TaxonomyTerm) string { return term.ID })
-	if pageErr != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
-	}
-	response := ListEnvelope[store.TaxonomyTerm]{
-		Data: page,
-		Meta: PageMeta{ProjectID: project.ProjectID, ContentGeneration: generation, Limit: len(page), NextCursor: next},
-	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, response, publishedTaxonomyCacheTTL)
 	}
 	return writePublishedJSON(c, response)
 }
@@ -341,20 +347,26 @@ func (s *Server) getTerm(c *fiber.Ctx, termType string) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(project.ProjectID, generation, "taxonomy-detail", termType, c.Params("slug"))
-	if cacheOK {
-		var cached Envelope[store.TaxonomyTerm]
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			return writePublishedJSON(c, cached)
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	slug := c.Params("slug")
+	generation := s.projectGeneration(ctx, projectID)
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "taxonomy-detail", termType, slug)
+	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (Envelope[store.TaxonomyTerm], time.Duration, error) {
+		term, err := s.store.GetTerm(ctx, projectID, termType, slug)
+		if err != nil {
+			return Envelope[store.TaxonomyTerm]{}, 0, err
 		}
-	}
-	term, err := s.store.GetTerm(c.UserContext(), project.ProjectID, termType, c.Params("slug"))
+		return Envelope[store.TaxonomyTerm]{
+			Data: term,
+			Meta: MetaData{ProjectID: projectID, ContentGeneration: generation},
+		}, publishedTaxonomyCacheTTL, nil
+	})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			prefix := taxonomyRoutePrefix(termType)
 			if prefix != "" {
-				redirect, redirectErr := s.store.GetRedirect(c.UserContext(), project.ProjectID, prefix+c.Params("slug"))
+				redirect, redirectErr := s.store.GetRedirect(ctx, projectID, prefix+slug)
 				if redirectErr == nil && strings.HasPrefix(redirect.TargetPath, prefix) {
 					return c.Redirect("/content/v1"+redirect.TargetPath, fiber.StatusMovedPermanently)
 				}
@@ -365,13 +377,6 @@ func (s *Server) getTerm(c *fiber.Ctx, termType string) error {
 			return problem(c, fiber.StatusNotFound, "Taxonomy term not found", "")
 		}
 		return problem(c, fiber.StatusInternalServerError, "Could not load taxonomy term", "")
-	}
-	response := Envelope[store.TaxonomyTerm]{
-		Data: term,
-		Meta: MetaData{ProjectID: project.ProjectID, ContentGeneration: generation},
-	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, response, publishedTaxonomyCacheTTL)
 	}
 	return writePublishedJSON(c, response)
 }
@@ -392,28 +397,31 @@ func (s *Server) listAuthors(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(project.ProjectID, generation, "authors", normalizedContentQuery(c))
-	if cacheOK {
-		var cached ListEnvelope[store.Author]
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			return writePublishedJSON(c, cached)
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	cursor := c.Query("cursor")
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	generation := s.projectGeneration(ctx, projectID)
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "authors", normalizedContentQuery(c))
+	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (ListEnvelope[store.Author], time.Duration, error) {
+		authors, err := s.store.ListAuthors(ctx, projectID)
+		if err != nil {
+			return ListEnvelope[store.Author]{}, 0, err
 		}
-	}
-	authors, err := s.store.ListAuthors(c.UserContext(), project.ProjectID)
+		page, next, pageErr := paginateByID(authors, cursor, limit, func(author store.Author) string { return author.ID })
+		if pageErr != nil {
+			return ListEnvelope[store.Author]{}, 0, pageErr
+		}
+		return ListEnvelope[store.Author]{
+			Data: page,
+			Meta: PageMeta{ProjectID: projectID, ContentGeneration: generation, Limit: len(page), NextCursor: next},
+		}, publishedTaxonomyCacheTTL, nil
+	})
 	if err != nil {
+		if errors.Is(err, errInvalidCursor) {
+			return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
+		}
 		return problem(c, fiber.StatusInternalServerError, "Could not list authors", "")
-	}
-	page, next, pageErr := paginateByID(authors, c.Query("cursor"), boundedLimit(c.Query("limit", "50"), 100), func(author store.Author) string { return author.ID })
-	if pageErr != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
-	}
-	response := ListEnvelope[store.Author]{
-		Data: page,
-		Meta: PageMeta{ProjectID: project.ProjectID, ContentGeneration: generation, Limit: len(page), NextCursor: next},
-	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, response, publishedTaxonomyCacheTTL)
 	}
 	return writePublishedJSON(c, response)
 }
@@ -423,27 +431,26 @@ func (s *Server) getAuthor(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(project.ProjectID, generation, "author-detail", c.Params("slug"))
-	if cacheOK {
-		var cached Envelope[store.Author]
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			return writePublishedJSON(c, cached)
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	slug := c.Params("slug")
+	generation := s.projectGeneration(ctx, projectID)
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "author-detail", slug)
+	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (Envelope[store.Author], time.Duration, error) {
+		author, err := s.store.GetAuthor(ctx, projectID, slug)
+		if err != nil {
+			return Envelope[store.Author]{}, 0, err
 		}
-	}
-	author, err := s.store.GetAuthor(c.UserContext(), project.ProjectID, c.Params("slug"))
+		return Envelope[store.Author]{
+			Data: author,
+			Meta: MetaData{ProjectID: projectID, ContentGeneration: generation},
+		}, publishedTaxonomyCacheTTL, nil
+	})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return problem(c, fiber.StatusNotFound, "Author not found", "")
 		}
 		return problem(c, fiber.StatusInternalServerError, "Could not load author", "")
-	}
-	response := Envelope[store.Author]{
-		Data: author,
-		Meta: MetaData{ProjectID: project.ProjectID, ContentGeneration: generation},
-	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, response, publishedTaxonomyCacheTTL)
 	}
 	return writePublishedJSON(c, response)
 }
@@ -453,28 +460,31 @@ func (s *Server) listSeries(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(project.ProjectID, generation, "series", normalizedContentQuery(c))
-	if cacheOK {
-		var cached ListEnvelope[store.Series]
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			return writePublishedJSON(c, cached)
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	cursor := c.Query("cursor")
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	generation := s.projectGeneration(ctx, projectID)
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "series", normalizedContentQuery(c))
+	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (ListEnvelope[store.Series], time.Duration, error) {
+		items, err := s.store.ListSeries(ctx, projectID)
+		if err != nil {
+			return ListEnvelope[store.Series]{}, 0, err
 		}
-	}
-	items, err := s.store.ListSeries(c.UserContext(), project.ProjectID)
+		page, next, pageErr := paginateByID(items, cursor, limit, func(item store.Series) string { return item.ID })
+		if pageErr != nil {
+			return ListEnvelope[store.Series]{}, 0, pageErr
+		}
+		return ListEnvelope[store.Series]{
+			Data: page,
+			Meta: PageMeta{ProjectID: projectID, ContentGeneration: generation, Limit: len(page), NextCursor: next},
+		}, publishedTaxonomyCacheTTL, nil
+	})
 	if err != nil {
+		if errors.Is(err, errInvalidCursor) {
+			return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
+		}
 		return problem(c, fiber.StatusInternalServerError, "Could not list series", "")
-	}
-	page, next, pageErr := paginateByID(items, c.Query("cursor"), boundedLimit(c.Query("limit", "50"), 100), func(item store.Series) string { return item.ID })
-	if pageErr != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
-	}
-	response := ListEnvelope[store.Series]{
-		Data: page,
-		Meta: PageMeta{ProjectID: project.ProjectID, ContentGeneration: generation, Limit: len(page), NextCursor: next},
-	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, response, publishedTaxonomyCacheTTL)
 	}
 	return writePublishedJSON(c, response)
 }
@@ -484,27 +494,26 @@ func (s *Server) getSeries(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(project.ProjectID, generation, "series-detail", c.Params("slug"))
-	if cacheOK {
-		var cached Envelope[store.Series]
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			return writePublishedJSON(c, cached)
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	slug := c.Params("slug")
+	generation := s.projectGeneration(ctx, projectID)
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "series-detail", slug)
+	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (Envelope[store.Series], time.Duration, error) {
+		item, err := s.store.GetSeries(ctx, projectID, slug)
+		if err != nil {
+			return Envelope[store.Series]{}, 0, err
 		}
-	}
-	item, err := s.store.GetSeries(c.UserContext(), project.ProjectID, c.Params("slug"))
+		return Envelope[store.Series]{
+			Data: item,
+			Meta: MetaData{ProjectID: projectID, ContentGeneration: generation},
+		}, publishedTaxonomyCacheTTL, nil
+	})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return problem(c, fiber.StatusNotFound, "Series not found", "")
 		}
 		return problem(c, fiber.StatusInternalServerError, "Could not load series", "")
-	}
-	response := Envelope[store.Series]{
-		Data: item,
-		Meta: MetaData{ProjectID: project.ProjectID, ContentGeneration: generation},
-	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, response, publishedTaxonomyCacheTTL)
 	}
 	return writePublishedJSON(c, response)
 }
@@ -519,24 +528,23 @@ func (s *Server) discoveryManifest(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(project.ProjectID, generation, "discovery", normalizedContentQuery(c))
-	if cacheOK {
-		var cached Envelope[map[string]any]
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			return writePublishedJSON(c, cached)
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	locale := c.Query("locale")
+	generation := s.projectGeneration(ctx, projectID)
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "discovery", normalizedContentQuery(c))
+	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (Envelope[map[string]any], time.Duration, error) {
+		entries, err := s.store.ListDiscovery(ctx, projectID, locale)
+		if err != nil {
+			return Envelope[map[string]any]{}, 0, err
 		}
-	}
-	entries, err := s.store.ListDiscovery(c.UserContext(), project.ProjectID, c.Query("locale"))
+		return Envelope[map[string]any]{
+			Data: map[string]any{"urls": entries},
+			Meta: MetaData{ProjectID: projectID, ContentGeneration: generation},
+		}, publishedListCacheTTL, nil
+	})
 	if err != nil {
 		return problem(c, fiber.StatusInternalServerError, "Could not build discovery manifest", "")
-	}
-	response := Envelope[map[string]any]{
-		Data: map[string]any{"urls": entries},
-		Meta: MetaData{ProjectID: project.ProjectID, ContentGeneration: generation},
-	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, response, publishedListCacheTTL)
 	}
 	return writePublishedJSON(c, response)
 }
@@ -546,28 +554,31 @@ func (s *Server) redirects(c *fiber.Ctx) error {
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	generation := s.projectGeneration(c.UserContext(), project.ProjectID)
-	cacheKey, cacheOK := s.contentCacheKey(project.ProjectID, generation, "redirects", normalizedContentQuery(c))
-	if cacheOK {
-		var cached ListEnvelope[store.RedirectRecord]
-		if s.cacheGetJSON(c.UserContext(), cacheKey, &cached) {
-			return writePublishedJSON(c, cached)
+	ctx := c.UserContext()
+	projectID := project.ProjectID
+	cursor := c.Query("cursor")
+	limit := boundedLimit(c.Query("limit", "100"), 250)
+	generation := s.projectGeneration(ctx, projectID)
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "redirects", normalizedContentQuery(c))
+	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (ListEnvelope[store.RedirectRecord], time.Duration, error) {
+		items, err := s.store.ListRedirects(ctx, projectID)
+		if err != nil {
+			return ListEnvelope[store.RedirectRecord]{}, 0, err
 		}
-	}
-	items, err := s.store.ListRedirects(c.UserContext(), project.ProjectID)
+		page, next, pageErr := paginateByID(items, cursor, limit, func(item store.RedirectRecord) string { return item.SourcePath })
+		if pageErr != nil {
+			return ListEnvelope[store.RedirectRecord]{}, 0, pageErr
+		}
+		return ListEnvelope[store.RedirectRecord]{
+			Data: page,
+			Meta: PageMeta{ProjectID: projectID, ContentGeneration: generation, Limit: len(page), NextCursor: next},
+		}, publishedListCacheTTL, nil
+	})
 	if err != nil {
+		if errors.Is(err, errInvalidCursor) {
+			return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
+		}
 		return problem(c, fiber.StatusInternalServerError, "Could not list redirects", "")
-	}
-	page, next, pageErr := paginateByID(items, c.Query("cursor"), boundedLimit(c.Query("limit", "100"), 250), func(item store.RedirectRecord) string { return item.SourcePath })
-	if pageErr != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
-	}
-	response := ListEnvelope[store.RedirectRecord]{
-		Data: page,
-		Meta: PageMeta{ProjectID: project.ProjectID, ContentGeneration: generation, Limit: len(page), NextCursor: next},
-	}
-	if cacheOK {
-		s.cacheSetJSON(c.UserContext(), cacheKey, response, publishedListCacheTTL)
 	}
 	return writePublishedJSON(c, response)
 }

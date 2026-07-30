@@ -188,6 +188,62 @@ func TestPublishedPostCacheFailureFallsBackToSQLite(t *testing.T) {
 	}
 }
 
+func TestContentCacheFillSingleflightsConcurrentMisses(t *testing.T) {
+	var group cacheFlightGroup
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	var calls int
+	var mu sync.Mutex
+
+	go func() {
+		value, err, shared := contentCacheFill(context.Background(), &group, "content-key", func(context.Context) (string, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			close(started)
+			<-release
+			return "published-json", nil
+		})
+		if err != nil {
+			done <- err
+			return
+		}
+		if shared {
+			done <- errors.New("first cache fill should not be shared")
+			return
+		}
+		if value != "published-json" {
+			done <- errors.New("unexpected cache fill value")
+			return
+		}
+		done <- nil
+	}()
+
+	<-started
+	waiterCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err, shared := contentCacheFill(waiterCtx, &group, "content-key", func(context.Context) (string, error) {
+		return "", errors.New("duplicate fill should not run")
+	})
+	if !shared {
+		t.Fatal("expected concurrent cache fill to join the in-flight call")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancelled waiter to return context cancellation, got %v", err)
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("expected one cache fill, got %d", calls)
+	}
+}
+
 func assertRateLimitStatus(t *testing.T, app *fiber.App, key string, expected int) {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
