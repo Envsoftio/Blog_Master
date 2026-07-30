@@ -510,15 +510,9 @@ select {
   gap: 16px;
 }
 
-.page-heading h2 {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 680;
-}
-
 .page-heading p {
   max-width: 720px;
-  margin: 5px 0 0;
+  margin: 0;
   color: var(--text-soft);
   font-size: 13px;
 }

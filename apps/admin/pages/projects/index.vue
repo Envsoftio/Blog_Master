@@ -2,7 +2,6 @@
   <div class="page-stack">
     <div class="page-heading">
       <div>
-        <h2>Projects</h2>
         <p>Tenant workspaces, domains, access roles, and lifecycle state.</p>
       </div>
       <button class="button button--primary button--compact" type="button" @click="formOpen = !formOpen">

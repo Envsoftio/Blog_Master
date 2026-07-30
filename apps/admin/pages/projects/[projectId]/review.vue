@@ -2,7 +2,6 @@
   <div class="page-stack">
     <div class="page-heading">
       <div>
-        <h2>Review queue</h2>
         <p>Revisions waiting for editorial decisions, requested changes, and publication readiness.</p>
       </div>
       <button class="button button--compact" type="button" :disabled="pending" @click="loadArticles">

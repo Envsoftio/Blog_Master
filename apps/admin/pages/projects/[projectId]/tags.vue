@@ -2,7 +2,6 @@
   <div class="page-stack">
     <div class="page-heading">
       <div>
-        <h2>Tags</h2>
         <p>Flat project labels used for discovery, relationships, and editorial filtering.</p>
       </div>
       <div class="taxonomy-actions">

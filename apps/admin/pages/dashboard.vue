@@ -3,7 +3,6 @@
     <div class="dashboard-welcome">
       <div>
         <p>{{ greeting }}</p>
-        <h2>Editorial overview</h2>
         <span>Content progress, review work, and publishing activity across your projects.</span>
       </div>
       <div class="dashboard-welcome__actions">
@@ -264,9 +263,8 @@ function publicationStatusClass(state: string) {
 
 <style scoped>
 .dashboard-welcome { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
-.dashboard-welcome p, .dashboard-welcome h2, .dashboard-welcome span { margin: 0; }
+.dashboard-welcome p, .dashboard-welcome span { margin: 0; }
 .dashboard-welcome p { color: var(--primary); font-size: 11px; font-weight: 650; }
-.dashboard-welcome h2 { margin-top: 2px; font-size: 24px; }
 .dashboard-welcome > div > span { display: block; margin-top: 5px; color: var(--text-soft); font-size: 12px; }
 .dashboard-welcome__actions { display: flex; gap: 7px; }
 .metric-card small { display: block; margin-top: 8px; color: var(--text-faint); font-size: 9px; }

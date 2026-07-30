@@ -2,7 +2,6 @@
   <div class="page-stack">
     <div class="page-heading">
       <div>
-        <h2>Media library</h2>
         <p>Project images, documents, processing state, and accessibility metadata.</p>
       </div>
       <button class="button button--primary button--compact" type="button" @click="fileInput?.click()">

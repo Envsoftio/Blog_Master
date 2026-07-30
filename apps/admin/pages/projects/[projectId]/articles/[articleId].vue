@@ -13,7 +13,6 @@
           </NuxtLink>
           <div class="min-w-0">
             <p class="truncate text-sm text-[#5d6a61] dark:text-[#aeb8b0]">{{ project?.name || 'Project' }}</p>
-            <h1 class="mt-1 truncate text-2xl font-semibold tracking-normal">{{ article?.title || 'Article' }}</h1>
           </div>
         </div>
         <div class="flex items-center gap-2">

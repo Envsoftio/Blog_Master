@@ -2,7 +2,6 @@
   <div class="page-stack">
     <div class="page-heading">
       <div>
-        <h2>Integrations</h2>
         <p>Signed delivery webhooks, endpoint health, retries, and landing application status.</p>
       </div>
       <button class="button button--primary button--compact" type="button" @click="formOpen = !formOpen">

@@ -2,7 +2,6 @@
   <div class="page-stack">
     <div class="page-heading">
       <div>
-        <h2>Operations</h2>
         <p>API readiness, project dependencies, retained records, and recent operational events.</p>
       </div>
       <button class="button button--compact" type="button" :disabled="pending" @click="loadOperations">

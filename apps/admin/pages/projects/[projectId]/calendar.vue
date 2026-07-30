@@ -2,7 +2,6 @@
   <div class="page-stack">
     <div class="page-heading">
       <div>
-        <h2>Editorial calendar</h2>
         <p>Scheduled releases, recent publications, and drafts that still need a date.</p>
       </div>
       <div class="calendar-toolbar">

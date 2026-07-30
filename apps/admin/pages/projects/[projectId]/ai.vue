@@ -2,7 +2,6 @@
   <div class="page-stack">
     <div class="page-heading">
       <div>
-        <h2>AI workspace</h2>
         <p>Human-led briefs, evidence packets, generation jobs, and quality checks.</p>
       </div>
       <span class="status-pill" :class="serviceAvailable ? 'status-pill--success' : 'status-pill--warning'">
