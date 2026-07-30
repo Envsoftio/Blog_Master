@@ -8,7 +8,7 @@
         <Upload :size="16" />
         Upload
       </button>
-      <input ref="fileInput" class="sr-only" type="file" accept="image/*,.pdf" multiple @change="selectFiles">
+      <input ref="fileInput" class="sr-only" type="file" :accept="acceptedUploadTypes" multiple @change="selectFiles">
     </div>
 
     <div class="metric-grid">
@@ -138,6 +138,15 @@ const typeFilter = ref('all')
 const view = ref<'grid' | 'list'>('grid')
 const errorMessage = ref('')
 const successMessage = ref('')
+const acceptedUploadTypes = '.jpg,.jpeg,.png,.webp,.gif,.pdf,image/jpeg,image/png,image/webp,image/gif,application/pdf'
+const mediaTypeByExtension: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  pdf: 'application/pdf'
+}
 
 const filteredAssets = computed(() => {
   const term = search.value.toLowerCase()
@@ -170,7 +179,13 @@ async function loadMedia() {
 
 function selectFiles(event: Event) {
   const input = event.target as HTMLInputElement
-  selectedFiles.value = Array.from(input.files || [])
+  const files = Array.from(input.files || [])
+  selectedFiles.value = files.filter(file => Boolean(mediaContentType(file)))
+  if (selectedFiles.value.length !== files.length) {
+    errorMessage.value = 'Some selected files are not supported for media registration.'
+  } else {
+    errorMessage.value = ''
+  }
   input.value = ''
 }
 
@@ -182,7 +197,7 @@ async function uploadFiles() {
     for (const file of selectedFiles.value) {
       await api.initiateMediaUpload(projectID.value, {
         filename: file.name,
-        contentType: file.type || 'application/octet-stream',
+        contentType: mediaContentType(file) || 'application/octet-stream',
         bytes: file.size
       })
     }
@@ -196,6 +211,20 @@ async function uploadFiles() {
   } finally {
     uploading.value = false
   }
+}
+
+function mediaContentType(file: File) {
+  const extension = file.name.split('.').pop()?.toLowerCase() || ''
+  const expectedType = mediaTypeByExtension[extension]
+  if (!expectedType) return ''
+  const browserType = normalizeMediaType(file.type)
+  if (!browserType) return expectedType
+  return browserType === expectedType ? browserType : ''
+}
+
+function normalizeMediaType(value: string) {
+  const mediaType = value.split(';')[0]?.trim().toLowerCase() || ''
+  return mediaType === 'image/jpg' ? 'image/jpeg' : mediaType
 }
 
 function formatBytes(bytes: number) {

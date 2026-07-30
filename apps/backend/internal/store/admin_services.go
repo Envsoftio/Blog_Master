@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,34 @@ type MediaPatch struct {
 	Caption    *string
 	Credit     *string
 	License    *string
+}
+
+type mediaUploadPolicy struct {
+	Extensions map[string]struct{}
+	MaxBytes   int64
+}
+
+var allowedMediaUploads = map[string]mediaUploadPolicy{
+	"image/jpeg": {
+		Extensions: extensionSet(".jpg", ".jpeg"),
+		MaxBytes:   25 * 1024 * 1024,
+	},
+	"image/png": {
+		Extensions: extensionSet(".png"),
+		MaxBytes:   25 * 1024 * 1024,
+	},
+	"image/webp": {
+		Extensions: extensionSet(".webp"),
+		MaxBytes:   25 * 1024 * 1024,
+	},
+	"image/gif": {
+		Extensions: extensionSet(".gif"),
+		MaxBytes:   25 * 1024 * 1024,
+	},
+	"application/pdf": {
+		Extensions: extensionSet(".pdf"),
+		MaxBytes:   50 * 1024 * 1024,
+	},
 }
 
 type AdminAIJob struct {
@@ -292,16 +321,9 @@ func (s *Store) CreateMediaAsset(ctx context.Context, userID, projectID string, 
 	if err := s.requireContentWrite(ctx, userID, projectID); err != nil {
 		return AdminMediaAsset{}, err
 	}
-	input.Filename = strings.TrimSpace(filepath.Base(input.Filename))
-	input.ContentType = strings.ToLower(strings.TrimSpace(input.ContentType))
-	if input.Filename == "" || input.Filename == "." {
-		return AdminMediaAsset{}, fmt.Errorf("%w: filename is required", ErrValidation)
-	}
-	if input.ContentType == "" || input.Bytes <= 0 {
-		return AdminMediaAsset{}, fmt.Errorf("%w: contentType and a positive byte size are required", ErrValidation)
-	}
-	if input.Bytes > 100*1024*1024 {
-		return AdminMediaAsset{}, fmt.Errorf("%w: media files may not exceed 100 MB", ErrValidation)
+	input, err := validateMediaUpload(input)
+	if err != nil {
+		return AdminMediaAsset{}, err
 	}
 	assetID, err := security.RandomID("asset")
 	if err != nil {
@@ -1669,6 +1691,70 @@ func safeObjectFilename(value string) string {
 		return "asset"
 	}
 	return value
+}
+
+func validateMediaUpload(input MediaUploadInput) (MediaUploadInput, error) {
+	input.Filename = strings.TrimSpace(filepath.Base(strings.ReplaceAll(input.Filename, "\\", "/")))
+	input.ContentType = normalizeMediaContentType(input.ContentType)
+	if input.Filename == "" || input.Filename == "." {
+		return input, fmt.Errorf("%w: filename is required", ErrValidation)
+	}
+	if input.ContentType == "" || input.Bytes <= 0 {
+		return input, fmt.Errorf("%w: contentType and a positive byte size are required", ErrValidation)
+	}
+
+	extension := strings.ToLower(filepath.Ext(input.Filename))
+	if extension == "" {
+		return input, fmt.Errorf("%w: filename must include an allowed extension", ErrValidation)
+	}
+	if extension == ".svg" || input.ContentType == "image/svg+xml" {
+		return input, fmt.Errorf("%w: SVG media requires a dedicated sanitizer and is disabled by default", ErrValidation)
+	}
+
+	policy, ok := allowedMediaUploads[input.ContentType]
+	if !ok {
+		return input, fmt.Errorf("%w: unsupported media content type", ErrValidation)
+	}
+	if _, ok := policy.Extensions[extension]; !ok {
+		return input, fmt.Errorf("%w: filename extension does not match content type", ErrValidation)
+	}
+	if input.Bytes > policy.MaxBytes {
+		return input, fmt.Errorf("%w: media file exceeds the %s limit", ErrValidation, humanByteLimit(policy.MaxBytes))
+	}
+	return input, nil
+}
+
+func normalizeMediaContentType(value string) string {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(value))
+	if err != nil {
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+	mediaType = strings.ToLower(mediaType)
+	if mediaType == "image/jpg" {
+		return "image/jpeg"
+	}
+	return mediaType
+}
+
+func extensionSet(values ...string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		result[strings.ToLower(value)] = struct{}{}
+	}
+	return result
+}
+
+func humanByteLimit(bytes int64) string {
+	if bytes%(1024*1024) == 0 {
+		return fmt.Sprintf("%d MB", bytes/(1024*1024))
+	}
+	if bytes%1024 == 0 {
+		return fmt.Sprintf("%d KB", bytes/1024)
+	}
+	if bytes == 1 {
+		return "1 byte"
+	}
+	return fmt.Sprintf("%d bytes", bytes)
 }
 
 func uniqueStrings(values []string) []string {

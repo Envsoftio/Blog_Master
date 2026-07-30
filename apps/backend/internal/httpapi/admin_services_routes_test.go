@@ -60,6 +60,48 @@ func TestAdminMediaRoutesRequireCSRFAndRemainProjectScoped(t *testing.T) {
 	}
 }
 
+func TestAdminMediaRegistrationRejectsUnsafeFiles(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "media-validation-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-validation","name":"Media Validation"}`)
+	path := "/api/v1/projects/" + project.ID + "/media/uploads"
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "svg",
+			body: `{"filename":"logo.svg","contentType":"image/svg+xml","bytes":1024}`,
+		},
+		{
+			name: "extension mismatch",
+			body: `{"filename":"hero.jpg","contentType":"image/png","bytes":1024}`,
+		},
+		{
+			name: "unsupported octet stream",
+			body: `{"filename":"archive.bin","contentType":"application/octet-stream","bytes":1024}`,
+		},
+		{
+			name: "missing extension",
+			body: `{"filename":"hero","contentType":"image/png","bytes":1024}`,
+		},
+		{
+			name: "oversized image",
+			body: `{"filename":"huge.png","contentType":"image/png","bytes":26214401}`,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := mustTest(t, server, newMemberMutationRequest(http.MethodPost, path, testCase.body, login))
+			if response.StatusCode != http.StatusBadRequest {
+				t.Fatalf("expected unsafe media registration to fail with 400, got %d: %s", response.StatusCode, readBody(t, response))
+			}
+		})
+	}
+}
+
 func TestAdminAIJobRoutesPersistAndCancelJobs(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "ai-owner@example.test", "correct horse battery staple")

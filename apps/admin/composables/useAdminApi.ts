@@ -207,8 +207,14 @@ export type AdminMediaAsset = {
   height?: number
   bytes?: number
   altText?: string
-  url?: string
+  decorative: boolean
+  caption?: string
+  credit?: string
+  license?: string
+  objectKey: string
   createdAt?: string
+  updatedAt?: string
+  url?: string
 }
 
 export type WebhookEndpoint = {
