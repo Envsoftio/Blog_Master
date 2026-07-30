@@ -3398,8 +3398,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: GET /api/v1/projects/{projectID}/webhook-attempts
       tags:
         - Administration
@@ -3419,8 +3417,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: HEAD /api/v1/projects/{projectID}/webhook-attempts
       tags:
         - Administration
@@ -3429,7 +3425,7 @@ paths:
       description: Administrative API route.
       operationId: post_api_v1_projects_projectid_webhook_attempts_attemptid_replay
       responses:
-        "200":
+        "202":
           description: Successful response
         "400":
           description: Invalid request
@@ -3441,8 +3437,6 @@ paths:
           description: Resource not found
         "500":
           description: Internal server error
-        "501":
-          description: Administrative workflow is not implemented yet
       summary: POST /api/v1/projects/{projectID}/webhook-attempts/{attemptID}/replay
       tags:
         - Administration

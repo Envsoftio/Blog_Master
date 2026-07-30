@@ -218,6 +218,39 @@ func (s *Server) revokeWebhook(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.WebhookEndpoint]{Data: endpoint})
 }
 
+func (s *Server) listWebhookAttempts(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	limit := boundedLimit(c.Query("limit", "50"), 100)
+	attempts, err := s.store.ListWebhookAttempts(c.UserContext(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
+	if err != nil {
+		return s.adminReadError(c, err, "Project not found", "Could not list webhook attempts")
+	}
+	nextCursor := ""
+	if len(attempts) > limit {
+		attempts = attempts[:limit]
+		nextCursor = attempts[len(attempts)-1].ID
+	}
+	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.WebhookAttempt]{
+		Data: attempts,
+		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
+	})
+}
+
+func (s *Server) replayWebhookAttempt(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	attempt, err := s.store.ReplayWebhookAttempt(c.UserContext(), user.ID, c.Params("projectID"), c.Params("attemptID"))
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not replay webhook attempt")
+	}
+	return writeJSON(c, fiber.StatusAccepted, Envelope[store.WebhookAttempt]{Data: attempt})
+}
+
 func (s *Server) deliveryStatus(c *fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {

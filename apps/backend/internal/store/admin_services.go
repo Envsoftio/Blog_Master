@@ -76,6 +76,21 @@ type WebhookWithSecret struct {
 	Secret string `json:"secret"`
 }
 
+type WebhookAttempt struct {
+	ID            string `json:"id"`
+	ProjectID     string `json:"projectId"`
+	EndpointID    string `json:"endpointId"`
+	EndpointName  string `json:"endpointName"`
+	OutboxEventID string `json:"outboxEventId"`
+	EventType     string `json:"eventType"`
+	AggregateType string `json:"aggregateType"`
+	AggregateID   string `json:"aggregateId"`
+	Status        string `json:"status"`
+	StatusCode    int64  `json:"statusCode,omitempty"`
+	ErrorCategory string `json:"errorCategory,omitempty"`
+	AttemptedAt   string `json:"attemptedAt"`
+}
+
 type WebhookInput struct {
 	Name   string
 	URL    string
@@ -452,6 +467,112 @@ func (s *Store) RevokeWebhook(ctx context.Context, userID, projectID, endpointID
 	return s.getWebhook(ctx, projectID, endpointID)
 }
 
+func (s *Store) ListWebhookAttempts(ctx context.Context, userID, projectID, cursor string, limit int) ([]WebhookAttempt, error) {
+	if err := s.requireProjectManagement(ctx, userID, projectID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT attempt.id, attempt.project_id, attempt.endpoint_id, endpoint.name,
+		       attempt.outbox_event_id, event.event_type, event.aggregate_type,
+		       event.aggregate_id, attempt.status, COALESCE(attempt.status_code, 0),
+		       COALESCE(attempt.error_category, ''), attempt.attempted_at
+		FROM webhook_attempts attempt
+		JOIN webhook_endpoints endpoint
+		  ON endpoint.project_id = attempt.project_id
+		 AND endpoint.id = attempt.endpoint_id
+		JOIN outbox_events event
+		  ON event.project_id = attempt.project_id
+		 AND event.id = attempt.outbox_event_id
+		WHERE attempt.project_id = ?
+		  AND (
+		    ? = ''
+		    OR attempt.attempted_at < (
+		      SELECT cursor_attempt.attempted_at
+		      FROM webhook_attempts cursor_attempt
+		      WHERE cursor_attempt.project_id = ? AND cursor_attempt.id = ?
+		    )
+		    OR (
+		      attempt.attempted_at = (
+		        SELECT cursor_attempt.attempted_at
+		        FROM webhook_attempts cursor_attempt
+		        WHERE cursor_attempt.project_id = ? AND cursor_attempt.id = ?
+		      )
+		      AND attempt.id < ?
+		    )
+		  )
+		ORDER BY attempt.attempted_at DESC, attempt.id DESC
+		LIMIT ?
+	`, projectID, cursor, projectID, cursor, projectID, cursor, cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	attempts := []WebhookAttempt{}
+	for rows.Next() {
+		attempt, err := scanWebhookAttempt(rows)
+		if err != nil {
+			return nil, err
+		}
+		attempts = append(attempts, attempt)
+	}
+	return attempts, rows.Err()
+}
+
+func (s *Store) ReplayWebhookAttempt(ctx context.Context, userID, projectID, attemptID string) (WebhookAttempt, error) {
+	if err := s.requireProjectManagement(ctx, userID, projectID); err != nil {
+		return WebhookAttempt{}, err
+	}
+	attemptID = strings.TrimSpace(attemptID)
+	if attemptID == "" {
+		return WebhookAttempt{}, fmt.Errorf("%w: attempt id is required", ErrValidation)
+	}
+	replayID, err := security.RandomID("wha")
+	if err != nil {
+		return WebhookAttempt{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return WebhookAttempt{}, err
+	}
+	defer tx.Rollback()
+
+	source, endpointStatus, err := getWebhookAttemptForReplay(ctx, tx, projectID, attemptID)
+	if err != nil {
+		return WebhookAttempt{}, err
+	}
+	if endpointStatus != "active" {
+		return WebhookAttempt{}, fmt.Errorf("%w: webhook endpoint is not active", ErrInvalidWorkflow)
+	}
+	if source.Status != "failed" && source.Status != "dead_letter" {
+		return WebhookAttempt{}, fmt.Errorf("%w: only failed webhook attempts can be replayed", ErrInvalidWorkflow)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE outbox_events
+		SET processed_at = NULL,
+		    available_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND id = ?
+	`, projectID, source.OutboxEventID); err != nil {
+		return WebhookAttempt{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO webhook_attempts(id, project_id, endpoint_id, outbox_event_id, status, error_category)
+		VALUES (?, ?, ?, ?, 'queued', ?)
+	`, replayID, projectID, source.EndpointID, source.OutboxEventID, "manual_replay:"+attemptID); err != nil {
+		return WebhookAttempt{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", userID, "webhook_attempt.replay", "webhook_attempt", replayID, "success", map[string]string{
+		"source_attempt_id": attemptID,
+		"endpoint_id":       source.EndpointID,
+		"outbox_event_id":   source.OutboxEventID,
+	}); err != nil {
+		return WebhookAttempt{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return WebhookAttempt{}, err
+	}
+	return s.getWebhookAttempt(ctx, projectID, replayID)
+}
+
 func (s *Store) DeliveryStatus(ctx context.Context, userID, projectID string) (DeliveryStatus, error) {
 	if err := s.requireProjectManagement(ctx, userID, projectID); err != nil {
 		return DeliveryStatus{}, err
@@ -472,6 +593,23 @@ func (s *Store) DeliveryStatus(ctx context.Context, userID, projectID string) (D
 		&status.Succeeded,
 	)
 	return status, err
+}
+
+func (s *Store) getWebhookAttempt(ctx context.Context, projectID, attemptID string) (WebhookAttempt, error) {
+	return scanWebhookAttempt(s.db.QueryRowContext(ctx, `
+		SELECT attempt.id, attempt.project_id, attempt.endpoint_id, endpoint.name,
+		       attempt.outbox_event_id, event.event_type, event.aggregate_type,
+		       event.aggregate_id, attempt.status, COALESCE(attempt.status_code, 0),
+		       COALESCE(attempt.error_category, ''), attempt.attempted_at
+		FROM webhook_attempts attempt
+		JOIN webhook_endpoints endpoint
+		  ON endpoint.project_id = attempt.project_id
+		 AND endpoint.id = attempt.endpoint_id
+		JOIN outbox_events event
+		  ON event.project_id = attempt.project_id
+		 AND event.id = attempt.outbox_event_id
+		WHERE attempt.project_id = ? AND attempt.id = ?
+	`, projectID, attemptID))
 }
 
 func (s *Store) getWebhook(ctx context.Context, projectID, endpointID string) (WebhookEndpoint, error) {
@@ -536,6 +674,60 @@ func scanWebhookEndpoint(row rowScanner) (WebhookEndpoint, error) {
 		endpoint.Events = []string{}
 	}
 	return endpoint, nil
+}
+
+func scanWebhookAttempt(row rowScanner) (WebhookAttempt, error) {
+	var attempt WebhookAttempt
+	err := row.Scan(
+		&attempt.ID,
+		&attempt.ProjectID,
+		&attempt.EndpointID,
+		&attempt.EndpointName,
+		&attempt.OutboxEventID,
+		&attempt.EventType,
+		&attempt.AggregateType,
+		&attempt.AggregateID,
+		&attempt.Status,
+		&attempt.StatusCode,
+		&attempt.ErrorCategory,
+		&attempt.AttemptedAt,
+	)
+	return attempt, err
+}
+
+func getWebhookAttemptForReplay(ctx context.Context, tx *sql.Tx, projectID, attemptID string) (WebhookAttempt, string, error) {
+	var attempt WebhookAttempt
+	var endpointStatus string
+	err := tx.QueryRowContext(ctx, `
+		SELECT attempt.id, attempt.project_id, attempt.endpoint_id, endpoint.name,
+		       attempt.outbox_event_id, event.event_type, event.aggregate_type,
+		       event.aggregate_id, attempt.status, COALESCE(attempt.status_code, 0),
+		       COALESCE(attempt.error_category, ''), attempt.attempted_at,
+		       endpoint.status
+		FROM webhook_attempts attempt
+		JOIN webhook_endpoints endpoint
+		  ON endpoint.project_id = attempt.project_id
+		 AND endpoint.id = attempt.endpoint_id
+		JOIN outbox_events event
+		  ON event.project_id = attempt.project_id
+		 AND event.id = attempt.outbox_event_id
+		WHERE attempt.project_id = ? AND attempt.id = ?
+	`, projectID, attemptID).Scan(
+		&attempt.ID,
+		&attempt.ProjectID,
+		&attempt.EndpointID,
+		&attempt.EndpointName,
+		&attempt.OutboxEventID,
+		&attempt.EventType,
+		&attempt.AggregateType,
+		&attempt.AggregateID,
+		&attempt.Status,
+		&attempt.StatusCode,
+		&attempt.ErrorCategory,
+		&attempt.AttemptedAt,
+		&endpointStatus,
+	)
+	return attempt, endpointStatus, err
 }
 
 func safeObjectFilename(value string) string {

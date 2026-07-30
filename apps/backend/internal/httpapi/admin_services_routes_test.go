@@ -143,4 +143,137 @@ func TestAdminWebhookRoutesHashSecretAndReportDeliveryStatus(t *testing.T) {
 	if delivery.Data.Endpoints != 1 || delivery.Data.Active != 1 || delivery.Data.Failures != 0 {
 		t.Fatalf("unexpected delivery status %#v", delivery.Data)
 	}
+
+	if _, err := db.Exec(`
+		INSERT INTO outbox_events(
+		  id, project_id, event_type, aggregate_type, aggregate_id,
+		  payload_json, idempotency_key, processed_at, attempts
+		) VALUES (?, ?, 'content.published', 'content', ?, '{}', ?, CURRENT_TIMESTAMP, 3)
+	`, "event-failed", project.ID, "article-failed", "webhook-failed-event"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO outbox_events(
+		  id, project_id, event_type, aggregate_type, aggregate_id,
+		  payload_json, idempotency_key
+		) VALUES (?, ?, 'content.updated', 'content', ?, '{}', ?)
+	`, "event-succeeded", project.ID, "article-succeeded", "webhook-succeeded-event"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO webhook_attempts(
+		  id, project_id, endpoint_id, outbox_event_id, status, status_code, error_category
+		) VALUES (?, ?, ?, ?, 'failed', 500, 'timeout')
+	`, "attempt-failed", project.ID, created.Data.ID, "event-failed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO webhook_attempts(
+		  id, project_id, endpoint_id, outbox_event_id, status, status_code
+		) VALUES (?, ?, ?, ?, 'succeeded', 204)
+	`, "attempt-succeeded", project.ID, created.Data.ID, "event-succeeded"); err != nil {
+		t.Fatal(err)
+	}
+
+	attemptsRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/webhook-attempts", nil)
+	addCookies(attemptsRequest, login.cookies)
+	attemptsResponse := mustTest(t, server, attemptsRequest)
+	if attemptsResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected webhook attempts list 200, got %d: %s", attemptsResponse.StatusCode, readBody(t, attemptsResponse))
+	}
+	var attempts ListEnvelope[store.WebhookAttempt]
+	decodeJSONResponse(t, attemptsResponse, &attempts)
+	if !hasWebhookAttempt(attempts.Data, "attempt-failed", "failed") || !hasWebhookAttempt(attempts.Data, "attempt-succeeded", "succeeded") {
+		t.Fatalf("expected seeded webhook attempts in list, got %#v", attempts.Data)
+	}
+
+	firstPageRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/webhook-attempts?limit=1", nil)
+	addCookies(firstPageRequest, login.cookies)
+	firstPageResponse := mustTest(t, server, firstPageRequest)
+	if firstPageResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected first attempt page 200, got %d: %s", firstPageResponse.StatusCode, readBody(t, firstPageResponse))
+	}
+	var firstPage ListEnvelope[store.WebhookAttempt]
+	decodeJSONResponse(t, firstPageResponse, &firstPage)
+	if len(firstPage.Data) != 1 || firstPage.Meta.NextCursor == "" {
+		t.Fatalf("expected first page with next cursor, got %#v", firstPage)
+	}
+	secondPageRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/webhook-attempts?limit=1&cursor="+firstPage.Meta.NextCursor, nil)
+	addCookies(secondPageRequest, login.cookies)
+	secondPageResponse := mustTest(t, server, secondPageRequest)
+	if secondPageResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected second attempt page 200, got %d: %s", secondPageResponse.StatusCode, readBody(t, secondPageResponse))
+	}
+	var secondPage ListEnvelope[store.WebhookAttempt]
+	decodeJSONResponse(t, secondPageResponse, &secondPage)
+	if len(secondPage.Data) != 1 || secondPage.Data[0].ID == firstPage.Data[0].ID {
+		t.Fatalf("expected cursor to return next webhook attempt, first=%#v second=%#v", firstPage.Data, secondPage.Data)
+	}
+
+	replayRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/webhook-attempts/attempt-failed/replay",
+		`{}`,
+		login,
+	)
+	replayResponse := mustTest(t, server, replayRequest)
+	if replayResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected webhook replay 202, got %d: %s", replayResponse.StatusCode, readBody(t, replayResponse))
+	}
+	var replayed Envelope[store.WebhookAttempt]
+	decodeJSONResponse(t, replayResponse, &replayed)
+	if replayed.Data.ID == "" || replayed.Data.ID == "attempt-failed" || replayed.Data.Status != "queued" || replayed.Data.OutboxEventID != "event-failed" {
+		t.Fatalf("unexpected replayed attempt %#v", replayed.Data)
+	}
+	var processedAt string
+	if err := db.QueryRow(`SELECT COALESCE(processed_at, '') FROM outbox_events WHERE project_id = ? AND id = ?`, project.ID, "event-failed").Scan(&processedAt); err != nil {
+		t.Fatal(err)
+	}
+	if processedAt != "" {
+		t.Fatalf("expected replay to requeue outbox event, processed_at=%q", processedAt)
+	}
+
+	replaySucceeded := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/webhook-attempts/attempt-succeeded/replay",
+		`{}`,
+		login,
+	)
+	replaySucceededResponse := mustTest(t, server, replaySucceeded)
+	if replaySucceededResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected succeeded webhook replay to fail with 409, got %d: %s", replaySucceededResponse.StatusCode, readBody(t, replaySucceededResponse))
+	}
+
+	projectB := createTestProject(t, server, login, `{"slug":"webhook-project-b","name":"Webhook Project B"}`)
+	crossProjectReplay := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+projectB.ID+"/webhook-attempts/attempt-failed/replay",
+		`{}`,
+		login,
+	)
+	crossProjectReplayResponse := mustTest(t, server, crossProjectReplay)
+	if crossProjectReplayResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected cross-project webhook replay to return 404, got %d: %s", crossProjectReplayResponse.StatusCode, readBody(t, crossProjectReplayResponse))
+	}
+
+	statusAfterReplayRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/delivery/status", nil)
+	addCookies(statusAfterReplayRequest, login.cookies)
+	statusAfterReplayResponse := mustTest(t, server, statusAfterReplayRequest)
+	if statusAfterReplayResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected delivery status after replay 200, got %d: %s", statusAfterReplayResponse.StatusCode, readBody(t, statusAfterReplayResponse))
+	}
+	var deliveryAfterReplay Envelope[store.DeliveryStatus]
+	decodeJSONResponse(t, statusAfterReplayResponse, &deliveryAfterReplay)
+	if deliveryAfterReplay.Data.Pending != 1 || deliveryAfterReplay.Data.Failures != 1 || deliveryAfterReplay.Data.Succeeded != 1 {
+		t.Fatalf("unexpected delivery status after replay %#v", deliveryAfterReplay.Data)
+	}
+}
+
+func hasWebhookAttempt(attempts []store.WebhookAttempt, attemptID, status string) bool {
+	for _, attempt := range attempts {
+		if attempt.ID == attemptID && attempt.Status == status {
+			return true
+		}
+	}
+	return false
 }

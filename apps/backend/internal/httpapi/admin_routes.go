@@ -129,8 +129,8 @@ func (s *Server) registerAdminRoutes() {
 	api.Get("/projects/:projectID/webhooks", s.requireAdminSession, s.listWebhooks)
 	api.Post("/projects/:projectID/webhooks", s.requireAdminSession, s.requireAdminCSRF, s.createWebhook)
 	api.Post("/projects/:projectID/webhooks/:endpointID/revoke", s.requireAdminSession, s.requireAdminCSRF, s.revokeWebhook)
-	api.Get("/projects/:projectID/webhook-attempts", func(c *fiber.Ctx) error { return notImplemented(c, "webhook attempts") })
-	api.Post("/projects/:projectID/webhook-attempts/:attemptID/replay", func(c *fiber.Ctx) error { return notImplemented(c, "webhook replay") })
+	api.Get("/projects/:projectID/webhook-attempts", s.requireAdminSession, s.listWebhookAttempts)
+	api.Post("/projects/:projectID/webhook-attempts/:attemptID/replay", s.requireAdminSession, s.requireAdminCSRF, s.replayWebhookAttempt)
 
 	api.Get("/projects/:projectID/audit-events", s.requireAdminSession, s.listAuditEvents)
 	api.Get("/projects/:projectID/delivery/status", s.requireAdminSession, s.deliveryStatus)
