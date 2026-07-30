@@ -94,7 +94,7 @@
     <div v-else class="media-grid" :class="{ 'media-grid--list': view === 'list' }">
       <article v-for="asset in filteredAssets" :key="asset.id" class="media-card surface">
         <div class="media-card__preview">
-          <img v-if="asset.url && asset.contentType.startsWith('image/')" :src="asset.url" :alt="asset.altText || ''">
+          <img v-if="mediaPreviewURL(asset)" :src="mediaPreviewURL(asset)" :alt="asset.altText || ''">
           <FileImage v-else :size="28" />
         </div>
         <div class="media-card__body">
@@ -154,6 +154,7 @@ const view = ref<'grid' | 'list'>('grid')
 const errorMessage = ref('')
 const successMessage = ref('')
 const deletingAssetIDs = ref<string[]>([])
+const localPreviewURLs = ref<Record<string, string>>({})
 const acceptedUploadTypes = '.jpg,.jpeg,.png,.webp,.gif,.pdf,image/jpeg,image/png,image/webp,image/gif,application/pdf'
 const mediaTypeByExtension: Record<string, string> = {
   jpg: 'image/jpeg',
@@ -174,12 +175,24 @@ const filteredAssets = computed(() => {
 })
 
 onMounted(loadMedia)
+onBeforeUnmount(revokeLocalPreviews)
 
 async function loadMedia() {
   pending.value = true
   errorMessage.value = ''
   try {
-    assets.value = (await api.listMedia(projectID.value)).data
+    const loadedAssets = (await api.listMedia(projectID.value)).data
+    assets.value = loadedAssets
+    for (const asset of loadedAssets) {
+      if (asset.url) {
+        revokeLocalPreview(asset.id)
+      }
+    }
+    for (const assetID of Object.keys(localPreviewURLs.value)) {
+      if (!loadedAssets.some(asset => asset.id === assetID)) {
+        revokeLocalPreview(assetID)
+      }
+    }
     serviceAvailable.value = true
   } catch (error) {
     if (apiStatus(error) === 501) {
@@ -221,10 +234,13 @@ async function uploadFiles() {
           bytes: file.size
         })
         initiatedAsset = initiated.data
+        rememberLocalPreview(initiated.data, file)
+        upsertMediaAsset(initiated.data)
         if (initiated.data.upload) {
           const sha256 = await fileSHA256(file)
           await uploadToSignedTarget(file, initiated.data.upload)
-          await api.completeMediaUpload(projectID.value, initiated.data.id, { sha256 })
+          const completed = await api.completeMediaUpload(projectID.value, initiated.data.id, { sha256 })
+          upsertMediaAsset(completed.data)
           uploadedCount++
         } else {
           registeredCount++
@@ -280,9 +296,48 @@ async function cleanupFailedUpload(asset: AdminMediaAsset) {
   try {
     await api.deleteMedia(projectID.value, asset.id)
     assets.value = assets.value.filter(item => item.id !== asset.id)
+    revokeLocalPreview(asset.id)
   } catch {
     // Keep the original upload error visible; the stale row can still be deleted manually.
   }
+}
+
+function mediaPreviewURL(asset: AdminMediaAsset) {
+  if (!asset.contentType.startsWith('image/')) return ''
+  return asset.url || localPreviewURLs.value[asset.id] || ''
+}
+
+function rememberLocalPreview(asset: AdminMediaAsset, file: File) {
+  if (!asset.contentType.startsWith('image/')) return
+  revokeLocalPreview(asset.id)
+  localPreviewURLs.value = {
+    ...localPreviewURLs.value,
+    [asset.id]: URL.createObjectURL(file)
+  }
+}
+
+function revokeLocalPreview(assetID: string) {
+  const previewURL = localPreviewURLs.value[assetID]
+  if (!previewURL) return
+  URL.revokeObjectURL(previewURL)
+  const { [assetID]: _removed, ...remaining } = localPreviewURLs.value
+  localPreviewURLs.value = remaining
+}
+
+function revokeLocalPreviews() {
+  for (const previewURL of Object.values(localPreviewURLs.value)) {
+    URL.revokeObjectURL(previewURL)
+  }
+  localPreviewURLs.value = {}
+}
+
+function upsertMediaAsset(asset: AdminMediaAsset) {
+  const index = assets.value.findIndex(item => item.id === asset.id)
+  if (index === -1) {
+    assets.value = [asset, ...assets.value]
+    return
+  }
+  assets.value = assets.value.map(item => item.id === asset.id ? asset : item)
 }
 
 function canDeleteMediaAsset(asset: AdminMediaAsset) {
@@ -308,6 +363,7 @@ async function deleteMediaAsset(asset: AdminMediaAsset) {
   try {
     await api.deleteMedia(projectID.value, asset.id)
     assets.value = assets.value.filter(item => item.id !== asset.id)
+    revokeLocalPreview(asset.id)
     successMessage.value = `${asset.filename} deleted.`
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not delete the media.')

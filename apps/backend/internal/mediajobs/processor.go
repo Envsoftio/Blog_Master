@@ -106,6 +106,9 @@ func (p Processor) ProcessAsset(ctx context.Context, asset store.AdminMediaAsset
 		p.deleteAssetKeys(ctx, asset, uploadedKeys)
 		return err
 	}
+	if len(uploadedKeys) > 0 {
+		p.deleteAssetKeys(ctx, asset, []string{asset.ObjectKey})
+	}
 	return nil
 }
 

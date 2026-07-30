@@ -53,3 +53,22 @@ func TestPresignPutBuildsB2S3CompatibleUploadURL(t *testing.T) {
 		t.Fatalf("unexpected expiration %q", signed.ExpiresAt)
 	}
 }
+
+func TestNewDerivesRegionAndPublicBaseURLFromEndpoint(t *testing.T) {
+	client, err := New(Config{
+		Endpoint:       "https://s3.eu-central-003.backblazeb2.com",
+		Region:         "s3.eu-central-003.backblazeb2.com",
+		Bucket:         "seoBlog",
+		KeyID:          "key-id",
+		ApplicationKey: "application-key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.region != "eu-central-003" {
+		t.Fatalf("expected endpoint-derived region, got %q", client.region)
+	}
+	if got := client.PublicURL("blogSEO/projects/project-a/media/variants/asset-a/square_1x1.jpg"); got != "https://s3.eu-central-003.backblazeb2.com/seoBlog/blogSEO/projects/project-a/media/variants/asset-a/square_1x1.jpg" {
+		t.Fatalf("unexpected derived public URL %q", got)
+	}
+}

@@ -182,6 +182,9 @@ func TestAdminMediaUploadCompletionScansAndCreatesVariants(t *testing.T) {
 	if len(mediaStorage.puts) != 3 {
 		t.Fatalf("expected three variant uploads, got %d", len(mediaStorage.puts))
 	}
+	if mediaStorage.deletes[created.Data.ObjectKey] != 1 {
+		t.Fatalf("expected processed original cleanup, got %#v", mediaStorage.deletes)
+	}
 	deleteResponse := mustTest(t, server, newMemberMutationRequest(
 		http.MethodDelete,
 		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID,
@@ -191,7 +194,7 @@ func TestAdminMediaUploadCompletionScansAndCreatesVariants(t *testing.T) {
 	if deleteResponse.StatusCode != http.StatusNoContent {
 		t.Fatalf("expected delete 204, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
 	}
-	if mediaStorage.deletes[created.Data.ObjectKey] != 1 {
+	if mediaStorage.deletes[created.Data.ObjectKey] < 1 {
 		t.Fatalf("expected original object deletion, got %#v", mediaStorage.deletes)
 	}
 	for _, variant := range ready.Variants {

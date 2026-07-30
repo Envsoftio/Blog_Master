@@ -69,21 +69,57 @@ func New(config Config) (*Client, error) {
 	if ttl > 7*24*time.Hour {
 		ttl = 7 * 24 * time.Hour
 	}
-	region := strings.TrimSpace(config.Region)
-	if region == "" {
-		region = "us-west-004"
+	bucket := strings.TrimSpace(config.Bucket)
+	region := normalizeRegion(strings.TrimSpace(config.Region), endpoint.Host)
+	publicBaseURL := strings.TrimRight(strings.TrimSpace(config.PublicBaseURL), "/")
+	if publicBaseURL == "" && bucket != "" {
+		bucketURL := *endpoint
+		bucketURL.Path = "/" + strings.Trim(bucket, "/")
+		bucketURL.RawPath = "/" + escapeKey(bucket)
+		bucketURL.RawQuery = ""
+		publicBaseURL = bucketURL.String()
 	}
 	return &Client{
 		endpoint:             endpoint,
 		region:               region,
-		bucket:               strings.TrimSpace(config.Bucket),
+		bucket:               bucket,
 		keyID:                strings.TrimSpace(config.KeyID),
 		applicationKey:       config.ApplicationKey,
-		publicBaseURL:        strings.TrimRight(strings.TrimSpace(config.PublicBaseURL), "/"),
+		publicBaseURL:        publicBaseURL,
 		presignTTL:           ttl,
 		serverSideEncryption: strings.TrimSpace(config.ServerSideEncryption),
 		httpClient:           &http.Client{Timeout: 30 * time.Second},
 	}, nil
+}
+
+func normalizeRegion(region, endpointHost string) string {
+	if normalized := regionFromEndpointHost(region); normalized != "" {
+		return normalized
+	}
+	if region != "" {
+		return region
+	}
+	if normalized := regionFromEndpointHost(endpointHost); normalized != "" {
+		return normalized
+	}
+	return "us-west-004"
+}
+
+func regionFromEndpointHost(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	value = strings.TrimPrefix(value, "s3.")
+	value = strings.TrimSuffix(value, "/")
+	const suffix = ".backblazeb2.com"
+	if !strings.HasSuffix(value, suffix) {
+		return ""
+	}
+	region := strings.TrimSuffix(value, suffix)
+	if region == "" || strings.Contains(region, "/") {
+		return ""
+	}
+	return region
 }
 
 func (c *Client) Bucket() string {

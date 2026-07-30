@@ -1,0 +1,10 @@
+[
+  {
+    "corsRuleName": "allowseoBlogUpload",
+    "allowedOrigins": ["https://blog.proctorplus.io"],
+    "allowedHeaders": ["content-type", "x-amz-server-side-encryption"],
+    "allowedOperations": ["s3_put", "s3_get", "s3_head"],
+    "exposeHeaders": ["etag", "x-amz-version-id"],
+    "maxAgeSeconds": 3600
+  }
+]

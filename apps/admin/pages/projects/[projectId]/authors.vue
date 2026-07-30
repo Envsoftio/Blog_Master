@@ -9,7 +9,7 @@
           <RefreshCw :class="{ spin: pending }" :size="16" />
           Refresh
         </button>
-        <button v-if="canManageAuthors" class="button button--primary button--compact" type="button" @click="resetForm">
+        <button v-if="canManageAuthors" class="button button--primary button--compact" type="button" @click="openNewAuthor">
           <Plus :size="16" />
           New author
         </button>
@@ -29,7 +29,7 @@
     <p v-if="errorMessage" class="ui-alert ui-alert--danger" role="alert">{{ errorMessage }}</p>
     <p v-if="successMessage" class="ui-alert ui-alert--success">{{ successMessage }}</p>
 
-    <div class="authors-layout" :class="{ 'authors-layout--wide': !canManageAuthors }">
+    <div class="authors-layout">
       <section class="authors-directory">
         <div class="author-toolbar surface surface--subtle">
           <label class="author-search">
@@ -127,16 +127,25 @@
         </button>
       </section>
 
-      <aside v-if="canManageAuthors" class="author-editor surface">
-        <div class="author-editor__header">
-          <span class="author-editor__icon"><UserRound :size="18" /></span>
-          <div>
-            <span>{{ editingAuthorID ? 'Editing profile' : 'New profile' }}</span>
-            <h2>{{ editingAuthorID ? form.displayName || 'Author profile' : 'Author profile' }}</h2>
+      <div v-if="canManageAuthors && authorDialogOpen" class="author-dialog-backdrop" @click.self="closeAuthorDialog">
+        <aside
+          class="author-editor author-dialog surface"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="author-dialog-title"
+        >
+          <div class="author-editor__header">
+            <span class="author-editor__icon"><UserRound :size="18" /></span>
+            <div>
+              <span>{{ editingAuthorID ? 'Editing profile' : 'New profile' }}</span>
+              <h2 id="author-dialog-title">{{ editingAuthorID ? form.displayName || 'Author profile' : 'Author profile' }}</h2>
+            </div>
+            <button class="icon-button author-dialog__close" type="button" title="Close" aria-label="Close author dialog" :disabled="saving" @click="closeAuthorDialog">
+              <X :size="16" />
+            </button>
           </div>
-        </div>
 
-        <form class="author-form" @submit.prevent="saveAuthor">
+          <form class="author-form" @submit.prevent="saveAuthor">
           <section class="author-form__section">
             <h3><IdCard :size="14" />Identity</h3>
             <div class="author-form__grid">
@@ -231,13 +240,14 @@
               <Check v-else :size="16" />
               {{ editingAuthorID ? 'Save author' : 'Create author' }}
             </button>
-            <button v-if="editingAuthorID" class="button" type="button" @click="resetForm">
+            <button class="button" type="button" :disabled="saving" @click="closeAuthorDialog">
               <X :size="16" />
               Cancel
             </button>
           </div>
-        </form>
-      </aside>
+          </form>
+        </aside>
+      </div>
     </div>
   </div>
 </template>
@@ -281,6 +291,7 @@ const loadingMore = ref(false)
 const saving = ref(false)
 const deletingAuthorID = ref('')
 const editingAuthorID = ref('')
+const authorDialogOpen = ref(false)
 const nextCursor = ref('')
 const search = ref('')
 const activeFilter = ref<AuthorFilter>('all')
@@ -359,6 +370,10 @@ watch(canManageProject, (value) => {
   if (!value && activeFilter.value === 'linked') activeFilter.value = 'all'
 })
 
+watch(canManageAuthors, (value) => {
+  if (!value) closeAuthorDialog()
+})
+
 onMounted(refresh)
 
 async function refresh() {
@@ -420,7 +435,19 @@ function startEdit(author: AdminAuthor) {
   form.expertise = (author.expertise || []).join(', ')
   form.externalProfiles = (author.externalProfiles || []).join('\n')
   form.sameAs = (author.sameAs || []).join('\n')
+  authorDialogOpen.value = true
   clearMessages()
+}
+
+function openNewAuthor() {
+  resetForm()
+  authorDialogOpen.value = true
+}
+
+function closeAuthorDialog() {
+  if (saving.value) return
+  resetForm()
+  authorDialogOpen.value = false
 }
 
 function resetForm() {
@@ -451,11 +478,13 @@ async function saveAuthor() {
       const response = await api.updateAuthor(projectID.value, editingAuthorID.value, body)
       authors.value = sortAuthors(authors.value.map(author => author.id === response.data.id ? response.data : author))
       resetForm()
+      authorDialogOpen.value = false
       successMessage.value = 'Author updated.'
     } else {
       const response = await api.createAuthor(projectID.value, body)
       authors.value = sortAuthors([...authors.value, response.data])
       resetForm()
+      authorDialogOpen.value = false
       successMessage.value = 'Author created.'
     }
   } catch (error) {
@@ -495,7 +524,7 @@ async function deleteAuthor(author: AdminAuthor) {
   try {
     const response = await api.deleteAuthor(projectID.value, author.id)
     authors.value = sortAuthors(authors.value.map(candidate => candidate.id === response.data.id ? response.data : candidate))
-    if (editingAuthorID.value === author.id) resetForm()
+    if (editingAuthorID.value === author.id) closeAuthorDialog()
     successMessage.value = 'Author deactivated.'
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not deactivate author.')
@@ -610,8 +639,7 @@ function clearMessages() {
 
 <style scoped>
 .author-heading-actions { display: flex; flex-wrap: wrap; gap: 7px; }
-.authors-layout { display: grid; grid-template-columns: minmax(0, 1fr) 390px; align-items: start; gap: 16px; }
-.authors-layout--wide { grid-template-columns: 1fr; }
+.authors-layout { display: grid; grid-template-columns: 1fr; align-items: start; gap: 16px; }
 .authors-directory { display: grid; min-width: 0; gap: 14px; }
 .author-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px; }
 .author-search { display: flex; width: min(320px, 100%); align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); }
@@ -642,11 +670,15 @@ function clearMessages() {
 .author-action:hover { color: var(--text); }
 .author-action--danger { color: var(--danger); }
 .author-action--danger:hover { background: var(--danger-soft); color: var(--danger); }
-.author-editor { position: sticky; top: 88px; padding: 16px; }
+.author-dialog-backdrop { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgb(15 23 42 / 0.48); }
+.author-editor { padding: 16px; }
+.author-dialog { width: min(760px, 100%); max-height: min(90vh, 920px); overflow-y: auto; box-shadow: var(--shadow-md); }
 .author-editor__header { display: flex; align-items: flex-start; gap: 11px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .author-editor__icon { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border-radius: 7px; background: var(--primary-soft); color: var(--primary); }
 .author-editor__header span { color: var(--text-soft); font-size: 10px; font-weight: 650; text-transform: uppercase; }
 .author-editor__header h2 { overflow: hidden; margin: 1px 0 0; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.author-dialog__close { margin-left: auto; border-color: var(--border); color: var(--text-soft); }
+.author-dialog__close:hover { color: var(--text); }
 .author-form { display: grid; gap: 16px; padding-top: 16px; }
 .author-form__section { display: grid; gap: 12px; }
 .author-form__section + .author-form__section { padding-top: 14px; border-top: 1px solid var(--border); }
@@ -661,7 +693,6 @@ function clearMessages() {
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 1180px) {
   .authors-layout { grid-template-columns: 1fr; }
-  .author-editor { position: static; }
 }
 @media (max-width: 760px) {
   .author-toolbar { align-items: stretch; flex-direction: column; }
@@ -672,6 +703,8 @@ function clearMessages() {
   .author-row__actions { grid-column: 2; justify-content: flex-end; }
 }
 @media (max-width: 560px) {
+  .author-dialog-backdrop { align-items: stretch; padding: 10px; }
+  .author-dialog { max-height: calc(100vh - 20px); }
   .author-heading-actions,
   .author-heading-actions .button { width: 100%; }
   .author-form__grid,
