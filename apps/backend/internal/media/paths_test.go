@@ -22,6 +22,11 @@ func TestDeletableObjectKeyForAsset(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "processed original file",
+			key:  ProcessedOriginalObjectKey(projectID, assetID, "Report 2026.pdf"),
+			want: true,
+		},
+		{
 			name: "root folder",
 			key:  ObjectRootPrefix + "/",
 			want: false,
@@ -37,8 +42,18 @@ func TestDeletableObjectKeyForAsset(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "processed original folder",
+			key:  ObjectRootPrefix + "/projects/" + projectID + "/media/originals/" + assetID + "/",
+			want: false,
+		},
+		{
 			name: "other asset original",
 			key:  OriginalObjectKeyPrefix(projectID, "asset_other") + "/hero.png",
+			want: false,
+		},
+		{
+			name: "other asset processed original",
+			key:  ProcessedOriginalObjectKey(projectID, "asset_other", "report.pdf"),
 			want: false,
 		},
 		{

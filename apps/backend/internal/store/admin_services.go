@@ -456,11 +456,6 @@ func (s *Store) ListReadyMediaAssetsWithPendingOriginals(ctx context.Context, li
 		FROM assets
 		WHERE status = 'ready'
 		  AND object_key LIKE ?
-		  AND EXISTS (
-		    SELECT 1 FROM asset_variants
-		    WHERE asset_variants.project_id = assets.project_id
-		      AND asset_variants.asset_id = assets.id
-		  )
 		ORDER BY updated_at ASC, created_at ASC
 		LIMIT ?
 	`, media.ObjectRootPrefix+"/pending/%", limit)

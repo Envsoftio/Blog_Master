@@ -342,6 +342,136 @@ func TestAdminMediaProcessingFailsWhenProcessedOriginalCannotBeDeleted(t *testin
 	}
 }
 
+func TestAdminMediaUploadCompletionMovesNoVariantOriginalOutOfPending(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	server.cfg.B2MediaPresignTTL = 15 * time.Minute
+	login := seedAndLogin(t, server, db, "media-original-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-original","name":"Media Original"}`)
+	pdfBytes := safeRouteTestPDF()
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"Brief 2026.pdf","contentType":"application/pdf","bytes":`+strconv.Itoa(len(pdfBytes))+`}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected signed media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	mediaStorage.objects[created.Data.ObjectKey] = pdfBytes
+	completeResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID+"/complete",
+		`{}`,
+		login,
+	))
+	if completeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected completion queue 200, got %d: %s", completeResponse.StatusCode, readBody(t, completeResponse))
+	}
+	processed, err := (mediajobs.Processor{Store: server.store, Storage: mediaStorage}).Process(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 1 {
+		t.Fatalf("expected one processed media asset, got %d", processed)
+	}
+	ready, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready.Status != "ready" || ready.ObjectKey == created.Data.ObjectKey || strings.Contains(ready.ObjectKey, "/pending/") || len(ready.Variants) != 0 {
+		t.Fatalf("expected ready no-variant asset outside pending, got %#v", ready)
+	}
+	if !strings.HasPrefix(ready.ObjectKey, "blogSEO/projects/"+project.ID+"/media/originals/"+created.Data.ID+"/") {
+		t.Fatalf("expected processed original prefix, got %q", ready.ObjectKey)
+	}
+	if mediaStorage.deletes[created.Data.ObjectKey] != 1 {
+		t.Fatalf("expected pending original cleanup, got %#v", mediaStorage.deletes)
+	}
+	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; exists {
+		t.Fatal("expected pending original to be removed from storage")
+	}
+	if !bytes.Equal(mediaStorage.puts[ready.ObjectKey], pdfBytes) {
+		t.Fatal("expected processed original to be uploaded to final storage")
+	}
+
+	server.enrichMediaAsset(&ready)
+	fileRequest := httptest.NewRequest(http.MethodGet, ready.URL, nil)
+	addCookies(fileRequest, login.cookies)
+	fileResponse := mustTest(t, server, fileRequest)
+	if fileResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected file 200, got %d: %s", fileResponse.StatusCode, readBody(t, fileResponse))
+	}
+	if contentType := fileResponse.Header.Get("Content-Type"); contentType != "application/pdf" {
+		t.Fatalf("expected PDF content type, got %q", contentType)
+	}
+	fileBody, err := io.ReadAll(fileResponse.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(fileBody, pdfBytes) {
+		t.Fatal("expected file route to stream the processed original")
+	}
+}
+
+func TestAdminMediaProcessorCleansReadyPendingNoVariantOriginals(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	server.cfg.B2MediaPresignTTL = 15 * time.Minute
+	login := seedAndLogin(t, server, db, "media-no-variant-cleanup-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-no-variant-cleanup","name":"Media No Variant Cleanup"}`)
+	pdfBytes := safeRouteTestPDF()
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"brief.pdf","contentType":"application/pdf","bytes":`+strconv.Itoa(len(pdfBytes))+`}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected signed media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	mediaStorage.objects[created.Data.ObjectKey] = pdfBytes
+	if _, err := db.Exec(`
+		UPDATE assets
+		SET status = 'ready',
+		    scan_status = 'passed',
+		    mime_type = 'application/pdf',
+		    checksum_sha256 = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+		WHERE project_id = ? AND id = ?
+	`, project.ID, created.Data.ID); err != nil {
+		t.Fatal(err)
+	}
+	processed, err := (mediajobs.Processor{Store: server.store, Storage: mediaStorage}).Process(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 0 {
+		t.Fatalf("expected cleanup sweep not processing jobs, got %d", processed)
+	}
+	cleaned, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(cleaned.ObjectKey, "/pending/") || !strings.HasPrefix(cleaned.ObjectKey, "blogSEO/projects/"+project.ID+"/media/originals/"+created.Data.ID+"/") {
+		t.Fatalf("expected stale ready original to move out of pending, got %q", cleaned.ObjectKey)
+	}
+	if mediaStorage.deletes[created.Data.ObjectKey] != 1 {
+		t.Fatalf("expected stale pending original cleanup, got %#v", mediaStorage.deletes)
+	}
+	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; exists {
+		t.Fatal("expected stale pending original to be removed from storage")
+	}
+	if !bytes.Equal(mediaStorage.puts[cleaned.ObjectKey], pdfBytes) {
+		t.Fatal("expected stale ready original to be uploaded to final storage")
+	}
+}
+
 func TestAdminMediaUploadCompletionRejectsUnsafePDF(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	mediaStorage := newFakeMediaStorage()
@@ -606,6 +736,10 @@ func routeTestPNG(t *testing.T, width, height int) []byte {
 		t.Fatal(err)
 	}
 	return output.Bytes()
+}
+
+func safeRouteTestPDF() []byte {
+	return []byte("%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\n2 0 obj << /Type /Page >> endobj\n%%EOF\n")
 }
 
 func TestAdminAIJobRoutesPersistAndCancelJobs(t *testing.T) {

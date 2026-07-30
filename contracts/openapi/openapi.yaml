@@ -2890,6 +2890,45 @@ paths:
       summary: POST /api/v1/projects/{projectID}/media/{assetID}/complete
       tags:
         - Administration
+  /api/v1/projects/{projectID}/media/{assetID}/file:
+    get:
+      description: Administrative API route.
+      operationId: get_api_v1_projects_projectid_media_assetid_file
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: GET /api/v1/projects/{projectID}/media/{assetID}/file
+      tags:
+        - Administration
+    head:
+      description: Administrative API route.
+      operationId: head_api_v1_projects_projectid_media_assetid_file
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /api/v1/projects/{projectID}/media/{assetID}/file
+      tags:
+        - Administration
   /api/v1/projects/{projectID}/members:
     get:
       description: Administrative API route.

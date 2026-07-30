@@ -97,7 +97,23 @@ func (p Processor) ProcessAsset(ctx context.Context, asset store.AdminMediaAsset
 			Bytes:       int64(len(variant.Bytes)),
 		})
 	}
+	completedObjectKey := ""
+	if len(variantInputs) == 0 {
+		completedObjectKey = media.ProcessedOriginalObjectKey(asset.ProjectID, asset.ID, asset.Filename)
+		if err := p.Storage.PutObject(ctx, completedObjectKey, body, processed.ContentType); err != nil {
+			p.cleanupAssetObjects(ctx, asset, uploadedKeys)
+			_, _ = p.Store.FailMediaAssetSystem(ctx, asset.ProjectID, asset.ID, "could not move processed media out of pending storage")
+			return fmt.Errorf("move processed original %s: %w", asset.ID, err)
+		}
+		uploadedKeys = append(uploadedKeys, completedObjectKey)
+		if err := p.deleteAssetKeys(ctx, asset, []string{asset.ObjectKey}); err != nil {
+			_ = p.deleteAssetKeys(ctx, asset, []string{completedObjectKey})
+			_, _ = p.Store.FailMediaAssetSystem(ctx, asset.ProjectID, asset.ID, "could not delete processed original media")
+			return fmt.Errorf("delete processed original %s: %w", asset.ID, err)
+		}
+	}
 	if _, err := p.Store.CompleteMediaAssetSystem(ctx, asset.ProjectID, asset.ID, store.MediaCompletionInput{
+		ObjectKey:   completedObjectKey,
 		Bucket:      p.Storage.Bucket(),
 		ContentType: processed.ContentType,
 		SHA256:      processed.SHA256,
@@ -142,6 +158,18 @@ func (p Processor) CleanupReadyOriginals(ctx context.Context, limit int) (int, e
 	var errs []error
 	for _, asset := range assets {
 		if len(asset.Variants) == 0 {
+			promotedObjectKey, err := p.moveReadyPendingOriginal(ctx, asset)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("move ready original %s: %w", asset.ID, err))
+				p.logError("ready media original move failed", asset, err)
+				continue
+			}
+			if _, err := p.Store.SetMediaAssetObjectKeySystem(ctx, asset.ProjectID, asset.ID, promotedObjectKey); err != nil {
+				errs = append(errs, fmt.Errorf("promote ready media original %s: %w", asset.ID, err))
+				p.logError("ready media original promotion failed", asset, err)
+				continue
+			}
+			cleaned++
 			continue
 		}
 		promotedObjectKey := strings.TrimSpace(asset.Variants[0].ObjectKey)
@@ -164,6 +192,25 @@ func (p Processor) CleanupReadyOriginals(ctx context.Context, limit int) (int, e
 		cleaned++
 	}
 	return cleaned, errors.Join(errs...)
+}
+
+func (p Processor) moveReadyPendingOriginal(ctx context.Context, asset store.AdminMediaAsset) (string, error) {
+	body, contentType, err := p.Storage.GetObject(ctx, asset.ObjectKey, asset.Bytes)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(contentType) == "" {
+		contentType = asset.ContentType
+	}
+	objectKey := media.ProcessedOriginalObjectKey(asset.ProjectID, asset.ID, asset.Filename)
+	if err := p.Storage.PutObject(ctx, objectKey, body, contentType); err != nil {
+		return "", err
+	}
+	if err := p.deleteAssetKeys(ctx, asset, []string{asset.ObjectKey}); err != nil {
+		_ = p.deleteAssetKeys(ctx, asset, []string{objectKey})
+		return "", err
+	}
+	return objectKey, nil
 }
 
 func (p Processor) deleteAssetKeys(ctx context.Context, asset store.AdminMediaAsset, keys []string) error {
