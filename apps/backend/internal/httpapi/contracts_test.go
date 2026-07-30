@@ -39,6 +39,7 @@ func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
 		{http.MethodPost, "/api/v1/auth/reset-password", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/media", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/media/uploads", "201"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/media/{assetID}/file", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/media/{assetID}", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/media/{assetID}/complete", "200"},
 		{http.MethodPatch, "/api/v1/projects/{projectID}/media/{assetID}", "200"},

@@ -96,6 +96,7 @@ func (s *Server) registerAdminRoutes() {
 
 	api.Get("/projects/:projectID/media", s.requireAdminSession, s.listMediaAssets)
 	api.Post("/projects/:projectID/media/uploads", s.requireAdminSession, s.requireAdminCSRF, s.createMediaAsset)
+	api.Get("/projects/:projectID/media/:assetID/file", s.requireAdminSession, s.serveMediaAssetFile)
 	api.Get("/projects/:projectID/media/:assetID", s.requireAdminSession, s.getMediaAsset)
 	api.Post("/projects/:projectID/media/:assetID/complete", s.requireAdminSession, s.requireAdminCSRF, s.completeMediaUpload)
 	api.Patch("/projects/:projectID/media/:assetID", s.requireAdminSession, s.requireAdminCSRF, s.updateMediaAsset)

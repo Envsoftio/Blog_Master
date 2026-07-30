@@ -86,6 +86,7 @@ type MediaVariantInput struct {
 }
 
 type MediaCompletionInput struct {
+	ObjectKey   string
 	Bucket      string
 	ContentType string
 	SHA256      string
@@ -447,6 +448,72 @@ func (s *Store) ListMediaAssetsForProcessing(ctx context.Context, limit int) ([]
 	return assets, nil
 }
 
+func (s *Store) ListReadyMediaAssetsWithPendingOriginals(ctx context.Context, limit int) ([]AdminMediaAsset, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+adminMediaAssetSelectColumns+`
+		FROM assets
+		WHERE status = 'ready'
+		  AND object_key LIKE ?
+		  AND EXISTS (
+		    SELECT 1 FROM asset_variants
+		    WHERE asset_variants.project_id = assets.project_id
+		      AND asset_variants.asset_id = assets.id
+		  )
+		ORDER BY updated_at ASC, created_at ASC
+		LIMIT ?
+	`, media.ObjectRootPrefix+"/pending/%", limit)
+	if err != nil {
+		return nil, err
+	}
+	var assets []AdminMediaAsset
+	for rows.Next() {
+		asset, err := scanAdminMediaAsset(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		assets = append(assets, asset)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range assets {
+		variants, err := s.listMediaVariants(ctx, assets[index].ProjectID, assets[index].ID)
+		if err != nil {
+			return nil, err
+		}
+		assets[index].Variants = variants
+	}
+	return assets, nil
+}
+
+func (s *Store) SetMediaAssetObjectKeySystem(ctx context.Context, projectID, assetID, objectKey string) (AdminMediaAsset, error) {
+	objectKey = strings.TrimSpace(objectKey)
+	if objectKey == "" {
+		return AdminMediaAsset{}, fmt.Errorf("%w: media object key is required", ErrValidation)
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE assets
+		SET object_key = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND id = ?
+	`, objectKey, projectID, assetID)
+	if err != nil {
+		return AdminMediaAsset{}, err
+	}
+	if changed, err := result.RowsAffected(); err != nil {
+		return AdminMediaAsset{}, err
+	} else if changed != 1 {
+		return AdminMediaAsset{}, sql.ErrNoRows
+	}
+	return s.getMediaAsset(ctx, projectID, assetID)
+}
+
 func (s *Store) CreateMediaAsset(ctx context.Context, userID, projectID string, input MediaUploadInput) (AdminMediaAsset, error) {
 	if err := s.requireContentWrite(ctx, userID, projectID); err != nil {
 		return AdminMediaAsset{}, err
@@ -641,6 +708,7 @@ func (s *Store) completeMediaAsset(ctx context.Context, projectID, assetID strin
 	result, err := tx.ExecContext(ctx, `
 		UPDATE assets
 		SET status = 'ready',
+		    object_key = COALESCE(NULLIF(?, ''), object_key),
 		    bucket = COALESCE(NULLIF(?, ''), bucket),
 		    mime_type = COALESCE(NULLIF(?, ''), mime_type),
 		    width = ?,
@@ -651,7 +719,7 @@ func (s *Store) completeMediaAsset(ctx context.Context, projectID, assetID strin
 		    provenance_json = ?,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE project_id = ? AND id = ? AND status IN ('registered','uploading','processing','failed')
-	`, input.Bucket, input.ContentType, nullZeroInt(input.Width), nullZeroInt(input.Height), input.SHA256, metadataJSON, projectID, assetID)
+	`, input.ObjectKey, input.Bucket, input.ContentType, nullZeroInt(input.Width), nullZeroInt(input.Height), input.SHA256, metadataJSON, projectID, assetID)
 	if err != nil {
 		return AdminMediaAsset{}, err
 	}

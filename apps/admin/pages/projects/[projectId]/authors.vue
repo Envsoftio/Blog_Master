@@ -155,7 +155,7 @@
               </label>
               <label class="field">
                 <span>Slug</span>
-                <input v-model.trim="form.slug" required>
+                <input v-model.trim="form.slug" required @input="handleSlugInput">
               </label>
             </div>
             <div class="author-form__grid">
@@ -292,6 +292,7 @@ const saving = ref(false)
 const deletingAuthorID = ref('')
 const editingAuthorID = ref('')
 const authorDialogOpen = ref(false)
+const autoFillSlug = ref(true)
 const nextCursor = ref('')
 const search = ref('')
 const activeFilter = ref<AuthorFilter>('all')
@@ -363,7 +364,7 @@ const filteredAuthors = computed(() => {
 })
 
 watch(() => form.displayName, (value) => {
-  if (!editingAuthorID.value && !form.slug) form.slug = slugify(value)
+  if (!editingAuthorID.value && autoFillSlug.value) form.slug = slugify(value)
 })
 
 watch(canManageProject, (value) => {
@@ -421,6 +422,7 @@ async function loadMoreAuthors() {
 
 function startEdit(author: AdminAuthor) {
   editingAuthorID.value = author.id
+  autoFillSlug.value = false
   form.displayName = author.displayName
   form.slug = author.slug
   form.status = normalizedStatus(author)
@@ -452,6 +454,7 @@ function closeAuthorDialog() {
 
 function resetForm() {
   editingAuthorID.value = ''
+  autoFillSlug.value = true
   form.displayName = ''
   form.slug = ''
   form.status = 'active'
@@ -467,6 +470,11 @@ function resetForm() {
   form.externalProfiles = ''
   form.sameAs = ''
   clearMessages()
+}
+
+function handleSlugInput() {
+  if (editingAuthorID.value) return
+  autoFillSlug.value = form.slug === '' || form.slug === slugify(form.displayName)
 }
 
 async function saveAuthor() {

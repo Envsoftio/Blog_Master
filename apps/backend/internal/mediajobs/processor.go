@@ -42,6 +42,9 @@ func (p Processor) Process(ctx context.Context, limit int) (int, error) {
 		}
 		processed++
 	}
+	if _, err := p.CleanupReadyOriginals(ctx, limit); err != nil {
+		errs = append(errs, err)
+	}
 	return processed, errors.Join(errs...)
 }
 
@@ -106,8 +109,14 @@ func (p Processor) ProcessAsset(ctx context.Context, asset store.AdminMediaAsset
 		p.deleteAssetKeys(ctx, asset, uploadedKeys)
 		return err
 	}
-	if len(uploadedKeys) > 0 {
-		p.deleteAssetKeys(ctx, asset, []string{asset.ObjectKey})
+	if len(variantInputs) > 0 {
+		if err := p.deleteAssetKeys(ctx, asset, []string{asset.ObjectKey}); err != nil {
+			_, _ = p.Store.FailMediaAssetSystem(ctx, asset.ProjectID, asset.ID, "could not delete processed original media")
+			return fmt.Errorf("delete processed original %s: %w", asset.ID, err)
+		}
+		if _, err := p.Store.SetMediaAssetObjectKeySystem(ctx, asset.ProjectID, asset.ID, variantInputs[0].ObjectKey); err != nil {
+			return fmt.Errorf("promote media variant %s: %w", asset.ID, err)
+		}
 	}
 	return nil
 }
@@ -118,20 +127,60 @@ func (p Processor) cleanupAssetObjects(ctx context.Context, asset store.AdminMed
 		keys = append(keys, variant.ObjectKey)
 	}
 	keys = append(keys, extraKeys...)
-	p.deleteAssetKeys(ctx, asset, keys)
+	_ = p.deleteAssetKeys(ctx, asset, keys)
 }
 
-func (p Processor) deleteAssetKeys(ctx context.Context, asset store.AdminMediaAsset, keys []string) {
+func (p Processor) CleanupReadyOriginals(ctx context.Context, limit int) (int, error) {
+	if p.Store == nil || p.Storage == nil {
+		return 0, nil
+	}
+	assets, err := p.Store.ListReadyMediaAssetsWithPendingOriginals(ctx, limit)
+	if err != nil {
+		return 0, err
+	}
+	cleaned := 0
+	var errs []error
+	for _, asset := range assets {
+		if len(asset.Variants) == 0 {
+			continue
+		}
+		promotedObjectKey := strings.TrimSpace(asset.Variants[0].ObjectKey)
+		if promotedObjectKey == "" || !media.DeletableObjectKeyForAsset(asset.ProjectID, asset.ID, promotedObjectKey) {
+			err := fmt.Errorf("refusing to promote media asset %s to unsafe object key %q", asset.ID, promotedObjectKey)
+			errs = append(errs, err)
+			p.logError("ready media original cleanup failed", asset, err)
+			continue
+		}
+		if err := p.deleteAssetKeys(ctx, asset, []string{asset.ObjectKey}); err != nil {
+			errs = append(errs, fmt.Errorf("delete ready original %s: %w", asset.ID, err))
+			p.logError("ready media original cleanup failed", asset, err)
+			continue
+		}
+		if _, err := p.Store.SetMediaAssetObjectKeySystem(ctx, asset.ProjectID, asset.ID, promotedObjectKey); err != nil {
+			errs = append(errs, fmt.Errorf("promote ready media original %s: %w", asset.ID, err))
+			p.logError("ready media original promotion failed", asset, err)
+			continue
+		}
+		cleaned++
+	}
+	return cleaned, errors.Join(errs...)
+}
+
+func (p Processor) deleteAssetKeys(ctx context.Context, asset store.AdminMediaAsset, keys []string) error {
+	var errs []error
 	for _, key := range uniqueKeys(keys) {
 		if !media.DeletableObjectKeyForAsset(asset.ProjectID, asset.ID, key) {
+			err := fmt.Errorf("unsafe media object key")
+			errs = append(errs, err)
 			p.logError("refusing to delete media object outside asset scope", store.AdminMediaAsset{
 				ID:        asset.ID,
 				ProjectID: asset.ProjectID,
 				ObjectKey: key,
-			}, fmt.Errorf("unsafe media object key"))
+			}, err)
 			continue
 		}
 		if err := p.Storage.DeleteObject(ctx, key); err != nil {
+			errs = append(errs, err)
 			p.logError("media object cleanup failed", store.AdminMediaAsset{
 				ID:        asset.ID,
 				ProjectID: asset.ProjectID,
@@ -139,6 +188,7 @@ func (p Processor) deleteAssetKeys(ctx context.Context, asset store.AdminMediaAs
 			}, err)
 		}
 	}
+	return errors.Join(errs...)
 }
 
 func uniqueKeys(keys []string) []string {

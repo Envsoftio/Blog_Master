@@ -341,7 +341,7 @@ function upsertMediaAsset(asset: AdminMediaAsset) {
 }
 
 function canDeleteMediaAsset(asset: AdminMediaAsset) {
-  return ['registered', 'uploading', 'processing', 'failed', 'rejected'].includes(asset.status)
+  return ['registered', 'uploading', 'processing', 'ready', 'failed', 'rejected'].includes(asset.status)
 }
 
 function mediaDeleteLabel(asset: AdminMediaAsset) {
@@ -350,6 +350,9 @@ function mediaDeleteLabel(asset: AdminMediaAsset) {
   }
   if (asset.status === 'processing') {
     return `Delete processing media ${asset.filename}`
+  }
+  if (asset.status === 'ready') {
+    return `Delete media ${asset.filename}`
   }
   return `Delete failed media ${asset.filename}`
 }

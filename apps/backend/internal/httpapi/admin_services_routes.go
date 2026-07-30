@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -196,6 +197,49 @@ func (s *Server) deleteMediaAsset(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+func (s *Server) serveMediaAssetFile(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	if s.mediaStorage == nil {
+		return problem(c, fiber.StatusConflict, "Media storage is not configured", "Configure Backblaze B2 media storage before loading media files")
+	}
+	projectID := c.Params("projectID")
+	assetID := c.Params("assetID")
+	asset, err := s.store.GetMediaAsset(c.UserContext(), user.ID, projectID, assetID)
+	if err != nil {
+		return s.adminReadError(c, err, "Media asset not found", "Could not load media")
+	}
+	if asset.Status != "ready" {
+		return problem(c, fiber.StatusConflict, "Media is not ready", "The media asset must finish processing before it can be previewed")
+	}
+	objectKey, contentType, maxBytes, err := mediaFileObject(asset, c.Query("variant"))
+	if err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid media variant", err.Error())
+	}
+	if !media.DeletableObjectKeyForAsset(asset.ProjectID, asset.ID, objectKey) {
+		return problem(c, fiber.StatusBadGateway, "Invalid media object key", "")
+	}
+	body, detectedContentType, err := s.mediaStorage.GetObject(c.UserContext(), objectKey, maxBytes)
+	if err != nil {
+		s.logger.Error("media object load failed", "asset_id", asset.ID, "object_key", objectKey, "error", err)
+		return problem(c, fiber.StatusBadGateway, "Could not load media object", "")
+	}
+	if contentType == "" {
+		contentType = detectedContentType
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Set(fiber.HeaderCacheControl, "private, max-age=300")
+	c.Set(fiber.HeaderContentDisposition, "inline")
+	c.Set(fiber.HeaderContentLength, strconv.Itoa(len(body)))
+	c.Set(fiber.HeaderContentType, contentType)
+	c.Set("X-Content-Type-Options", "nosniff")
+	return c.Status(fiber.StatusOK).Send(body)
+}
+
 func (s *Server) deleteMediaObjects(ctx context.Context, asset store.AdminMediaAsset) error {
 	if s.mediaStorage == nil {
 		return nil
@@ -241,13 +285,38 @@ func (s *Server) enrichMediaAsset(asset *store.AdminMediaAsset) {
 		return
 	}
 	for index := range asset.Variants {
-		asset.Variants[index].URL = s.mediaStorage.PublicURL(asset.Variants[index].ObjectKey)
+		asset.Variants[index].URL = mediaFileURL(asset.ProjectID, asset.ID, asset.Variants[index].Name)
 	}
-	if len(asset.Variants) > 0 && asset.Variants[0].URL != "" {
+	if len(asset.Variants) > 0 {
 		asset.URL = asset.Variants[0].URL
 		return
 	}
-	asset.URL = s.mediaStorage.PublicURL(asset.ObjectKey)
+	asset.URL = mediaFileURL(asset.ProjectID, asset.ID, "")
+}
+
+func mediaFileObject(asset store.AdminMediaAsset, variantRef string) (string, string, int64, error) {
+	variantRef = strings.TrimSpace(variantRef)
+	if variantRef != "" {
+		for _, variant := range asset.Variants {
+			if variantRef == variant.ID || variantRef == variant.Name {
+				return variant.ObjectKey, variant.ContentType, variant.Bytes, nil
+			}
+		}
+		return "", "", 0, fmt.Errorf("media variant %q was not found", variantRef)
+	}
+	if len(asset.Variants) > 0 {
+		variant := asset.Variants[0]
+		return variant.ObjectKey, variant.ContentType, variant.Bytes, nil
+	}
+	return asset.ObjectKey, asset.ContentType, asset.Bytes, nil
+}
+
+func mediaFileURL(projectID, assetID, variantName string) string {
+	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/media/" + url.PathEscape(assetID) + "/file"
+	if strings.TrimSpace(variantName) == "" {
+		return path
+	}
+	return path + "?variant=" + url.QueryEscape(variantName)
 }
 
 func mediaPresignTTL(configured time.Duration) time.Duration {

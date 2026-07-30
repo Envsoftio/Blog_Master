@@ -80,6 +80,8 @@ var implementedAdminRouteStatuses = map[string]string{
 	"GET /api/v1/projects/{projectID}/media":                                   "200",
 	"HEAD /api/v1/projects/{projectID}/media":                                  "200",
 	"POST /api/v1/projects/{projectID}/media/uploads":                          "201",
+	"GET /api/v1/projects/{projectID}/media/{assetID}/file":                    "200",
+	"HEAD /api/v1/projects/{projectID}/media/{assetID}/file":                   "200",
 	"GET /api/v1/projects/{projectID}/media/{assetID}":                         "200",
 	"HEAD /api/v1/projects/{projectID}/media/{assetID}":                        "200",
 	"POST /api/v1/projects/{projectID}/media/{assetID}/complete":               "200",
