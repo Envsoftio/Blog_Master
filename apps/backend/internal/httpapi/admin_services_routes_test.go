@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"seoblog/apps/backend/internal/media"
 	"seoblog/apps/backend/internal/mediajobs"
 	"seoblog/apps/backend/internal/platform/b2"
 	"seoblog/apps/backend/internal/security"
@@ -217,13 +218,19 @@ func TestAdminMediaUploadCompletionScansAndCreatesVariants(t *testing.T) {
 	if deleteResponse.StatusCode != http.StatusNoContent {
 		t.Fatalf("expected delete 204, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
 	}
-	if mediaStorage.deletes[created.Data.ObjectKey] != 1 {
-		t.Fatalf("expected processed original to stay cleaned after asset delete, got %#v", mediaStorage.deletes)
+	if mediaStorage.deletes[created.Data.ObjectKey] != 2 {
+		t.Fatalf("expected ready deletion to sweep the already-cleaned pending key idempotently, got %#v", mediaStorage.deletes)
 	}
 	for _, variant := range ready.Variants {
 		if mediaStorage.deletes[variant.ObjectKey] != 1 {
 			t.Fatalf("expected variant object %q deletion, got %#v", variant.ObjectKey, mediaStorage.deletes)
 		}
+		if _, exists := mediaStorage.puts[variant.ObjectKey]; exists {
+			t.Fatalf("expected ready variant %q to be removed from B2 storage", variant.ObjectKey)
+		}
+	}
+	if _, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID); err == nil {
+		t.Fatal("expected ready image media row to be removed after B2 objects")
 	}
 }
 
@@ -295,7 +302,7 @@ func TestAdminMediaProcessorCleansReadyPendingOriginals(t *testing.T) {
 	}
 }
 
-func TestAdminMediaProcessingFailsWhenProcessedOriginalCannotBeDeleted(t *testing.T) {
+func TestAdminMediaProcessingRetriesPendingOriginalCleanup(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	mediaStorage := newFakeMediaStorage()
 	server.mediaStorage = mediaStorage
@@ -325,20 +332,38 @@ func TestAdminMediaProcessingFailsWhenProcessedOriginalCannotBeDeleted(t *testin
 	if completeResponse.StatusCode != http.StatusOK {
 		t.Fatalf("expected completion queue 200, got %d: %s", completeResponse.StatusCode, readBody(t, completeResponse))
 	}
-	if processed, err := (mediajobs.Processor{Store: server.store, Storage: mediaStorage}).Process(context.Background(), 10); err == nil {
+	processor := mediajobs.Processor{Store: server.store, Storage: mediaStorage}
+	if processed, err := processor.Process(context.Background(), 10); err == nil {
 		t.Fatal("expected original cleanup failure")
 	} else if processed != 0 {
 		t.Fatalf("expected failed cleanup not to count as processed, got %d", processed)
 	}
-	failed, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID)
+	pendingCleanup, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed.Status != "failed" || failed.ObjectKey != created.Data.ObjectKey || len(failed.Variants) != 3 {
-		t.Fatalf("expected asset to remain deletable after original cleanup failure, got %#v", failed)
+	if pendingCleanup.Status != "ready" || pendingCleanup.ObjectKey != created.Data.ObjectKey || len(pendingCleanup.Variants) != 3 {
+		t.Fatalf("expected ready asset to retain its pending pointer for cleanup retry, got %#v", pendingCleanup)
 	}
 	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; !exists {
 		t.Fatalf("expected original object to remain when cleanup delete fails")
+	}
+
+	delete(mediaStorage.failDeletes, created.Data.ObjectKey)
+	if processed, err := processor.Process(context.Background(), 10); err != nil {
+		t.Fatal(err)
+	} else if processed != 0 {
+		t.Fatalf("expected cleanup retry not to count as a processing job, got %d", processed)
+	}
+	cleaned, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleaned.Status != "ready" || cleaned.ObjectKey != cleaned.Variants[0].ObjectKey {
+		t.Fatalf("expected cleanup retry to promote the ready variant, got %#v", cleaned)
+	}
+	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; exists {
+		t.Fatal("expected cleanup retry to remove the pending original")
 	}
 }
 
@@ -414,6 +439,253 @@ func TestAdminMediaUploadCompletionMovesNoVariantOriginalOutOfPending(t *testing
 	}
 	if !bytes.Equal(fileBody, pdfBytes) {
 		t.Fatal("expected file route to stream the processed original")
+	}
+}
+
+func TestAdminMediaNoVariantProcessingRetriesPendingOriginalCleanup(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	server.cfg.B2MediaPresignTTL = 15 * time.Minute
+	login := seedAndLogin(t, server, db, "media-original-cleanup-retry-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-original-cleanup-retry","name":"Media Original Cleanup Retry"}`)
+	pdfBytes := safeRouteTestPDF()
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"retry.pdf","contentType":"application/pdf","bytes":`+strconv.Itoa(len(pdfBytes))+`}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected signed media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	mediaStorage.objects[created.Data.ObjectKey] = pdfBytes
+	mediaStorage.failDeletes[created.Data.ObjectKey] = true
+	completeResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID+"/complete",
+		`{}`,
+		login,
+	))
+	if completeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected completion queue 200, got %d: %s", completeResponse.StatusCode, readBody(t, completeResponse))
+	}
+
+	processor := mediajobs.Processor{Store: server.store, Storage: mediaStorage}
+	if processed, err := processor.Process(context.Background(), 10); err == nil {
+		t.Fatal("expected pending original cleanup failure")
+	} else if processed != 0 {
+		t.Fatalf("expected failed cleanup not to count as processed, got %d", processed)
+	}
+	pendingCleanup, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pendingCleanup.Status != "ready" || pendingCleanup.ObjectKey != created.Data.ObjectKey || len(pendingCleanup.Variants) != 0 {
+		t.Fatalf("expected ready document to retain its pending pointer for cleanup retry, got %#v", pendingCleanup)
+	}
+	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; !exists {
+		t.Fatal("expected pending document to remain after failed B2 deletion")
+	}
+	finalObjectKey := media.ProcessedOriginalObjectKey(project.ID, created.Data.ID, created.Data.Filename)
+	if !bytes.Equal(mediaStorage.puts[finalObjectKey], pdfBytes) {
+		t.Fatal("expected the processed document to exist before pending cleanup")
+	}
+
+	delete(mediaStorage.failDeletes, created.Data.ObjectKey)
+	if processed, err := processor.Process(context.Background(), 10); err != nil {
+		t.Fatal(err)
+	} else if processed != 0 {
+		t.Fatalf("expected cleanup retry not to count as a processing job, got %d", processed)
+	}
+	cleaned, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleaned.Status != "ready" || cleaned.ObjectKey != finalObjectKey || strings.Contains(cleaned.ObjectKey, "/pending/") {
+		t.Fatalf("expected cleanup retry to promote the processed document, got %#v", cleaned)
+	}
+	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; exists {
+		t.Fatal("expected cleanup retry to remove the pending document")
+	}
+}
+
+func TestAdminMediaDeleteRemovesProcessedOriginalFromStorage(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	server.cfg.B2MediaPresignTTL = 15 * time.Minute
+	login := seedAndLogin(t, server, db, "media-delete-original-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-delete-original","name":"Media Delete Original"}`)
+	pdfBytes := safeRouteTestPDF()
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"brief.pdf","contentType":"application/pdf","bytes":`+strconv.Itoa(len(pdfBytes))+`}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected signed media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	mediaStorage.objects[created.Data.ObjectKey] = pdfBytes
+	completeResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID+"/complete",
+		`{}`,
+		login,
+	))
+	if completeResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected completion queue 200, got %d: %s", completeResponse.StatusCode, readBody(t, completeResponse))
+	}
+	if _, err := (mediajobs.Processor{Store: server.store, Storage: mediaStorage}).Process(context.Background(), 10); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready.ObjectKey == "" || strings.Contains(ready.ObjectKey, "/pending/") {
+		t.Fatalf("expected processed original object key, got %q", ready.ObjectKey)
+	}
+	if _, exists := mediaStorage.puts[ready.ObjectKey]; !exists {
+		t.Fatalf("expected processed original %q in storage", ready.ObjectKey)
+	}
+
+	deleteResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID,
+		`{}`,
+		login,
+	))
+	if deleteResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected delete 204, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+	if mediaStorage.deletes[ready.ObjectKey] != 1 {
+		t.Fatalf("expected processed original B2 deletion, got %#v", mediaStorage.deletes)
+	}
+	if _, exists := mediaStorage.puts[ready.ObjectKey]; exists {
+		t.Fatal("expected processed original to be removed from storage")
+	}
+	if _, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID); err == nil {
+		t.Fatal("expected media row to be removed after successful B2 deletion")
+	}
+}
+
+func TestReadyMediaObjectDeletionSweepsPendingAndProcessedCopies(t *testing.T) {
+	mediaStorage := newFakeMediaStorage()
+	server := &Server{mediaStorage: mediaStorage}
+	asset := store.AdminMediaAsset{
+		ID:        "asset_cleanup_window",
+		ProjectID: "project_cleanup_window",
+		Filename:  "brief.pdf",
+		Status:    "ready",
+	}
+	asset.ObjectKey = media.PendingOriginalObjectKey(asset.ProjectID, asset.ID, asset.Filename)
+	processedObjectKey := media.ProcessedOriginalObjectKey(asset.ProjectID, asset.ID, asset.Filename)
+	mediaStorage.objects[asset.ObjectKey] = []byte("pending")
+	mediaStorage.puts[processedObjectKey] = []byte("processed")
+
+	if err := server.deleteMediaObjects(context.Background(), asset); err != nil {
+		t.Fatal(err)
+	}
+	if mediaStorage.deletes[asset.ObjectKey] != 1 || mediaStorage.deletes[processedObjectKey] != 1 {
+		t.Fatalf("expected ready cleanup-window copies to be deleted once, got %#v", mediaStorage.deletes)
+	}
+	if _, exists := mediaStorage.objects[asset.ObjectKey]; exists {
+		t.Fatal("expected pending ready-media copy to be deleted")
+	}
+	if _, exists := mediaStorage.puts[processedObjectKey]; exists {
+		t.Fatal("expected processed ready-media copy to be deleted")
+	}
+}
+
+func TestAdminMediaDeleteBlocksAuthorPhotoBeforeStorageDeletion(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	login := seedAndLogin(t, server, db, "media-delete-author-photo-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-delete-author-photo","name":"Media Delete Author Photo"}`)
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"author.png","contentType":"image/png","bytes":128}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	mediaStorage.objects[created.Data.ObjectKey] = []byte("uploaded object")
+	createTestAuthor(t, server, login, project.ID, `{"displayName":"Referenced Author","photoAssetId":"`+created.Data.ID+`"}`)
+
+	deleteResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID,
+		`{}`,
+		login,
+	))
+	if deleteResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected in-use media delete 409, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+	if len(mediaStorage.deletes) != 0 {
+		t.Fatalf("expected usage preflight before any B2 deletion, got %#v", mediaStorage.deletes)
+	}
+	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; !exists {
+		t.Fatal("expected referenced author photo to remain in storage")
+	}
+	if _, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID); err != nil {
+		t.Fatalf("expected referenced media row to remain: %v", err)
+	}
+}
+
+func TestAdminMediaDeleteBlocksStructuredRevisionReferenceBeforeStorageDeletion(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	login := seedAndLogin(t, server, db, "media-delete-revision-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-delete-revision","name":"Media Delete Revision"}`)
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"article.png","contentType":"image/png","bytes":128}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	mediaStorage.objects[created.Data.ObjectKey] = []byte("uploaded object")
+	category := createTestCategory(t, server, login, project.ID, `{"name":"Media references","slug":"media-references"}`)
+	createTestArticle(t, server, login, project.ID, `{
+		"title":"Article with media",
+		"slug":"article-with-media",
+		"primaryCategoryId":"`+category.ID+`",
+		"bodyDocument":{
+			"type":"doc",
+			"content":[{"type":"image","attrs":{"assetId":"`+created.Data.ID+`"}}]
+		}
+	}`)
+
+	deleteResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID,
+		`{}`,
+		login,
+	))
+	if deleteResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected revision-referenced media delete 409, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+	if len(mediaStorage.deletes) != 0 {
+		t.Fatalf("expected revision usage preflight before any B2 deletion, got %#v", mediaStorage.deletes)
+	}
+	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; !exists {
+		t.Fatal("expected revision-referenced media to remain in storage")
 	}
 }
 
@@ -562,6 +834,46 @@ func TestAdminMediaProcessingCleansUpPartialVariantUploads(t *testing.T) {
 	}
 	if len(mediaStorage.puts) != 0 {
 		t.Fatalf("expected partial variants to be deleted, got %#v", mediaStorage.puts)
+	}
+}
+
+func TestAdminMediaDeleteKeepsRowWhenB2DeleteFails(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	login := seedAndLogin(t, server, db, "media-delete-failure-route-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-delete-failure-route","name":"Media Delete Failure Route"}`)
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"hero.png","contentType":"image/png","bytes":128}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	mediaStorage.objects[created.Data.ObjectKey] = []byte("uploaded object")
+	mediaStorage.failDeletes[created.Data.ObjectKey] = true
+
+	deleteResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID,
+		`{}`,
+		login,
+	))
+	if deleteResponse.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected delete failure 502, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+	if mediaStorage.deletes[created.Data.ObjectKey] != 1 {
+		t.Fatalf("expected one B2 delete attempt, got %#v", mediaStorage.deletes)
+	}
+	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; !exists {
+		t.Fatal("expected object to remain when B2 deletion fails")
+	}
+	if _, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID); err != nil {
+		t.Fatalf("expected media row to remain when B2 deletion fails: %v", err)
 	}
 }
 

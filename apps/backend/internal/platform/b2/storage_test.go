@@ -1,6 +1,9 @@
 package b2
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -71,4 +74,57 @@ func TestNewDerivesRegionAndPublicBaseURLFromEndpoint(t *testing.T) {
 	if got := client.PublicURL("blogSEO/projects/project-a/media/variants/asset-a/square_1x1.jpg"); got != "https://s3.eu-central-003.backblazeb2.com/seoBlog/blogSEO/projects/project-a/media/variants/asset-a/square_1x1.jpg" {
 		t.Fatalf("unexpected derived public URL %q", got)
 	}
+}
+
+func TestDeleteObjectSendsSignedB2DeleteAndAcceptsMissingObjects(t *testing.T) {
+	for _, statusCode := range []int{http.StatusNoContent, http.StatusNotFound} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			client, err := New(Config{
+				Endpoint:       "https://s3.us-west-004.backblazeb2.com",
+				Region:         "us-west-004",
+				Bucket:         "media-bucket",
+				KeyID:          "key-id",
+				ApplicationKey: "application-key",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var captured *http.Request
+			client.httpClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				captured = request.Clone(request.Context())
+				return &http.Response{
+					StatusCode: statusCode,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    request,
+				}, nil
+			})}
+
+			objectKey := "blogSEO/projects/project-a/media/variants/asset-a/square_1x1.jpg"
+			if err := client.DeleteObject(context.Background(), objectKey); err != nil {
+				t.Fatal(err)
+			}
+			if captured == nil {
+				t.Fatal("expected B2 delete request")
+			}
+			if captured.Method != http.MethodDelete {
+				t.Fatalf("expected DELETE, got %s", captured.Method)
+			}
+			if captured.URL.EscapedPath() != "/media-bucket/"+objectKey {
+				t.Fatalf("unexpected B2 delete path %q", captured.URL.EscapedPath())
+			}
+			if !strings.HasPrefix(captured.Header.Get("Authorization"), awsAlgorithm+" Credential=key-id/") {
+				t.Fatalf("expected signed B2 delete request, got %q", captured.Header.Get("Authorization"))
+			}
+			if captured.Header.Get("X-Amz-Content-Sha256") == "" || captured.Header.Get("X-Amz-Date") == "" {
+				t.Fatalf("expected signed B2 headers, got %#v", captured.Header)
+			}
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
 }

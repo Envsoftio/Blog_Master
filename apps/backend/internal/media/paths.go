@@ -8,6 +8,10 @@ func OriginalObjectKeyPrefix(projectID, assetID string) string {
 	return ObjectRootPrefix + "/pending/" + projectID + "/" + assetID
 }
 
+func PendingOriginalObjectKey(projectID, assetID, filename string) string {
+	return OriginalObjectKeyPrefix(projectID, assetID) + "/" + safeObjectFilename(filename)
+}
+
 func ProcessedOriginalObjectKey(projectID, assetID, filename string) string {
 	return processedOriginalObjectKeyPrefix(projectID, assetID) + safeObjectFilename(filename)
 }

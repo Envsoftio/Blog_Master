@@ -187,6 +187,9 @@ func (s *Server) deleteMediaAsset(c *fiber.Ctx) error {
 	if err != nil {
 		return s.adminReadError(c, err, "Media asset not found", "Could not delete media")
 	}
+	if err := s.store.AssertMediaAssetDeletable(c.UserContext(), user.ID, projectID, assetID); err != nil {
+		return s.adminMutationError(c, err, "Could not delete media")
+	}
 	if err := s.deleteMediaObjects(c.UserContext(), asset); err != nil {
 		s.logger.Error("media object deletion failed", "asset_id", asset.ID, "error", err)
 		return problem(c, fiber.StatusBadGateway, "Could not delete media objects", "")
@@ -245,6 +248,12 @@ func (s *Server) deleteMediaObjects(ctx context.Context, asset store.AdminMediaA
 		return nil
 	}
 	keys := []string{asset.ObjectKey}
+	if asset.Status == "ready" {
+		keys = append(keys,
+			media.PendingOriginalObjectKey(asset.ProjectID, asset.ID, asset.Filename),
+			media.ProcessedOriginalObjectKey(asset.ProjectID, asset.ID, asset.Filename),
+		)
+	}
 	for _, variant := range asset.Variants {
 		keys = append(keys, variant.ObjectKey)
 	}

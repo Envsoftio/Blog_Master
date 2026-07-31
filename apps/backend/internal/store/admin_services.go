@@ -628,6 +628,134 @@ func (s *Store) DeleteMediaAsset(ctx context.Context, userID, projectID, assetID
 	return nil
 }
 
+// AssertMediaAssetDeletable checks every currently supported asset reference
+// before an object-storage delete is attempted. This is deliberately separate
+// from DeleteMediaAsset because B2 and SQLite cannot share a transaction: the
+// HTTP layer must run this preflight before removing any stored objects.
+func (s *Store) AssertMediaAssetDeletable(ctx context.Context, userID, projectID, assetID string) error {
+	if err := s.requireContentWrite(ctx, userID, projectID); err != nil {
+		return err
+	}
+	if _, err := s.getMediaAsset(ctx, projectID, assetID); err != nil {
+		return err
+	}
+
+	var authorName string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT display_name
+		FROM authors
+		WHERE project_id = ? AND photo_asset_id = ?
+		ORDER BY created_at ASC, id ASC
+		LIMIT 1
+	`, projectID, assetID).Scan(&authorName)
+	if err == nil {
+		return fmt.Errorf("%w: media asset is used by author %q; choose a replacement before deleting it", ErrInvalidWorkflow, authorName)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	var projectReference string
+	err = s.db.QueryRowContext(ctx, `
+		SELECT CASE
+			WHEN publisher_logo_asset_id = ? THEN 'publisher logo'
+			WHEN default_social_image_id = ? THEN 'default social image'
+		END
+		FROM projects
+		WHERE id = ?
+		  AND (publisher_logo_asset_id = ? OR default_social_image_id = ?)
+	`, assetID, assetID, projectID, assetID, assetID).Scan(&projectReference)
+	if err == nil {
+		return fmt.Errorf("%w: media asset is used as the project %s; choose a replacement before deleting it", ErrInvalidWorkflow, projectReference)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, body_document_json, media_snapshot_json
+		FROM content_revisions
+		WHERE project_id = ?
+		  AND (instr(body_document_json, ?) > 0 OR instr(media_snapshot_json, ?) > 0)
+		ORDER BY created_at ASC, id ASC
+	`, projectID, assetID, assetID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var revisionID, bodyJSON, mediaJSON string
+		if err := rows.Scan(&revisionID, &bodyJSON, &mediaJSON); err != nil {
+			return err
+		}
+		if structuredDocumentReferencesAsset(bodyJSON, assetID) || jsonContainsString(mediaJSON, assetID) {
+			return fmt.Errorf("%w: media asset is retained by revision %q; replace the reference with a new revision before deleting it", ErrInvalidWorkflow, revisionID)
+		}
+	}
+	return rows.Err()
+}
+
+func structuredDocumentReferencesAsset(raw, assetID string) bool {
+	var document any
+	if json.Unmarshal([]byte(raw), &document) != nil {
+		return false
+	}
+	return findAssetReference(document, assetID)
+}
+
+func findAssetReference(value any, assetID string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			normalizedKey := strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(key))
+			switch normalizedKey {
+			case "assetid", "assetids", "mediaid", "mediaids", "imageassetid", "heroassetid":
+				if jsonValueContainsString(child, assetID) {
+					return true
+				}
+			}
+			if findAssetReference(child, assetID) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if findAssetReference(child, assetID) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func jsonContainsString(raw, expected string) bool {
+	var value any
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return false
+	}
+	return jsonValueContainsString(value, expected)
+}
+
+func jsonValueContainsString(value any, expected string) bool {
+	switch typed := value.(type) {
+	case string:
+		return typed == expected
+	case map[string]any:
+		for _, child := range typed {
+			if jsonValueContainsString(child, expected) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if jsonValueContainsString(child, expected) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *Store) MarkMediaAssetProcessing(ctx context.Context, userID, projectID, assetID, expectedSHA256 string) (AdminMediaAsset, error) {
 	if err := s.requireContentWrite(ctx, userID, projectID); err != nil {
 		return AdminMediaAsset{}, err

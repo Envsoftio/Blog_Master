@@ -96,3 +96,14 @@ func TestDeletableObjectKeyForAsset(t *testing.T) {
 		})
 	}
 }
+
+func TestOriginalObjectKeysUseTheSameSafeFilename(t *testing.T) {
+	pending := PendingOriginalObjectKey("project_123", "asset_456", " Brief 2026?.pdf ")
+	processed := ProcessedOriginalObjectKey("project_123", "asset_456", " Brief 2026?.pdf ")
+	if pending != "blogSEO/pending/project_123/asset_456/Brief-2026-.pdf" {
+		t.Fatalf("unexpected pending object key %q", pending)
+	}
+	if processed != "blogSEO/projects/project_123/media/originals/asset_456/Brief-2026-.pdf" {
+		t.Fatalf("unexpected processed object key %q", processed)
+	}
+}

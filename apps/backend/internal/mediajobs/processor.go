@@ -106,11 +106,6 @@ func (p Processor) ProcessAsset(ctx context.Context, asset store.AdminMediaAsset
 			return fmt.Errorf("move processed original %s: %w", asset.ID, err)
 		}
 		uploadedKeys = append(uploadedKeys, completedObjectKey)
-		if err := p.deleteAssetKeys(ctx, asset, []string{asset.ObjectKey}); err != nil {
-			_ = p.deleteAssetKeys(ctx, asset, []string{completedObjectKey})
-			_, _ = p.Store.FailMediaAssetSystem(ctx, asset.ProjectID, asset.ID, "could not delete processed original media")
-			return fmt.Errorf("delete processed original %s: %w", asset.ID, err)
-		}
 	}
 	if _, err := p.Store.CompleteMediaAssetSystem(ctx, asset.ProjectID, asset.ID, store.MediaCompletionInput{
 		ObjectKey:   completedObjectKey,
@@ -125,9 +120,20 @@ func (p Processor) ProcessAsset(ctx context.Context, asset store.AdminMediaAsset
 		p.deleteAssetKeys(ctx, asset, uploadedKeys)
 		return err
 	}
+	if len(variantInputs) == 0 {
+		if err := p.deleteAssetKeys(ctx, asset, []string{asset.ObjectKey}); err != nil {
+			if _, restoreErr := p.Store.SetMediaAssetObjectKeySystem(ctx, asset.ProjectID, asset.ID, asset.ObjectKey); restoreErr != nil {
+				return errors.Join(
+					fmt.Errorf("delete processed original %s: %w", asset.ID, err),
+					fmt.Errorf("restore pending media pointer %s: %w", asset.ID, restoreErr),
+				)
+			}
+			return fmt.Errorf("delete processed original %s: %w", asset.ID, err)
+		}
+		return nil
+	}
 	if len(variantInputs) > 0 {
 		if err := p.deleteAssetKeys(ctx, asset, []string{asset.ObjectKey}); err != nil {
-			_, _ = p.Store.FailMediaAssetSystem(ctx, asset.ProjectID, asset.ID, "could not delete processed original media")
 			return fmt.Errorf("delete processed original %s: %w", asset.ID, err)
 		}
 		if _, err := p.Store.SetMediaAssetObjectKeySystem(ctx, asset.ProjectID, asset.ID, variantInputs[0].ObjectKey); err != nil {
@@ -158,7 +164,7 @@ func (p Processor) CleanupReadyOriginals(ctx context.Context, limit int) (int, e
 	var errs []error
 	for _, asset := range assets {
 		if len(asset.Variants) == 0 {
-			promotedObjectKey, err := p.moveReadyPendingOriginal(ctx, asset)
+			promotedObjectKey, err := p.copyReadyPendingOriginal(ctx, asset)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("move ready original %s: %w", asset.ID, err))
 				p.logError("ready media original move failed", asset, err)
@@ -167,6 +173,14 @@ func (p Processor) CleanupReadyOriginals(ctx context.Context, limit int) (int, e
 			if _, err := p.Store.SetMediaAssetObjectKeySystem(ctx, asset.ProjectID, asset.ID, promotedObjectKey); err != nil {
 				errs = append(errs, fmt.Errorf("promote ready media original %s: %w", asset.ID, err))
 				p.logError("ready media original promotion failed", asset, err)
+				continue
+			}
+			if err := p.deleteAssetKeys(ctx, asset, []string{asset.ObjectKey}); err != nil {
+				if _, restoreErr := p.Store.SetMediaAssetObjectKeySystem(ctx, asset.ProjectID, asset.ID, asset.ObjectKey); restoreErr != nil {
+					err = errors.Join(err, fmt.Errorf("restore pending media pointer: %w", restoreErr))
+				}
+				errs = append(errs, fmt.Errorf("delete ready original %s: %w", asset.ID, err))
+				p.logError("ready media original cleanup failed", asset, err)
 				continue
 			}
 			cleaned++
@@ -194,7 +208,7 @@ func (p Processor) CleanupReadyOriginals(ctx context.Context, limit int) (int, e
 	return cleaned, errors.Join(errs...)
 }
 
-func (p Processor) moveReadyPendingOriginal(ctx context.Context, asset store.AdminMediaAsset) (string, error) {
+func (p Processor) copyReadyPendingOriginal(ctx context.Context, asset store.AdminMediaAsset) (string, error) {
 	body, contentType, err := p.Storage.GetObject(ctx, asset.ObjectKey, asset.Bytes)
 	if err != nil {
 		return "", err
@@ -204,10 +218,6 @@ func (p Processor) moveReadyPendingOriginal(ctx context.Context, asset store.Adm
 	}
 	objectKey := media.ProcessedOriginalObjectKey(asset.ProjectID, asset.ID, asset.Filename)
 	if err := p.Storage.PutObject(ctx, objectKey, body, contentType); err != nil {
-		return "", err
-	}
-	if err := p.deleteAssetKeys(ctx, asset, []string{asset.ObjectKey}); err != nil {
-		_ = p.deleteAssetKeys(ctx, asset, []string{objectKey})
 		return "", err
 	}
 	return objectKey, nil
