@@ -70,6 +70,9 @@ var mediaExpectedChecksumMigration string
 //go:embed migrations/0020_ai_execution.sql
 var aiExecutionMigration string
 
+//go:embed migrations/0021_article_autosaves.sql
+var articleAutosavesMigration string
+
 type migration struct {
 	version    string
 	statements string
@@ -126,6 +129,7 @@ func Migrate(db *sql.DB) error {
 		{version: "0018_media_lifecycle", statements: mediaLifecycleMigration},
 		{version: "0019_media_expected_checksum", statements: mediaExpectedChecksumMigration},
 		{version: "0020_ai_execution", statements: aiExecutionMigration},
+		{version: "0021_article_autosaves", statements: articleAutosavesMigration},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {

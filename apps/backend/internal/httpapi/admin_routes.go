@@ -78,6 +78,9 @@ func (s *Server) registerAdminRoutes() {
 	api.Get("/projects/:projectID/articles/:articleID/revisions", s.requireAdminSession, s.listRevisionHistory)
 	api.Post("/projects/:projectID/articles/:articleID/revisions", s.requireAdminSession, s.requireAdminCSRF, s.createRevision)
 	api.Get("/projects/:projectID/articles/:articleID/revisions/:revisionID", s.requireAdminSession, s.getRevisionDetail)
+	api.Get("/projects/:projectID/articles/:articleID/autosave", s.requireAdminSession, s.getArticleAutosave)
+	api.Put("/projects/:projectID/articles/:articleID/autosave", s.requireAdminSession, s.requireAdminCSRF, s.saveArticleAutosave)
+	api.Delete("/projects/:projectID/articles/:articleID/autosave", s.requireAdminSession, s.requireAdminCSRF, s.deleteArticleAutosave)
 	api.Post("/projects/:projectID/revisions/:revisionID/submit", s.requireAdminSession, s.requireAdminCSRF, s.submitRevision)
 	api.Post("/projects/:projectID/revisions/:revisionID/request-changes", s.requireAdminSession, s.requireAdminCSRF, s.requestRevisionChanges)
 	api.Post("/projects/:projectID/revisions/:revisionID/approve", s.requireAdminSession, s.requireAdminCSRF, s.approveRevision)
@@ -263,6 +266,12 @@ type revisionRequest struct {
 	BodyDocument      any                          `json:"bodyDocument"`
 	HTML              string                       `json:"html"`
 	SEO               seoRequest                   `json:"seo"`
+}
+
+type articleAutosaveRequest struct {
+	BaseRevisionID  string                      `json:"baseRevisionId"`
+	ExpectedVersion *int64                      `json:"expectedVersion"`
+	Draft           *store.ArticleAutosaveDraft `json:"draft"`
 }
 
 type revisionContributorRequest struct {
@@ -1139,6 +1148,68 @@ func (s *Server) getRevisionDetail(c fiber.Ctx) error {
 		return s.adminReadError(c, err, "Revision not found", "Could not load revision")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminRevisionDetail]{Data: revision})
+}
+
+func (s *Server) getArticleAutosave(c fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	autosave, err := s.store.GetArticleAutosaveForUser(
+		c.Context(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("articleID"),
+	)
+	if err != nil {
+		return s.adminReadError(c, err, "Autosave not found", "Could not load article autosave")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.ArticleAutosave]{Data: autosave})
+}
+
+func (s *Server) saveArticleAutosave(c fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input articleAutosaveRequest
+	if err := decodeStrictRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
+	}
+	if input.ExpectedVersion == nil || input.Draft == nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "expectedVersion and draft are required")
+	}
+	autosave, err := s.store.SaveArticleAutosave(
+		c.Context(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("articleID"),
+		store.ArticleAutosaveInput{
+			BaseRevisionID:  input.BaseRevisionID,
+			ExpectedVersion: *input.ExpectedVersion,
+			Draft:           *input.Draft,
+		},
+	)
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not save article autosave")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.ArticleAutosave]{Data: autosave})
+}
+
+func (s *Server) deleteArticleAutosave(c fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	if err := s.store.DeleteArticleAutosave(
+		c.Context(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("articleID"),
+	); err != nil {
+		return s.adminMutationError(c, err, "Could not delete article autosave")
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 func (s *Server) createRevision(c fiber.Ctx) error {

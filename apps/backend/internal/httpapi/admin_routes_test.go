@@ -3260,6 +3260,157 @@ func TestArticleListFiltersAndArchivedArticleRestore(t *testing.T) {
 	}
 }
 
+func TestArticleAutosaveRecoversDraftsAndRejectsConflicts(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "autosave-owner@example.test", "correct horse battery staple")
+	writerLogin := seedAndLogin(t, server, db, "autosave-writer@example.test", "another correct horse battery staple")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"autosave","name":"Autosave Project","primaryDomain":"example.test"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, writerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+	category := createTestCategory(t, server, ownerLogin, project.ID, `{"slug":"guides","name":"Guides"}`)
+	author := createTestAuthor(t, server, ownerLogin, project.ID, `{"slug":"autosave-author","displayName":"Autosave Author"}`)
+	article := createTestArticle(t, server, ownerLogin, project.ID, `{
+		"articleType":"guide",
+		"title":"Autosave Guide",
+		"slug":"autosave-guide",
+		"primaryCategoryId":"`+category.ID+`",
+		"html":"<p>Published base</p>",
+		"contributors":[{"authorId":"`+author.ID+`","role":"primary_author","position":0}]
+	}`)
+	baseRevisionID := article.LatestRevision.ID
+	autosavePath := "/api/v1/projects/" + project.ID + "/articles/" + article.ID + "/autosave"
+	autosaveBody := func(baseRevisionID string, expectedVersion int64, title string) string {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{
+			"baseRevisionId":  baseRevisionID,
+			"expectedVersion": expectedVersion,
+			"draft": map[string]any{
+				"title":             title,
+				"primaryCategoryId": category.ID,
+				"contributors": []map[string]any{{
+					"authorId": author.ID,
+					"role":     "primary_author",
+					"position": 0,
+				}},
+				"attributionEdited": true,
+				"html":              "<p>Recovered working draft</p>",
+				"bodyDocument": map[string]any{
+					"type":    "doc",
+					"content": []map[string]any{},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	missingRequest := httptest.NewRequest(http.MethodGet, autosavePath, nil)
+	addCookies(missingRequest, ownerLogin.cookies)
+	missingResponse := mustTest(t, server, missingRequest)
+	if missingResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected an absent autosave to return 404, got %d: %s", missingResponse.StatusCode, readBody(t, missingResponse))
+	}
+	missingVersionRequest := newMemberMutationRequest(
+		http.MethodPut,
+		autosavePath,
+		`{"baseRevisionId":"`+baseRevisionID+`","draft":{"title":"Missing version"}}`,
+		ownerLogin,
+	)
+	missingVersionResponse := mustTest(t, server, missingVersionRequest)
+	if missingVersionResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected missing expectedVersion to return 400, got %d: %s", missingVersionResponse.StatusCode, readBody(t, missingVersionResponse))
+	}
+
+	createRequest := newMemberMutationRequest(http.MethodPut, autosavePath, autosaveBody(baseRevisionID, 0, "First autosave"), ownerLogin)
+	createResponse := mustTest(t, server, createRequest)
+	if createResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected autosave creation 200, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.ArticleAutosave]
+	decodeJSONResponse(t, createResponse, &created)
+	if created.Data.Version != 1 || created.Data.Stale || created.Data.Draft.Title != "First autosave" {
+		t.Fatalf("unexpected created autosave: %#v", created.Data)
+	}
+	createdDocument, ok := created.Data.Draft.BodyDocument.(map[string]any)
+	if !ok || createdDocument["type"] != "doc" || len(created.Data.Draft.Contributors) != 1 {
+		t.Fatalf("expected the structured body and contributor fields to round trip, got draft=%#v", created.Data.Draft)
+	}
+
+	conflictRequest := newMemberMutationRequest(http.MethodPut, autosavePath, autosaveBody(baseRevisionID, 0, "Conflicting tab"), ownerLogin)
+	conflictResponse := mustTest(t, server, conflictRequest)
+	if conflictResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected stale autosave version to return 409, got %d: %s", conflictResponse.StatusCode, readBody(t, conflictResponse))
+	}
+
+	updateRequest := newMemberMutationRequest(http.MethodPut, autosavePath, autosaveBody(baseRevisionID, 1, "Second autosave"), ownerLogin)
+	updateResponse := mustTest(t, server, updateRequest)
+	if updateResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected autosave update 200, got %d: %s", updateResponse.StatusCode, readBody(t, updateResponse))
+	}
+	var updated Envelope[store.ArticleAutosave]
+	decodeJSONResponse(t, updateResponse, &updated)
+	if updated.Data.Version != 2 || updated.Data.Draft.Title != "Second autosave" {
+		t.Fatalf("unexpected updated autosave: %#v", updated.Data)
+	}
+
+	writerGetRequest := httptest.NewRequest(http.MethodGet, autosavePath, nil)
+	addCookies(writerGetRequest, writerLogin.cookies)
+	writerGetResponse := mustTest(t, server, writerGetRequest)
+	if writerGetResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected autosaves to be user scoped, got %d: %s", writerGetResponse.StatusCode, readBody(t, writerGetResponse))
+	}
+
+	newRevision := createTestRevision(t, server, writerLogin, project.ID, article.ID, `{
+		"title":"A newer immutable revision",
+		"html":"<p>Newer body</p>"
+	}`)
+	staleGetRequest := httptest.NewRequest(http.MethodGet, autosavePath, nil)
+	addCookies(staleGetRequest, ownerLogin.cookies)
+	staleGetResponse := mustTest(t, server, staleGetRequest)
+	if staleGetResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected stale autosave recovery 200, got %d: %s", staleGetResponse.StatusCode, readBody(t, staleGetResponse))
+	}
+	var stale Envelope[store.ArticleAutosave]
+	decodeJSONResponse(t, staleGetResponse, &stale)
+	if !stale.Data.Stale || stale.Data.BaseRevisionID != baseRevisionID || stale.Data.Draft.Title != "Second autosave" {
+		t.Fatalf("expected the original recoverable draft to be marked stale, got %#v", stale.Data)
+	}
+
+	staleBaseRequest := newMemberMutationRequest(http.MethodPut, autosavePath, autosaveBody(baseRevisionID, 2, "Must not overwrite"), ownerLogin)
+	staleBaseResponse := mustTest(t, server, staleBaseRequest)
+	if staleBaseResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected stale autosave base to return 409, got %d: %s", staleBaseResponse.StatusCode, readBody(t, staleBaseResponse))
+	}
+
+	deleteRequest := newMemberMutationRequest(http.MethodDelete, autosavePath, "", ownerLogin)
+	deleteResponse := mustTest(t, server, deleteRequest)
+	if deleteResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected autosave deletion 204, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+
+	recreateRequest := newMemberMutationRequest(http.MethodPut, autosavePath, autosaveBody(newRevision.ID, 0, "Draft before revision save"), ownerLogin)
+	recreateResponse := mustTest(t, server, recreateRequest)
+	if recreateResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected autosave recreation 200, got %d: %s", recreateResponse.StatusCode, readBody(t, recreateResponse))
+	}
+	createTestRevision(t, server, ownerLogin, project.ID, article.ID, `{
+		"title":"Committed autosave",
+		"html":"<p>Committed body</p>"
+	}`)
+	afterRevisionRequest := httptest.NewRequest(http.MethodGet, autosavePath, nil)
+	addCookies(afterRevisionRequest, ownerLogin.cookies)
+	afterRevisionResponse := mustTest(t, server, afterRevisionRequest)
+	if afterRevisionResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected revision creation to clear the actor's autosave, got %d: %s", afterRevisionResponse.StatusCode, readBody(t, afterRevisionResponse))
+	}
+}
+
 func TestArticleRollbackRestoresApprovedRevision(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")

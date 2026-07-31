@@ -56,6 +56,10 @@ var implementedAdminRouteStatuses = map[string]string{
 	"POST /api/v1/projects/{projectID}/articles":                               "201",
 	"GET /api/v1/projects/{projectID}/articles/{articleID}":                    "200",
 	"HEAD /api/v1/projects/{projectID}/articles/{articleID}":                   "200",
+	"GET /api/v1/projects/{projectID}/articles/{articleID}/autosave":           "200",
+	"HEAD /api/v1/projects/{projectID}/articles/{articleID}/autosave":          "200",
+	"PUT /api/v1/projects/{projectID}/articles/{articleID}/autosave":           "200",
+	"DELETE /api/v1/projects/{projectID}/articles/{articleID}/autosave":        "204",
 	"DELETE /api/v1/projects/{projectID}/articles/{articleID}":                 "204",
 	"POST /api/v1/projects/{projectID}/articles/{articleID}/restore":           "200",
 	"POST /api/v1/projects/{projectID}/revisions/{revisionID}/submit":          "200",
@@ -477,12 +481,22 @@ func documentRevisionHistoryRoutes(api huma.API) {
 	detailSchema := registry.Schema(reflect.TypeOf(Envelope[store.AdminRevisionDetail]{}), true, "RevisionDetailResponse")
 	createRequestSchema := registry.Schema(reflect.TypeOf(revisionRequest{}), true, "CreateRevisionRequest")
 	createResponseSchema := registry.Schema(reflect.TypeOf(Envelope[store.AdminRevision]{}), true, "CreateRevisionResponse")
+	autosaveRequestSchema := registry.Schema(reflect.TypeOf(articleAutosaveRequest{}), true, "ArticleAutosaveRequest")
+	autosaveResponseSchema := registry.Schema(reflect.TypeOf(Envelope[store.ArticleAutosave]{}), true, "ArticleAutosaveResponse")
 	problemSchema := registry.Schema(reflect.TypeOf(Problem{}), true, "Problem")
 	resolvedCreateRequestSchema := createRequestSchema
 	if createRequestSchema.Ref != "" {
 		resolvedCreateRequestSchema = registry.SchemaFromRef(createRequestSchema.Ref)
 	}
 	resolvedCreateRequestSchema.Required = []string{"baseRevisionId", "title"}
+	resolvedAutosaveRequestSchema := autosaveRequestSchema
+	if autosaveRequestSchema.Ref != "" {
+		resolvedAutosaveRequestSchema = registry.SchemaFromRef(autosaveRequestSchema.Ref)
+	}
+	resolvedAutosaveRequestSchema.Required = []string{"baseRevisionId", "expectedVersion", "draft"}
+	if expectedVersionSchema := resolvedAutosaveRequestSchema.Properties["expectedVersion"]; expectedVersionSchema != nil {
+		expectedVersionSchema.Nullable = false
+	}
 
 	problemResponse := func(description string) *huma.Response {
 		return &huma.Response{
@@ -556,6 +570,101 @@ func documentRevisionHistoryRoutes(api huma.API) {
 			"401": problemResponse("Authentication required"),
 			"403": problemResponse("Insufficient permission"),
 			"404": problemResponse("Project or article not found"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
+
+	autosavePath := "/api/v1/projects/{projectID}/articles/{articleID}/autosave"
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodGet,
+		Path:        autosavePath,
+		OperationID: "getArticleAutosave",
+		Summary:     "Get the current user's article autosave",
+		Description: "Returns the current user's project-scoped working draft and whether its immutable base revision is stale.",
+		Tags:        []string{"Administration"},
+		Parameters:  pathParameters(false),
+		Security:    adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Article autosave",
+				Content: map[string]*huma.MediaType{
+					"application/json": {Schema: autosaveResponseSchema},
+				},
+			},
+			"401": problemResponse("Authentication required"),
+			"403": problemResponse("Insufficient permission"),
+			"404": problemResponse("Autosave not found"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodHead,
+		Path:        autosavePath,
+		OperationID: "headArticleAutosave",
+		Summary:     "Check the current user's article autosave",
+		Description: "Returns the autosave GET status and headers without a response body.",
+		Tags:        []string{"Administration"},
+		Parameters:  pathParameters(false),
+		Security:    adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Article autosave is available"},
+			"401": {Description: "Authentication required"},
+			"403": {Description: "Insufficient permission"},
+			"404": {Description: "Autosave not found"},
+			"500": {Description: "Internal server error"},
+		},
+	})
+	mutationParameters := append(pathParameters(false), &huma.Param{
+		Name:        "X-CSRF-Token",
+		In:          "header",
+		Description: "Administrative session CSRF token",
+		Required:    true,
+		Schema:      &huma.Schema{Type: "string"},
+	})
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodPut,
+		Path:        autosavePath,
+		OperationID: "saveArticleAutosave",
+		Summary:     "Save the current user's article working draft",
+		Description: "Upserts a user-scoped working draft using immutable base-revision and optimistic autosave-version guards.",
+		Tags:        []string{"Administration"},
+		Parameters:  mutationParameters,
+		RequestBody: &huma.RequestBody{
+			Description: "Base revision, expected autosave version and recoverable working fields.",
+			Required:    true,
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: autosaveRequestSchema},
+			},
+		},
+		Security: adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Article autosave stored",
+				Content: map[string]*huma.MediaType{
+					"application/json": {Schema: autosaveResponseSchema},
+				},
+			},
+			"400": problemResponse("Invalid autosave input"),
+			"401": problemResponse("Authentication required"),
+			"403": problemResponse("Insufficient permission"),
+			"404": problemResponse("Project, article or referenced field not found"),
+			"409": problemResponse("Autosave base or version is stale"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodDelete,
+		Path:        autosavePath,
+		OperationID: "deleteArticleAutosave",
+		Summary:     "Delete the current user's article working draft",
+		Description: "Idempotently removes only the authenticated user's autosave for the selected project article.",
+		Tags:        []string{"Administration"},
+		Parameters:  mutationParameters,
+		Security:    adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"204": {Description: "Article autosave deleted"},
+			"401": problemResponse("Authentication required"),
+			"403": problemResponse("Insufficient permission"),
 			"500": problemResponse("Internal server error"),
 		},
 	})

@@ -157,9 +157,9 @@ type RevisionInput struct {
 }
 
 type RevisionContributorInput struct {
-	AuthorID string
-	Role     string
-	Position int
+	AuthorID string `json:"authorId"`
+	Role     string `json:"role"`
+	Position int    `json:"position"`
 }
 
 type SEOInput struct {
@@ -565,6 +565,12 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 		return AdminRevision{}, err
 	}
 	if err := insertRevisionContributors(ctx, tx, projectID, revisionID, attribution.Records); err != nil {
+		return AdminRevision{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM article_autosaves
+		WHERE project_id = ? AND content_id = ? AND user_id = ?
+	`, projectID, articleID, actorUserID); err != nil {
 		return AdminRevision{}, err
 	}
 	if err := tx.Commit(); err != nil {

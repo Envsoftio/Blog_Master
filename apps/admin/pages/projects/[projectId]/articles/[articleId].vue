@@ -568,8 +568,8 @@
                 <div class="min-w-0 flex-1">
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Draft</p>
                   <h2 class="mt-1 text-lg font-semibold tracking-normal">New revision</h2>
-                  <p v-if="draftSavedAt" class="mt-1 text-xs text-[#667169] dark:text-[#aeb8b0]">
-                    {{ draftSaveState === 'saving' ? 'Saving locally…' : `Saved locally ${formatDate(draftSavedAt)}` }}
+                  <p v-if="draftStatusText" class="mt-1 text-xs" :class="draftStatusClass" aria-live="polite">
+                    {{ draftStatusText }}
                   </p>
                 </div>
               </div>
@@ -578,19 +578,34 @@
                 v-if="staleDraft"
                 class="rounded-md border border-[#e1bd70] bg-[#fff8e7] p-3 text-sm text-[#6b4905] dark:border-[#665223] dark:bg-[#2b2415] dark:text-[#f5d992]"
               >
-                <p class="font-medium">A local draft was saved against an older revision.</p>
-                <p class="mt-1 text-xs">The server has changed since {{ formatDate(staleDraft.savedAt) }}. Restore it for manual reconciliation, or discard it.</p>
+                <p class="font-medium">{{ staleDraft.reason === 'version-conflict' ? 'Another tab saved a different draft.' : 'A working draft was saved against an older revision.' }}</p>
+                <p class="mt-1 text-xs">
+                  {{ staleDraft.reason === 'version-conflict'
+                    ? `This tab's browser backup from ${formatDate(staleDraft.snapshot.savedAt)} is still available for manual reconciliation.`
+                    : `The article changed after this ${staleDraft.source === 'server' ? 'server' : 'browser'} draft was saved ${formatDate(staleDraft.snapshot.savedAt)}. Restore it for manual reconciliation, or discard it.` }}
+                </p>
                 <div class="mt-3 flex flex-wrap gap-2">
-                  <button class="rounded-md border border-current px-3 py-1.5 text-xs font-medium" type="button" @click="restoreStaleDraft">Restore local draft</button>
+                  <button class="rounded-md border border-current px-3 py-1.5 text-xs font-medium" type="button" @click="restoreStaleDraft">Restore for reconciliation</button>
                   <button class="rounded-md px-3 py-1.5 text-xs font-medium underline" type="button" @click="discardLocalDraft">Discard</button>
                 </div>
+              </div>
+
+              <div
+                v-else-if="serverDraftSaveState === 'conflict'"
+                class="rounded-md border border-[#e1bd70] bg-[#fff8e7] p-3 text-sm text-[#6b4905] dark:border-[#665223] dark:bg-[#2b2415] dark:text-[#f5d992]"
+              >
+                <p class="font-medium">Autosave paused because another tab saved newer work.</p>
+                <p class="mt-1 text-xs">Reload the server draft to compare it with this tab's browser backup before continuing.</p>
+                <button class="mt-3 rounded-md border border-current px-3 py-1.5 text-xs font-medium disabled:opacity-60" type="button" :disabled="reloadingServerDraft" @click="reloadServerDraft">
+                  {{ reloadingServerDraft ? 'Reloading…' : 'Reload server draft' }}
+                </button>
               </div>
 
               <p
                 v-else-if="draftSaveState === 'restored'"
                 class="rounded-md border border-[#b9d5c8] bg-[#eef8f3] px-3 py-2 text-xs text-[#165a4a] dark:border-[#315648] dark:bg-[#14251f] dark:text-[#aee4d0]"
               >
-                Your locally saved draft was restored after the latest server revision was checked.
+                Your saved working draft was restored after the latest immutable revision was checked.
               </p>
 
               <label class="block space-y-2">
@@ -1000,6 +1015,25 @@ type ArticleDraftSnapshot = {
   fields: ArticleDraftFields
 }
 
+type ArticleAutosave = {
+  projectId: string
+  articleId: string
+  userId: string
+  baseRevisionId: string
+  version: number
+  draft: ArticleDraftFields & { bodyDocument?: unknown }
+  stale: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+type ArticleDraftRecovery = {
+  snapshot: ArticleDraftSnapshot
+  source: 'browser' | 'server'
+  reason: 'stale-base' | 'version-conflict'
+  bodyDocument?: unknown
+}
+
 type AdminArticle = {
   id: string
   projectId: string
@@ -1112,7 +1146,12 @@ const errorMessage = ref('')
 const successMessage = ref('')
 const draftSaveState = ref<'idle' | 'saving' | 'saved' | 'restored'>('idle')
 const draftSavedAt = ref('')
-const staleDraft = ref<ArticleDraftSnapshot | null>(null)
+const serverDraftSaveState = ref<'idle' | 'saving' | 'saved' | 'restored' | 'conflict' | 'error'>('idle')
+const serverDraftSavedAt = ref('')
+const serverAutosaveVersion = ref(0)
+const loadedServerAutosave = ref<ArticleAutosave | null>(null)
+const staleDraft = ref<ArticleDraftRecovery | null>(null)
+const reloadingServerDraft = ref(false)
 const baseDraftHTML = ref('')
 const baseDraftDocument = ref<unknown>({ type: 'doc', content: [] })
 const baseDraftRevisionID = ref('')
@@ -1124,6 +1163,10 @@ let copyCategoryRequestVersion = 0
 let draftPersistenceEnabled = false
 let draftDirty = false
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
+let serverDraftDirty = false
+let serverSaveInFlight = false
+let serverSaveTimer: ReturnType<typeof setTimeout> | undefined
+let serverSaveGeneration = 0
 
 const revisionForm = reactive({
   title: '',
@@ -1184,8 +1227,34 @@ const canReviewArticles = computed(() => projectIsActive.value && ['project_owne
 const canPublishArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
 const canComment = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'reviewer', 'writer'].includes(project.value?.role || ''))
 const canCreateRevision = computed(() => canWriteArticles.value && Boolean(
-  revisionForm.title.trim() && hasValidRevisionContributors(revisionForm.contributors)
+  revisionForm.title.trim()
+  && hasValidRevisionContributors(revisionForm.contributors)
+  && serverDraftSaveState.value !== 'conflict'
 ))
+const draftStatusText = computed(() => {
+  switch (serverDraftSaveState.value) {
+    case 'saving':
+      return 'Saving working draft to the server…'
+    case 'saved':
+    case 'restored':
+      return serverDraftSavedAt.value ? `Saved to the server ${formatDate(serverDraftSavedAt.value)}` : 'Saved to the server'
+    case 'conflict':
+      return 'Server autosave paused · newer work exists in another tab'
+    case 'error':
+      return draftSavedAt.value
+        ? `Server autosave unavailable · browser backup saved ${formatDate(draftSavedAt.value)}`
+        : 'Server autosave unavailable · changes remain in this tab'
+    default:
+      if (draftSaveState.value === 'saving') return 'Saving a browser backup…'
+      return draftSavedAt.value ? `Browser backup saved ${formatDate(draftSavedAt.value)}` : ''
+  }
+})
+const draftStatusClass = computed(() => {
+  if (serverDraftSaveState.value === 'conflict' || serverDraftSaveState.value === 'error') {
+    return 'text-[#8a5b00] dark:text-[#ffd98a]'
+  }
+  return 'text-[#667169] dark:text-[#aeb8b0]'
+})
 const copyDestinations = computed(() => projects.value.filter(candidate =>
   candidate.id !== projectID.value
   && candidate.status === 'active'
@@ -1295,20 +1364,26 @@ watch(
   () => {
     if (!draftPersistenceEnabled || !import.meta.client) return
     draftDirty = true
+    serverDraftDirty = true
     draftSaveState.value = 'saving'
     if (draftSaveTimer) clearTimeout(draftSaveTimer)
     draftSaveTimer = setTimeout(persistLocalDraft, 750)
+    if (serverDraftSaveState.value !== 'conflict') {
+      serverDraftSaveState.value = 'saving'
+      queueServerAutosave()
+    }
   },
   { deep: true }
 )
 
 onMounted(async () => {
   await refresh()
-  restoreLocalDraft()
+  restoreWorkingDraft()
 })
 
 onBeforeUnmount(() => {
   if (draftSaveTimer) clearTimeout(draftSaveTimer)
+  if (serverSaveTimer) clearTimeout(serverSaveTimer)
   if (draftDirty) persistLocalDraft()
 })
 
@@ -1316,7 +1391,7 @@ async function refresh() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, projectListResponse, memberResponse, categoryResponse, authorResponse, articleResponse, assignmentResponse, commentResponse, revisionResponse] = await Promise.all([
+    const [projectResponse, projectListResponse, memberResponse, categoryResponse, authorResponse, articleResponse, assignmentResponse, commentResponse, revisionResponse, autosaveResponse] = await Promise.all([
       $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
       fetchAllCopyProjects(),
       fetchAllReviewAssignees(),
@@ -1334,7 +1409,8 @@ async function refresh() {
       $fetch<APIListEnvelope<AdminRevisionSummary>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/revisions`, {
         credentials: 'include',
         query: { limit: 50 }
-      })
+      }),
+      fetchArticleAutosave()
     ])
     project.value = projectResponse.data
     projects.value = projectListResponse
@@ -1348,6 +1424,8 @@ async function refresh() {
     comments.value = apiListData(commentResponse)
     nextCommentCursor.value = commentResponse.meta?.nextCursor || ''
     setRevisions(apiListData(revisionResponse), revisionResponse.meta?.nextCursor || '')
+    loadedServerAutosave.value = autosaveResponse
+    serverAutosaveVersion.value = autosaveResponse?.version || 0
     if (articleResponse.data.latestRevision?.id) {
       handleLatestRevisionDetail(await fetchRevisionDetail(articleResponse.data.latestRevision.id))
     }
@@ -1355,6 +1433,19 @@ async function refresh() {
     errorMessage.value = normalizeAPIError(error, 'Could not load article. Sign in again if your session has expired.')
   } finally {
     pending.value = false
+  }
+}
+
+async function fetchArticleAutosave() {
+  try {
+    const response = await $fetch<APIEnvelope<ArticleAutosave>>(
+      `/api/v1/projects/${projectID.value}/articles/${articleID.value}/autosave`,
+      { credentials: 'include' }
+    )
+    return response.data
+  } catch (error) {
+    if (apiErrorStatus(error) === 404) return null
+    throw error
   }
 }
 
@@ -1415,6 +1506,10 @@ async function createRevision() {
   if (!article.value) return
   creatingRevision.value = true
   clearMessages()
+  if (serverSaveTimer) {
+    clearTimeout(serverSaveTimer)
+    serverSaveTimer = undefined
+  }
   try {
     const csrfToken = await getCSRFToken()
     const html = revisionForm.html.trim() || `<p>${escapeHTML(revisionForm.title)}</p>`
@@ -1444,18 +1539,34 @@ async function createRevision() {
         }
       }
     })
+    serverSaveGeneration += 1
     draftPersistenceEnabled = false
+    if (serverSaveTimer) {
+      clearTimeout(serverSaveTimer)
+      serverSaveTimer = undefined
+    }
     removeLocalDraft()
     successMessage.value = `Revision #${response.data.revisionNumber} created.`
     await fetchArticle()
     setRevisionDraftFromDetail(await fetchRevisionDetail(response.data.id))
     await nextTick()
     draftDirty = false
+    serverDraftDirty = false
     draftSaveState.value = 'idle'
     draftSavedAt.value = ''
+    serverDraftSaveState.value = 'idle'
+    serverDraftSavedAt.value = ''
+    serverAutosaveVersion.value = 0
+    loadedServerAutosave.value = null
+    staleDraft.value = null
     draftPersistenceEnabled = true
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not create revision.')
+    serverDraftDirty = true
+    if (serverDraftSaveState.value !== 'conflict') {
+      serverDraftSaveState.value = 'saving'
+      queueServerAutosave(100)
+    }
   } finally {
     creatingRevision.value = false
   }
@@ -1971,13 +2082,26 @@ function handleLatestRevisionDetail(revision: AdminRevisionDetail) {
 
   if (draftDirty) persistLocalDraft()
   const localDraft = readLocalDraft()
+  if (serverSaveTimer) {
+    clearTimeout(serverSaveTimer)
+    serverSaveTimer = undefined
+  }
   draftPersistenceEnabled = false
   setRevisionDraftFromDetail(revision)
   draftDirty = false
+  serverDraftDirty = false
   draftSaveState.value = 'idle'
   draftSavedAt.value = ''
-  staleDraft.value = localDraft?.baseRevisionId !== revision.id ? localDraft : null
-  if (staleDraft.value) draftSavedAt.value = staleDraft.value.savedAt
+  serverDraftSaveState.value = 'idle'
+  serverDraftSavedAt.value = ''
+  const recoveries: ArticleDraftRecovery[] = []
+  if (localDraft && localDraft.baseRevisionId !== revision.id) {
+    recoveries.push({ snapshot: localDraft, source: 'browser', reason: 'stale-base' })
+  }
+  if (loadedServerAutosave.value && loadedServerAutosave.value.baseRevisionId !== revision.id) {
+    recoveries.push(articleAutosaveRecovery(loadedServerAutosave.value))
+  }
+  staleDraft.value = newestDraftRecovery(recoveries)
   nextTick(() => {
     draftPersistenceEnabled = true
   })
@@ -2074,78 +2198,338 @@ function localDraftKey() {
   return `seoblog:article-draft:${projectID.value}:${articleID.value}`
 }
 
+function draftFieldsSnapshot(): ArticleDraftFields {
+  return {
+    ...revisionForm,
+    contributors: revisionForm.contributors.map(contributor => ({ ...contributor })),
+    attributionEdited: attributionEdited.value
+  }
+}
+
+function draftSnapshot(savedAt = new Date().toISOString()): ArticleDraftSnapshot {
+  return {
+    schemaVersion: 2,
+    projectId: projectID.value,
+    articleId: articleID.value,
+    baseRevisionId: baseDraftRevisionID.value || latestRevisionID(),
+    savedAt,
+    fields: draftFieldsSnapshot()
+  }
+}
+
+function effectiveDraftHTML() {
+  return revisionForm.html.trim() || `<p>${escapeHTML(revisionForm.title)}</p>`
+}
+
+function draftBodyDocument() {
+  const html = effectiveDraftHTML()
+  return html === baseDraftHTML.value
+    ? baseDraftDocument.value
+    : articleBodyDocumentFromHTML(html, revisionForm.title)
+}
+
 function persistLocalDraft() {
   if (!import.meta.client || !draftPersistenceEnabled || !draftDirty) return
   if (draftSaveTimer) {
     clearTimeout(draftSaveTimer)
     draftSaveTimer = undefined
   }
-  const savedAt = new Date().toISOString()
-  const snapshot: ArticleDraftSnapshot = {
-    schemaVersion: 2,
-    projectId: projectID.value,
-    articleId: articleID.value,
-    baseRevisionId: baseDraftRevisionID.value || latestRevisionID(),
-    savedAt,
-    fields: {
-      ...revisionForm,
-      contributors: revisionForm.contributors.map(contributor => ({ ...contributor })),
-      attributionEdited: attributionEdited.value
-    }
-  }
-  try {
-    localStorage.setItem(localDraftKey(), JSON.stringify(snapshot))
+  const snapshot = draftSnapshot()
+  if (writeLocalDraft(snapshot)) {
     draftDirty = false
-    draftSavedAt.value = savedAt
+    draftSavedAt.value = snapshot.savedAt
     draftSaveState.value = 'saved'
-  } catch {
+  } else {
     draftSaveState.value = 'idle'
     errorMessage.value = 'This browser could not save the revision draft locally.'
   }
 }
 
-function restoreLocalDraft() {
+function queueServerAutosave(delay = 1500) {
+  if (!import.meta.client || !canWriteArticles.value || serverDraftSaveState.value === 'conflict') return
+  if (serverSaveTimer) clearTimeout(serverSaveTimer)
+  serverSaveTimer = setTimeout(persistServerAutosave, delay)
+}
+
+async function persistServerAutosave() {
+  if (serverSaveInFlight) {
+    queueServerAutosave(250)
+    return
+  }
+  if (
+    !import.meta.client
+    || !draftPersistenceEnabled
+    || !canWriteArticles.value
+    || !serverDraftDirty
+    || serverDraftSaveState.value === 'conflict'
+  ) return
+  const baseRevisionId = baseDraftRevisionID.value || latestRevisionID()
+  if (!baseRevisionId) return
+  const saveGeneration = serverSaveGeneration
+  if (serverSaveTimer) {
+    clearTimeout(serverSaveTimer)
+    serverSaveTimer = undefined
+  }
+
+  serverSaveInFlight = true
+  serverDraftDirty = false
+  serverDraftSaveState.value = 'saving'
+  try {
+    const csrfToken = await getCSRFToken()
+    const response = await $fetch<APIEnvelope<ArticleAutosave>>(
+      `/api/v1/projects/${projectID.value}/articles/${articleID.value}/autosave`,
+      {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': csrfToken },
+        body: {
+          baseRevisionId,
+          expectedVersion: serverAutosaveVersion.value,
+          draft: {
+            ...draftFieldsSnapshot(),
+            bodyDocument: draftBodyDocument()
+          }
+        }
+      }
+    )
+    if (saveGeneration !== serverSaveGeneration) return
+    loadedServerAutosave.value = response.data
+    serverAutosaveVersion.value = response.data.version
+    serverDraftSavedAt.value = response.data.updatedAt
+    serverDraftSaveState.value = 'saved'
+    if (staleDraft.value?.source === 'server') staleDraft.value = null
+    const synchronizedSnapshot = articleAutosaveSnapshot(response.data)
+    if (!serverDraftDirty && staleDraft.value?.source !== 'browser' && writeLocalDraft(synchronizedSnapshot)) {
+      draftDirty = false
+      draftSavedAt.value = synchronizedSnapshot.savedAt
+      draftSaveState.value = 'saved'
+    }
+  } catch (error) {
+    if (saveGeneration !== serverSaveGeneration) return
+    serverDraftDirty = true
+    serverDraftSaveState.value = apiErrorStatus(error) === 409 ? 'conflict' : 'error'
+  } finally {
+    serverSaveInFlight = false
+    if (saveGeneration === serverSaveGeneration && serverDraftDirty && serverDraftSaveState.value !== 'conflict' && serverDraftSaveState.value !== 'error') {
+      queueServerAutosave(250)
+    }
+  }
+}
+
+async function restoreWorkingDraft() {
   if (!import.meta.client) return
-  const snapshot = readLocalDraft()
-  if (!snapshot) {
+  const recoveries: ArticleDraftRecovery[] = []
+  const localSnapshot = readLocalDraft()
+  if (localSnapshot) {
+    recoveries.push({ snapshot: localSnapshot, source: 'browser', reason: 'stale-base' })
+  }
+  if (loadedServerAutosave.value) {
+    recoveries.push(articleAutosaveRecovery(loadedServerAutosave.value))
+  }
+
+  const currentRecoveries = recoveries.filter(recovery => recovery.snapshot.baseRevisionId === latestRevisionID())
+  const staleRecoveries = recoveries.filter(recovery => recovery.snapshot.baseRevisionId !== latestRevisionID())
+  staleDraft.value = newestDraftRecovery(staleRecoveries)
+  const currentRecovery = newestDraftRecovery(currentRecoveries)
+  if (!currentRecovery) {
     draftPersistenceEnabled = true
     return
   }
-  if (snapshot.baseRevisionId !== latestRevisionID()) {
-    staleDraft.value = snapshot
-    draftSavedAt.value = snapshot.savedAt
-    return
+
+  await applyDraftRecovery(currentRecovery)
+  if (currentRecovery.source === 'server') {
+    serverDraftSavedAt.value = currentRecovery.snapshot.savedAt
+    serverDraftSaveState.value = 'restored'
+    if (staleDraft.value?.source !== 'browser') writeLocalDraft(currentRecovery.snapshot)
+  } else {
+    draftSavedAt.value = currentRecovery.snapshot.savedAt
+    draftSaveState.value = 'restored'
+    const serverSavedAt = loadedServerAutosave.value?.updatedAt || ''
+    if (!serverSavedAt || recoveryTimestamp(currentRecovery.snapshot.savedAt) > recoveryTimestamp(serverSavedAt)) {
+      serverDraftDirty = true
+      serverDraftSaveState.value = 'saving'
+      queueServerAutosave(100)
+    }
   }
-  applyLocalDraft(snapshot)
-  draftSaveState.value = 'restored'
 }
 
-function restoreStaleDraft() {
+async function restoreStaleDraft() {
   if (!staleDraft.value) return
-  const snapshot = staleDraft.value
+  const recovery = staleDraft.value
   staleDraft.value = null
-  applyLocalDraft(snapshot)
+  await applyDraftRecovery(recovery)
   draftDirty = true
+  serverDraftDirty = true
+  serverDraftSaveState.value = 'saving'
+  persistLocalDraft()
+  queueServerAutosave(100)
 }
 
-function discardLocalDraft() {
-  staleDraft.value = null
-  draftSavedAt.value = ''
-  draftSaveState.value = 'idle'
-  draftDirty = false
-  removeLocalDraft()
-  draftPersistenceEnabled = true
+async function discardLocalDraft() {
+  const recovery = staleDraft.value
+  if (!recovery) return
+  const browserRecovery = readLocalDraft()
+  try {
+    if (recovery.source === 'server') {
+      await deleteServerAutosave()
+    } else {
+      removeLocalDraft()
+      draftSavedAt.value = ''
+      draftSaveState.value = 'idle'
+    }
+    if (
+      recovery.source === 'server'
+      && browserRecovery
+      && browserRecovery.baseRevisionId !== latestRevisionID()
+    ) {
+      staleDraft.value = { snapshot: browserRecovery, source: 'browser', reason: 'stale-base' }
+    } else if (
+      recovery.source === 'browser'
+      && loadedServerAutosave.value
+      && loadedServerAutosave.value.baseRevisionId !== latestRevisionID()
+    ) {
+      staleDraft.value = articleAutosaveRecovery(loadedServerAutosave.value)
+    } else {
+      staleDraft.value = null
+    }
+    if (
+      recovery.source === 'browser'
+      && !staleDraft.value
+      && loadedServerAutosave.value?.baseRevisionId === latestRevisionID()
+    ) {
+      const currentServerSnapshot = articleAutosaveSnapshot(loadedServerAutosave.value)
+      if (writeLocalDraft(currentServerSnapshot)) {
+        draftSavedAt.value = currentServerSnapshot.savedAt
+        draftSaveState.value = 'saved'
+      }
+    }
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, 'Could not discard the saved working draft.')
+  }
 }
 
-function applyLocalDraft(snapshot: ArticleDraftSnapshot) {
+async function applyDraftRecovery(recovery: ArticleDraftRecovery) {
   draftPersistenceEnabled = false
+  const snapshot = recovery.snapshot
   const { attributionEdited: savedAttributionEdited, ...fields } = snapshot.fields
   Object.assign(revisionForm, fields)
   attributionEdited.value = savedAttributionEdited
   draftSavedAt.value = snapshot.savedAt
-  nextTick(() => {
-    draftPersistenceEnabled = true
+  if (recovery.bodyDocument !== undefined) {
+    baseDraftHTML.value = effectiveDraftHTML()
+    baseDraftDocument.value = recovery.bodyDocument
+  }
+  await nextTick()
+  draftPersistenceEnabled = true
+}
+
+function articleAutosaveSnapshot(autosave: ArticleAutosave): ArticleDraftSnapshot {
+  const { bodyDocument: _bodyDocument, ...fields } = autosave.draft
+  return {
+    schemaVersion: 2,
+    projectId: autosave.projectId,
+    articleId: autosave.articleId,
+    baseRevisionId: autosave.baseRevisionId,
+    savedAt: autosave.updatedAt,
+    fields: {
+      ...fields,
+      contributors: fields.contributors.map(contributor => ({ ...contributor }))
+    }
+  }
+}
+
+function articleAutosaveRecovery(autosave: ArticleAutosave): ArticleDraftRecovery {
+  return {
+    snapshot: articleAutosaveSnapshot(autosave),
+    source: 'server',
+    reason: 'stale-base',
+    bodyDocument: autosave.draft.bodyDocument
+  }
+}
+
+function newestDraftRecovery(recoveries: ArticleDraftRecovery[]) {
+  return recoveries.reduce<ArticleDraftRecovery | null>((newest, candidate) => {
+    if (!newest) return candidate
+    const candidateTime = recoveryTimestamp(candidate.snapshot.savedAt)
+    const newestTime = recoveryTimestamp(newest.snapshot.savedAt)
+    if (candidateTime > newestTime) {
+      return candidate
+    }
+    if (candidateTime === newestTime) {
+      const fieldsMatch = JSON.stringify(candidate.snapshot.fields) === JSON.stringify(newest.snapshot.fields)
+      if (fieldsMatch && candidate.source === 'server') return candidate
+      if (!fieldsMatch && candidate.source === 'browser') return candidate
+    }
+    return newest
+  }, null)
+}
+
+function recoveryTimestamp(value: string) {
+  const timestamp = parseBackendUTC(value).getTime()
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
+async function reloadServerDraft() {
+  if (reloadingServerDraft.value) return
+  reloadingServerDraft.value = true
+  if (draftDirty) persistLocalDraft()
+  const browserBackup = readLocalDraft()
+  try {
+    const autosave = await fetchArticleAutosave()
+    if (!autosave) {
+      serverAutosaveVersion.value = 0
+      loadedServerAutosave.value = null
+      serverDraftSaveState.value = 'error'
+      return
+    }
+    loadedServerAutosave.value = autosave
+    serverAutosaveVersion.value = autosave.version
+    serverDraftDirty = false
+    const recovery = articleAutosaveRecovery(autosave)
+    if (autosave.stale || recovery.snapshot.baseRevisionId !== latestRevisionID()) {
+      staleDraft.value = recovery
+      serverDraftSaveState.value = 'idle'
+      return
+    }
+    await applyDraftRecovery(recovery)
+    serverDraftSavedAt.value = autosave.updatedAt
+    serverDraftSaveState.value = 'restored'
+    if (browserBackup && JSON.stringify(browserBackup.fields) !== JSON.stringify(recovery.snapshot.fields)) {
+      staleDraft.value = {
+        snapshot: browserBackup,
+        source: 'browser',
+        reason: 'version-conflict'
+      }
+    }
+  } catch (error) {
+    serverDraftSaveState.value = 'error'
+    errorMessage.value = normalizeAPIError(error, 'Could not reload the newer server draft.')
+  } finally {
+    reloadingServerDraft.value = false
+  }
+}
+
+async function deleteServerAutosave() {
+  const csrfToken = await getCSRFToken()
+  await $fetch(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/autosave`, {
+    method: 'DELETE',
+    credentials: 'include',
+    headers: { 'X-CSRF-Token': csrfToken }
   })
+  loadedServerAutosave.value = null
+  serverAutosaveVersion.value = 0
+  serverDraftSavedAt.value = ''
+  serverDraftSaveState.value = 'idle'
+  serverDraftDirty = false
+}
+
+function writeLocalDraft(snapshot: ArticleDraftSnapshot) {
+  try {
+    localStorage.setItem(localDraftKey(), JSON.stringify(snapshot))
+    return true
+  } catch {
+    return false
+  }
 }
 
 function readLocalDraft(): ArticleDraftSnapshot | null {

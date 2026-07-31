@@ -120,6 +120,10 @@ func TestCoreArticleAdministrationContractsAreImplemented(t *testing.T) {
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/revisions", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/revisions", "201"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/revisions/{revisionID}", "200"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/autosave", "200"},
+		{http.MethodHead, "/api/v1/projects/{projectID}/articles/{articleID}/autosave", "200"},
+		{http.MethodPut, "/api/v1/projects/{projectID}/articles/{articleID}/autosave", "200"},
+		{http.MethodDelete, "/api/v1/projects/{projectID}/articles/{articleID}/autosave", "204"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/revisions/{revisionID}/submit", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/revisions/{revisionID}/request-changes", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/revisions/{revisionID}/approve", "200"},
@@ -160,6 +164,52 @@ func TestCoreArticleAdministrationContractsAreImplemented(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestArticleAutosaveOpenAPIContractIsExplicit(t *testing.T) {
+	server, _ := newAdminTestServer(t)
+	path := "/api/v1/projects/{projectID}/articles/{articleID}/autosave"
+	item := server.openAPI.Paths[path]
+	if item == nil || item.Get == nil || item.Head == nil || item.Put == nil || item.Delete == nil {
+		t.Fatal("expected explicit autosave GET, HEAD, PUT and DELETE operations")
+	}
+
+	operation := item.Put
+	if operation.OperationID != "saveArticleAutosave" {
+		t.Fatalf("expected explicit autosave operation ID, got %q", operation.OperationID)
+	}
+	assertAdminSessionSecurity(t, operation)
+	assertRequiredParameter(t, operation, "projectID", "path")
+	assertRequiredParameter(t, operation, "articleID", "path")
+	assertRequiredParameter(t, operation, "X-CSRF-Token", "header")
+	if operation.RequestBody == nil || !operation.RequestBody.Required {
+		t.Fatal("expected required autosave request body")
+	}
+	mediaType := operation.RequestBody.Content["application/json"]
+	if mediaType == nil || mediaType.Schema == nil {
+		t.Fatal("expected autosave JSON request schema")
+	}
+	requestSchema := resolveContractSchema(t, server, mediaType.Schema)
+	for _, property := range []string{"baseRevisionId", "expectedVersion", "draft"} {
+		propertySchema := contractProperty(t, requestSchema, property)
+		if !containsString(requestSchema.Required, property) {
+			t.Fatalf("expected autosave property %q to be required", property)
+		}
+		if property == "expectedVersion" && propertySchema.Nullable {
+			t.Fatal("expected autosave expectedVersion to reject null")
+		}
+	}
+	if _, ok := operation.Responses["409"]; !ok {
+		t.Fatal("expected autosave contract to document version and base conflicts")
+	}
+	assertProblemResponseMediaTypes(t, server, operation, "400", "401", "403", "404", "409", "500")
+
+	deleteOperation := item.Delete
+	assertRequiredParameter(t, deleteOperation, "X-CSRF-Token", "header")
+	if deleteOperation.RequestBody != nil {
+		t.Fatal("autosave deletion must not require a request body")
+	}
+	assertAdminSessionSecurity(t, deleteOperation)
 }
 
 func TestAdminArticleListAndRestoreContractsAreExplicit(t *testing.T) {
