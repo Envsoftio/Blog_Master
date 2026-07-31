@@ -10,6 +10,7 @@ import (
 	"html"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,6 +73,7 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/projects/:projectID/articles", s.requireAdminSession, s.requireAdminCSRF, s.createArticle)
 	api.Get("/projects/:projectID/articles/:articleID", s.requireAdminSession, s.getArticle)
 	api.Delete("/projects/:projectID/articles/:articleID", s.requireAdminSession, s.requireAdminCSRF, s.archiveArticle)
+	api.Post("/projects/:projectID/articles/:articleID/restore", s.requireAdminSession, s.requireAdminCSRF, s.restoreArticle)
 	api.Get("/projects/:projectID/articles/:articleID/revisions", s.requireAdminSession, s.listRevisionHistory)
 	api.Post("/projects/:projectID/articles/:articleID/revisions", s.requireAdminSession, s.requireAdminCSRF, s.createRevision)
 	api.Get("/projects/:projectID/articles/:articleID/revisions/:revisionID", s.requireAdminSession, s.getRevisionDetail)
@@ -984,7 +986,27 @@ func (s *Server) listArticles(c fiber.Ctx) error {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
-	articles, err := s.store.ListArticlesForUser(c.Context(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
+	includeArchived := false
+	if raw := strings.TrimSpace(c.Query("includeArchived")); raw != "" {
+		var err error
+		includeArchived, err = strconv.ParseBool(raw)
+		if err != nil {
+			return problem(c, fiber.StatusBadRequest, "Invalid request", "includeArchived must be true or false")
+		}
+	}
+	articles, err := s.store.ListArticlesForUser(
+		c.Context(),
+		user.ID,
+		c.Params("projectID"),
+		c.Query("cursor"),
+		limit+1,
+		store.ArticleListFilter{
+			Search:           c.Query("q"),
+			EditorialState:   c.Query("editorialState"),
+			PublicationState: c.Query("publicationState"),
+			IncludeArchived:  includeArchived,
+		},
+	)
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list articles")
 	}
@@ -1036,6 +1058,18 @@ func (s *Server) archiveArticle(c fiber.Ctx) error {
 		return s.adminMutationError(c, err, "Could not archive article")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (s *Server) restoreArticle(c fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	article, err := s.store.RestoreArticle(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"))
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not restore article")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
 }
 
 func (s *Server) listRevisionHistory(c fiber.Ctx) error {

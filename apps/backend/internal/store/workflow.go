@@ -115,8 +115,16 @@ type AdminArticle struct {
 	ScheduledForUTC  string         `json:"scheduledForUtc,omitempty"`
 	PublishedAt      string         `json:"publishedAt,omitempty"`
 	CanonicalURL     string         `json:"canonicalUrl,omitempty"`
+	ArchivedAt       string         `json:"archivedAt,omitempty"`
 	LatestRevision   *AdminRevision `json:"latestRevision,omitempty"`
 	CreatedAt        string         `json:"createdAt"`
+}
+
+type ArticleListFilter struct {
+	Search           string
+	EditorialState   string
+	PublicationState string
+	IncludeArchived  bool
 }
 
 type ArticleInput struct {
@@ -208,10 +216,15 @@ type workflowProject struct {
 	DefaultLocale string
 }
 
-func (s *Store) ListArticlesForUser(ctx context.Context, userID, projectID, cursor string, limit int) ([]AdminArticle, error) {
+func (s *Store) ListArticlesForUser(ctx context.Context, userID, projectID, cursor string, limit int, filter ArticleListFilter) ([]AdminArticle, error) {
 	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
 		return nil, err
 	}
+	filter, err := normalizeArticleListFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	searchPattern := "%" + strings.ToLower(filter.Search) + "%"
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+adminArticleColumns+`
 		FROM content_items item
@@ -229,11 +242,23 @@ func (s *Store) ListArticlesForUser(ctx context.Context, userID, projectID, curs
 		 AND publication.content_id = item.id
 		 AND publication.locale = revision.locale
 		WHERE item.project_id = ?
-		  AND item.archived_at IS NULL
+		  AND (? = 1 OR item.archived_at IS NULL)
 		  AND (? = '' OR item.id > ?)
+		  AND (? = '' OR revision.editorial_state = ?)
+		  AND (? = '' OR COALESCE(publication.publication_state, 'unpublished') = ?)
+		  AND (
+		    ? = ''
+		    OR LOWER(revision.title) LIKE ? ESCAPE '\'
+		    OR LOWER(COALESCE(publication.slug, '')) LIKE ? ESCAPE '\'
+		    OR LOWER(item.article_type) LIKE ? ESCAPE '\'
+		  )
 		ORDER BY item.id
 		LIMIT ?
-	`, projectID, cursor, cursor, limit)
+	`, projectID, boolToInt(filter.IncludeArchived), cursor, cursor,
+		filter.EditorialState, filter.EditorialState,
+		filter.PublicationState, filter.PublicationState,
+		filter.Search, searchPattern, searchPattern, searchPattern,
+		limit)
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +273,36 @@ func (s *Store) ListArticlesForUser(ctx context.Context, userID, projectID, curs
 		articles = append(articles, article)
 	}
 	return articles, rows.Err()
+}
+
+func normalizeArticleListFilter(filter ArticleListFilter) (ArticleListFilter, error) {
+	filter.Search = strings.TrimSpace(filter.Search)
+	filter.EditorialState = strings.TrimSpace(filter.EditorialState)
+	filter.PublicationState = strings.TrimSpace(filter.PublicationState)
+	if len([]rune(filter.Search)) > 100 {
+		return ArticleListFilter{}, fmt.Errorf("%w: article search cannot exceed 100 characters", ErrValidation)
+	}
+	if filter.Search != "" {
+		filter.Search = strings.NewReplacer(
+			`\`, `\\`,
+			`%`, `\%`,
+			`_`, `\_`,
+		).Replace(strings.ToLower(filter.Search))
+	}
+	switch filter.EditorialState {
+	case "", "draft", "in_review", "changes_requested", "approved":
+	default:
+		return ArticleListFilter{}, fmt.Errorf("%w: unsupported editorialState", ErrValidation)
+	}
+	switch filter.PublicationState {
+	case "", "unpublished", "scheduled", "published", "archived":
+	default:
+		return ArticleListFilter{}, fmt.Errorf("%w: unsupported publicationState", ErrValidation)
+	}
+	if filter.PublicationState == "archived" {
+		filter.IncludeArchived = true
+	}
+	return filter, nil
 }
 
 func (s *Store) GetArticleForUser(ctx context.Context, userID, projectID, articleID string) (AdminArticle, error) {
@@ -945,6 +1000,78 @@ func (s *Store) ArchiveArticle(ctx context.Context, actorUserID, projectID, arti
 	return tx.Commit()
 }
 
+func (s *Store) RestoreArticle(ctx context.Context, actorUserID, projectID, articleID string) (AdminArticle, error) {
+	if err := s.requireContentPublish(ctx, actorUserID, projectID); err != nil {
+		return AdminArticle{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	defer tx.Rollback()
+
+	project, err := loadWorkflowProject(ctx, tx, projectID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if project.Status != "active" {
+		return AdminArticle{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	var publicationID, revisionID, canonicalURL string
+	var publicationVersion int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT publication.id, COALESCE(publication.published_revision_id, ''),
+		       publication.canonical_url, publication.publication_version
+		FROM content_items item
+		JOIN project_publications publication
+		  ON publication.project_id = item.project_id
+		 AND publication.content_id = item.id
+		WHERE item.project_id = ? AND item.id = ? AND item.archived_at IS NOT NULL
+		  AND publication.publication_state = 'archived'
+	`, projectID, articleID).Scan(&publicationID, &revisionID, &canonicalURL, &publicationVersion); err != nil {
+		return AdminArticle{}, err
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE content_items
+		SET archived_at = NULL
+		WHERE project_id = ? AND id = ? AND archived_at IS NOT NULL
+	`, projectID, articleID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if affected != 1 {
+		return AdminArticle{}, sql.ErrNoRows
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE project_publications
+		SET publication_state = 'unpublished', scheduled_for_utc = NULL,
+		    retired_at = NULL, publication_version = publication_version + 1,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND content_id = ? AND publication_state = 'archived'
+	`, projectID, articleID); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := insertPublicationOutbox(ctx, tx, projectID, articleID, revisionID, "content.restored", canonicalURL, publicationVersion+1); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "content.restore", "content", articleID, "success", map[string]string{
+		"publication_id": publicationID,
+	}); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminArticle{}, err
+	}
+	return s.GetArticleForUser(ctx, actorUserID, projectID, articleID)
+}
+
 func (s *Store) GetRevisionForUser(ctx context.Context, userID, projectID, revisionID string) (AdminRevision, error) {
 	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
 		return AdminRevision{}, err
@@ -1547,6 +1674,7 @@ const adminArticleColumns = `
 	COALESCE(publication.scheduled_for_utc, ''),
 	COALESCE(publication.first_published_at, ''),
 	COALESCE(publication.canonical_url, ''),
+	COALESCE(item.archived_at, ''),
 	revision.id, revision.revision_number, revision.title,
 	COALESCE(revision.deck, ''), COALESCE(revision.excerpt, ''),
 	COALESCE(revision.short_answer, ''), revision.locale,
@@ -1572,6 +1700,7 @@ func scanAdminArticle(row rowScanner) (AdminArticle, error) {
 		&article.ScheduledForUTC,
 		&article.PublishedAt,
 		&article.CanonicalURL,
+		&article.ArchivedAt,
 		&revision.ID,
 		&revision.RevisionNumber,
 		&revision.Title,

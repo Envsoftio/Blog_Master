@@ -2781,6 +2781,149 @@ func TestDeleteArticleArchivesAndRemovesPublishedContent(t *testing.T) {
 	}
 }
 
+func TestArticleListFiltersAndArchivedArticleRestore(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	owner := seedAndLogin(t, server, db, "article-filter-owner@example.test", "correct horse battery staple")
+	writer := seedAndLogin(t, server, db, "article-filter-writer@example.test", "another correct horse battery staple")
+	project := createTestProject(t, server, owner, `{"slug":"article-filter","name":"Article Filter","primaryDomain":"example.test"}`)
+	category := createTestCategory(t, server, owner, project.ID, `{"slug":"guides","name":"Guides"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, writer.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	archived := createTestArticle(t, server, owner, project.ID, `{
+		"articleType":"guide",
+		"title":"Needle Archive Guide",
+		"slug":"needle-archive-guide",
+		"primaryCategoryId":"`+category.ID+`",
+		"html":"<p>Archived body.</p>"
+	}`)
+	draft := createTestArticle(t, server, owner, project.ID, `{
+		"articleType":"tutorial",
+		"title":"Visible Draft",
+		"slug":"visible-draft",
+		"primaryCategoryId":"`+category.ID+`",
+		"html":"<p>Draft body.</p>"
+	}`)
+	secondDraft := createTestArticle(t, server, owner, project.ID, `{
+		"articleType":"tutorial",
+		"title":"Another Visible Draft",
+		"slug":"another-visible-draft",
+		"primaryCategoryId":"`+category.ID+`",
+		"html":"<p>Another draft body.</p>"
+	}`)
+	approveTestRevision(t, server, owner, project.ID, archived.LatestRevision.ID)
+	publishTestArticle(t, server, owner, project.ID, archived.ID, archived.LatestRevision.ID, archived.Slug)
+	archiveResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/articles/"+archived.ID,
+		``,
+		owner,
+	))
+	if archiveResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected archive 204, got %d: %s", archiveResponse.StatusCode, readBody(t, archiveResponse))
+	}
+
+	filteredRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles?q=needle&publicationState=archived&includeArchived=true",
+		nil,
+	)
+	addCookies(filteredRequest, owner.cookies)
+	filteredResponse := mustTest(t, server, filteredRequest)
+	if filteredResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected filtered article list 200, got %d: %s", filteredResponse.StatusCode, readBody(t, filteredResponse))
+	}
+	var filtered ListEnvelope[store.AdminArticle]
+	decodeJSONResponse(t, filteredResponse, &filtered)
+	if len(filtered.Data) != 1 || filtered.Data[0].ID != archived.ID || filtered.Data[0].ArchivedAt == "" {
+		t.Fatalf("expected only the archived matching article, got %#v", filtered.Data)
+	}
+
+	draftRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles?editorialState=draft&publicationState=unpublished&limit=1",
+		nil,
+	)
+	addCookies(draftRequest, owner.cookies)
+	draftResponse := mustTest(t, server, draftRequest)
+	var drafts ListEnvelope[store.AdminArticle]
+	decodeJSONResponse(t, draftResponse, &drafts)
+	if len(drafts.Data) != 1 || drafts.Meta.NextCursor == "" {
+		t.Fatalf("expected the first filtered page and a cursor, got %#v", drafts)
+	}
+	secondPageRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles?editorialState=draft&publicationState=unpublished&limit=1&cursor="+url.QueryEscape(drafts.Meta.NextCursor),
+		nil,
+	)
+	addCookies(secondPageRequest, owner.cookies)
+	secondPageResponse := mustTest(t, server, secondPageRequest)
+	var secondPage ListEnvelope[store.AdminArticle]
+	decodeJSONResponse(t, secondPageResponse, &secondPage)
+	if len(secondPage.Data) != 1 || secondPage.Data[0].ID == drafts.Data[0].ID {
+		t.Fatalf("expected a distinct second filtered page, got first=%#v second=%#v", drafts.Data, secondPage.Data)
+	}
+	seenDrafts := map[string]bool{drafts.Data[0].ID: true, secondPage.Data[0].ID: true}
+	if !seenDrafts[draft.ID] || !seenDrafts[secondDraft.ID] {
+		t.Fatalf("expected both draft articles across pages, got %#v", seenDrafts)
+	}
+
+	literalWildcardRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/articles?q=%25", nil)
+	addCookies(literalWildcardRequest, owner.cookies)
+	literalWildcardResponse := mustTest(t, server, literalWildcardRequest)
+	var literalWildcard ListEnvelope[store.AdminArticle]
+	decodeJSONResponse(t, literalWildcardResponse, &literalWildcard)
+	if len(literalWildcard.Data) != 0 {
+		t.Fatalf("expected percent to be treated as a literal search character, got %#v", literalWildcard.Data)
+	}
+
+	invalidFilterRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+project.ID+"/articles?editorialState=unknown",
+		nil,
+	)
+	addCookies(invalidFilterRequest, owner.cookies)
+	if response := mustTest(t, server, invalidFilterRequest); response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected unsupported article filter 400, got %d: %s", response.StatusCode, readBody(t, response))
+	}
+
+	restorePath := "/api/v1/projects/" + project.ID + "/articles/" + archived.ID + "/restore"
+	writerRestore := mustTest(t, server, newMemberMutationRequest(http.MethodPost, restorePath, `{}`, writer))
+	if writerRestore.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected writer restore denial, got %d: %s", writerRestore.StatusCode, readBody(t, writerRestore))
+	}
+	ownerRestore := mustTest(t, server, newMemberMutationRequest(http.MethodPost, restorePath, `{}`, owner))
+	if ownerRestore.StatusCode != http.StatusOK {
+		t.Fatalf("expected owner restore 200, got %d: %s", ownerRestore.StatusCode, readBody(t, ownerRestore))
+	}
+	var restored Envelope[store.AdminArticle]
+	decodeJSONResponse(t, ownerRestore, &restored)
+	if restored.Data.ID != archived.ID || restored.Data.ArchivedAt != "" || restored.Data.PublicationState != "unpublished" {
+		t.Fatalf("expected restored unpublished article, got %#v", restored.Data)
+	}
+
+	publicRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts/"+archived.Slug+"?locale=en", nil)
+	publicRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	if response := mustTest(t, server, publicRequest); response.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected restore to remain unpublished, got %d: %s", response.StatusCode, readBody(t, response))
+	}
+
+	var restoreAudits, restoreEvents int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM audit_events WHERE project_id = ? AND target_id = ? AND action = 'content.restore'`, project.ID, archived.ID).Scan(&restoreAudits); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(1) FROM outbox_events WHERE project_id = ? AND aggregate_id = ? AND event_type = 'content.restored'`, project.ID, archived.ID).Scan(&restoreEvents); err != nil {
+		t.Fatal(err)
+	}
+	if restoreAudits != 1 || restoreEvents != 1 {
+		t.Fatalf("expected one restore audit and event, got audits=%d events=%d", restoreAudits, restoreEvents)
+	}
+}
+
 func TestArticleRollbackRestoresApprovedRevision(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")

@@ -45,6 +45,7 @@ export type AdminUser = {
 
 export type AdminRevision = {
   id: string
+  projectId?: string
   articleId: string
   revisionNumber: number
   title: string
@@ -70,8 +71,36 @@ export type AdminArticle = {
   scheduledForUtc?: string
   publishedAt?: string
   canonicalUrl?: string
+  archivedAt?: string
   latestRevision?: AdminRevision
   createdAt: string
+}
+
+export type AdminRevisionSummary = AdminRevision & {
+  baseRevisionId?: string
+  publishedLocales: string[]
+}
+
+export type AdminRevisionDetail = AdminRevisionSummary & {
+  alternateTitle?: string
+  bodyDocument: unknown
+  tableOfContents: unknown
+  authorSnapshot: unknown
+  contributorSnapshot: unknown
+  taxonomySnapshot: unknown
+  sourceSnapshot: unknown
+  claimSnapshot: unknown
+  seoSnapshot: unknown
+  socialSnapshot: unknown
+  mediaSnapshot: unknown
+  disclosureSnapshot: unknown
+  correctionSummary: unknown
+  sanitizedHtml: string
+  plainText: string
+  markdownExport: string
+  wordCount: number
+  readingTimeSeconds: number
+  changeSummary?: string
 }
 
 export type TaxonomyTerm = {
@@ -558,6 +587,37 @@ export type ArticleCreatePayload = {
   seo?: SEOInputPayload
 }
 
+export type ArticleRevisionPayload = {
+  baseRevisionId: string
+  title: string
+  primaryCategoryId?: string
+  deck?: string
+  excerpt?: string
+  shortAnswer?: string
+  bodyDocument?: unknown
+  html?: string
+  seo?: SEOInputPayload
+}
+
+export type ArticleCopyPayload = {
+  destinationProjectId: string
+  sourceRevisionId: string
+  primaryCategoryId: string
+  slug: string
+  locale?: string
+  canonicalDecision: 'canonical_original' | 'material_adaptation'
+  canonicalOriginalUrl?: string
+}
+
+export type ArticleListOptions = {
+  cursor?: string
+  limit?: number
+  search?: string
+  editorialState?: '' | 'draft' | 'in_review' | 'changes_requested' | 'approved'
+  publicationState?: '' | 'unpublished' | 'scheduled' | 'published' | 'archived'
+  includeArchived?: boolean
+}
+
 export type SEOInputPayload = {
   title?: string
   description?: string
@@ -699,8 +759,10 @@ export function useAdminApi() {
     return await request<APIEnvelope<ProjectDeletionImpact>>(`/api/v1/projects/${projectID}/deletion-impact`)
   }
 
-  async function listMembers(projectID: string) {
-    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID}/members`))
+  async function listMembers(projectID: string, cursor = '', limit = 50) {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID}/members`, {
+      query: { limit, ...(cursor ? { cursor } : {}) }
+    }))
   }
 
   async function inviteMember(projectID: string, payload: { email: string, role: string, expiresAt?: string }) {
@@ -798,9 +860,17 @@ export function useAdminApi() {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminSeries>>(`/api/v1/projects/${projectID}/series`))
   }
 
-  async function listArticles(projectID: string, limit = 100) {
+  async function listArticles(projectID: string, options: number | ArticleListOptions = 100) {
+    const normalized = typeof options === 'number' ? { limit: options } : options
     return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminArticle>>(`/api/v1/projects/${projectID}/articles`, {
-      query: { limit }
+      query: {
+        limit: normalized.limit || 50,
+        ...(normalized.cursor ? { cursor: normalized.cursor } : {}),
+        ...(normalized.search ? { q: normalized.search } : {}),
+        ...(normalized.editorialState ? { editorialState: normalized.editorialState } : {}),
+        ...(normalized.publicationState ? { publicationState: normalized.publicationState } : {}),
+        ...(normalized.includeArchived ? { includeArchived: true } : {})
+      }
     }))
   }
 
@@ -821,16 +891,35 @@ export function useAdminApi() {
     }))
   }
 
-  async function listRevisions(projectID: string, articleID: string, limit = 100) {
-    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminRevision>>(`/api/v1/projects/${projectID}/articles/${articleID}/revisions`, {
-      query: { limit }
+  async function listRevisions(projectID: string, articleID: string, options: number | { cursor?: string, limit?: number } = 100) {
+    const normalized = typeof options === 'number' ? { limit: options } : options
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminRevisionSummary>>(`/api/v1/projects/${projectID}/articles/${articleID}/revisions`, {
+      query: { limit: normalized.limit || 25, ...(normalized.cursor ? { cursor: normalized.cursor } : {}) }
+    }))
+  }
+
+  async function getRevision(projectID: string, articleID: string, revisionID: string) {
+    return await request<APIEnvelope<AdminRevisionDetail>>(`/api/v1/projects/${projectID}/articles/${articleID}/revisions/${revisionID}`)
+  }
+
+  async function createRevision(projectID: string, articleID: string, payload: ArticleRevisionPayload) {
+    return await request<APIEnvelope<AdminRevision>>(`/api/v1/projects/${projectID}/articles/${articleID}/revisions`, await withCSRF({
+      method: 'POST',
+      body: payload
+    }))
+  }
+
+  async function copyArticle(projectID: string, articleID: string, payload: ArticleCopyPayload) {
+    return await request<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID}/articles/${articleID}/copy-to-project`, await withCSRF({
+      method: 'POST',
+      body: payload
     }))
   }
 
   async function articleAction(
     projectID: string,
     articleID: string,
-    action: 'publish' | 'schedule' | 'unpublish' | 'rollback',
+    action: 'publish' | 'schedule' | 'unpublish' | 'rollback' | 'restore',
     body: Record<string, unknown> = {}
   ) {
     return await request<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID}/articles/${articleID}/${action}`, await withCSRF({
@@ -1158,6 +1247,9 @@ export function useAdminApi() {
     getArticle,
     deleteArticle,
     listRevisions,
+    getRevision,
+    createRevision,
+    copyArticle,
     articleAction,
     revisionAction,
     listComments,

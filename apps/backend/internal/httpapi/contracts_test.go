@@ -52,6 +52,7 @@ func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
 		{http.MethodGet, "/api/v1/projects/{projectID}/ai/runs", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/quality-checks", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/review-assignees", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/restore", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/assignments", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/assignments", "201"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/assignments/{assignmentID}/complete", "200"},
@@ -104,6 +105,95 @@ func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCoreArticleAdministrationContractsAreImplemented(t *testing.T) {
+	server, _ := newAdminTestServer(t)
+	routes := []struct {
+		method, path, success string
+	}{
+		{http.MethodGet, "/api/v1/projects/{projectID}/articles", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles", "201"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}", "200"},
+		{http.MethodDelete, "/api/v1/projects/{projectID}/articles/{articleID}", "204"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/restore", "200"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/revisions", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/revisions", "201"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/revisions/{revisionID}", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/revisions/{revisionID}/submit", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/revisions/{revisionID}/request-changes", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/revisions/{revisionID}/approve", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/publish", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/schedule", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/unpublish", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/rollback", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/copy-to-project", "201"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/comments", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/comments", "201"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/comments/{commentID}/resolve", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/comments/{commentID}/reopen", "200"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/assignments", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/assignments", "201"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/assignments/{assignmentID}/complete", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/assignments/{assignmentID}/cancel", "200"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "201"},
+		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "200"},
+		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "201"},
+	}
+
+	for _, route := range routes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			item := server.openAPI.Paths[route.path]
+			if item == nil {
+				t.Fatal("article API route is missing from OpenAPI")
+			}
+			operation := operationForMethod(item, route.method)
+			if operation == nil {
+				t.Fatal("article API operation is missing from OpenAPI")
+			}
+			if _, unfinished := operation.Responses["501"]; unfinished {
+				t.Fatal("article API operation is still marked unimplemented")
+			}
+			if _, ok := operation.Responses[route.success]; !ok {
+				t.Fatalf("expected success response %s", route.success)
+			}
+		})
+	}
+}
+
+func TestAdminArticleListAndRestoreContractsAreExplicit(t *testing.T) {
+	server, _ := newAdminTestServer(t)
+	listOperation := operationForMethod(server.openAPI.Paths["/api/v1/projects/{projectID}/articles"], http.MethodGet)
+	if listOperation == nil || listOperation.OperationID != "listAdminArticles" {
+		t.Fatal("expected the explicit admin article-list operation")
+	}
+	assertRequiredParameter(t, listOperation, "projectID", "path")
+	for _, parameter := range []string{"cursor", "limit", "q", "editorialState", "publicationState", "includeArchived"} {
+		operationParameter(t, listOperation, parameter, "query")
+	}
+	if query := operationParameter(t, listOperation, "q", "query"); query.Schema == nil || query.Schema.MaxLength == nil || *query.Schema.MaxLength != 100 {
+		t.Fatalf("expected a 100-character article search limit, got %#v", query.Schema)
+	}
+	if includeArchived := operationParameter(t, listOperation, "includeArchived", "query"); includeArchived.Schema == nil || includeArchived.Schema.Type != "boolean" {
+		t.Fatalf("expected includeArchived to be boolean, got %#v", includeArchived.Schema)
+	}
+	assertAdminSessionSecurity(t, listOperation)
+
+	restoreOperation := operationForMethod(server.openAPI.Paths["/api/v1/projects/{projectID}/articles/{articleID}/restore"], http.MethodPost)
+	if restoreOperation == nil || restoreOperation.OperationID != "restoreArchivedArticle" {
+		t.Fatal("expected the explicit archived-article restore operation")
+	}
+	assertRequiredParameter(t, restoreOperation, "projectID", "path")
+	assertRequiredParameter(t, restoreOperation, "articleID", "path")
+	assertRequiredParameter(t, restoreOperation, "X-CSRF-Token", "header")
+	if restoreOperation.RequestBody != nil {
+		t.Fatal("article restore must not require a request body")
+	}
+	if response := restoreOperation.Responses["200"]; response == nil || response.Content["application/json"] == nil || response.Content["application/json"].Schema == nil {
+		t.Fatal("expected the restore response schema")
+	}
+	assertAdminSessionSecurity(t, restoreOperation)
 }
 
 func TestAdminOpenAPIDoesNotAdvertiseScaffoldedRoutes(t *testing.T) {

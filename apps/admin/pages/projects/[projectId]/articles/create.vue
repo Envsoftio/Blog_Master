@@ -242,7 +242,7 @@
               </dl>
             </section>
 
-            <form class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="createCategory">
+            <form v-if="canManageTaxonomy" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="createCategory">
               <div class="flex items-start gap-3">
                 <FolderTree class="mt-1 h-4 w-4 text-[#8a5b00]" />
                 <div>
@@ -378,13 +378,17 @@ const categoryForm = reactive({
 })
 
 const categoryReady = computed(() => categories.value.length > 0 && Boolean(articleForm.primaryCategoryId))
+const projectIsActive = computed(() => project.value?.status === 'active')
+const canWriteArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'writer'].includes(project.value?.role || ''))
+const canManageTaxonomy = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
 const canCreateArticle = computed(() => Boolean(
-  articleForm.title.trim()
+  canWriteArticles.value
+  && articleForm.title.trim()
   && articleForm.slug.trim()
   && articleForm.locale.trim()
   && articleForm.primaryCategoryId
 ))
-const canCreateCategory = computed(() => Boolean(categoryForm.name.trim() && categoryForm.slug.trim()))
+const canCreateCategory = computed(() => canManageTaxonomy.value && Boolean(categoryForm.name.trim() && categoryForm.slug.trim()))
 const htmlForSubmission = computed(() => articleForm.html.trim() || `<p>${escapeHTML(articleForm.title || 'Untitled draft')}</p>`)
 const plainText = computed(() => htmlToPlainText(htmlForSubmission.value))
 const wordCount = computed(() => plainText.value ? plainText.value.split(/\s+/).length : 0)

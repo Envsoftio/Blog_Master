@@ -135,7 +135,7 @@
 
               <div class="mt-5 flex flex-wrap gap-2">
                 <button
-                  v-if="article.editorialState === 'draft' || article.editorialState === 'changes_requested'"
+                  v-if="canWriteArticles && (article.editorialState === 'draft' || article.editorialState === 'changes_requested')"
                   class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
                   type="button"
                   :disabled="actionPending === 'submit'"
@@ -145,7 +145,7 @@
                   Submit
                 </button>
                 <button
-                  v-if="article.editorialState === 'in_review'"
+                  v-if="canReviewArticles && article.editorialState === 'in_review'"
                   class="inline-flex items-center gap-2 rounded-md border border-[#d6bd7a] px-3 py-2 text-sm font-medium text-[#7a4f00] hover:bg-[#fff7e4] disabled:opacity-60 dark:border-[#6b572e] dark:text-[#ffd98a] dark:hover:bg-[#2b2415]"
                   type="button"
                   :disabled="actionPending === 'request-changes'"
@@ -155,7 +155,7 @@
                   Request changes
                 </button>
                 <button
-                  v-if="article.editorialState !== 'approved'"
+                  v-if="canReviewArticles && article.editorialState === 'in_review'"
                   class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
                   type="button"
                   :disabled="actionPending === 'approve'"
@@ -562,7 +562,7 @@
           </div>
 
           <div class="space-y-5">
-            <form class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="createRevision">
+            <form v-if="canWriteArticles" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="createRevision">
               <div class="flex items-start gap-3">
                 <FilePenLine class="mt-1 h-4 w-4 text-[#3162a3]" />
                 <div class="min-w-0 flex-1">
@@ -744,7 +744,7 @@
               </button>
             </form>
 
-            <form class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="publishArticle">
+            <form v-if="canPublishArticles" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="publishArticle">
               <div class="flex items-start gap-3">
                 <UploadCloud class="mt-1 h-4 w-4 text-[#165a4a]" />
                 <div>
@@ -782,7 +782,7 @@
               </div>
             </form>
 
-            <form class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="scheduleArticle">
+            <form v-if="canPublishArticles" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="scheduleArticle">
               <div class="flex items-start gap-3">
                 <CalendarClock class="mt-1 h-4 w-4 text-[#8a5b00]" />
                 <div>
@@ -806,7 +806,7 @@
               </button>
             </form>
 
-            <form class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="rollbackArticle">
+            <form v-if="canPublishArticles" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="rollbackArticle">
               <div class="flex items-start gap-3">
                 <History class="mt-1 h-4 w-4 text-[#6b5797]" />
                 <div>
@@ -834,7 +834,7 @@
               </button>
             </form>
 
-            <section class="space-y-4 rounded-lg border border-[#d9b7aa] bg-white p-5 shadow-sm dark:border-[#6d352f] dark:bg-[#202522]">
+            <section v-if="canPublishArticles" class="space-y-4 rounded-lg border border-[#d9b7aa] bg-white p-5 shadow-sm dark:border-[#6d352f] dark:bg-[#202522]">
               <div class="flex items-start gap-3">
                 <Trash2 class="mt-1 h-4 w-4 text-[#9b2d23] dark:text-[#ffc4bd]" />
                 <div>
@@ -1165,7 +1165,11 @@ const commentForm = reactive({
 })
 
 const scheduleDraft = ref('')
-const canCreateRevision = computed(() => Boolean(revisionForm.title.trim()))
+const projectIsActive = computed(() => project.value?.status === 'active')
+const canWriteArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'writer'].includes(project.value?.role || ''))
+const canReviewArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'reviewer'].includes(project.value?.role || ''))
+const canPublishArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
+const canCreateRevision = computed(() => canWriteArticles.value && Boolean(revisionForm.title.trim()))
 const copyDestinations = computed(() => projects.value.filter(candidate =>
   candidate.id !== projectID.value
   && candidate.status === 'active'
@@ -1191,7 +1195,7 @@ const assignmentEligibleMembers = computed(() => members.value.filter(member =>
   && assignmentTypeAllowedForRole(assignmentForm.assignmentType, member.role)
 ))
 const canManageAssignments = computed(() => ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
-const canArchiveArticle = computed(() => ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
+const canArchiveArticle = computed(() => canPublishArticles.value)
 const canCreateAssignment = computed(() => Boolean(
   assignmentForm.assignedTo
   && assignmentEligibleMembers.value.some(member => member.userId === assignmentForm.assignedTo)
@@ -1199,7 +1203,8 @@ const canCreateAssignment = computed(() => Boolean(
 const canRollback = computed(() => {
   const selected = revisions.value.find(revision => revision.id === rollbackForm.revisionId)
   return Boolean(
-    selected
+    canPublishArticles.value
+    && selected
     && selected.editorialState === 'approved'
     && article.value?.publicationState === 'published'
     && !isCurrentPublication(selected)

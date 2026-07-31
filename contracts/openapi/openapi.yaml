@@ -3,6 +3,8 @@ components:
     AdminArticle:
       additionalProperties: false
       properties:
+        archivedAt:
+          type: string
         articleType:
           type: string
         canonicalPolicy:
@@ -406,6 +408,28 @@ components:
         - status
         - service
         - version
+      type: object
+    ListEnvelopeAdminArticle:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListEnvelopeAdminArticle.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          items:
+            $ref: "#/components/schemas/AdminArticle"
+          type:
+            - array
+            - "null"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+      required:
+        - data
+        - meta
       type: object
     ListEnvelopeAdminRevisionSummary:
       additionalProperties: false
@@ -1415,41 +1439,168 @@ paths:
         - Administration
   /api/v1/projects/{projectID}/articles:
     get:
-      description: Administrative API route.
-      operationId: get_api_v1_projects_projectid_articles
+      description: Returns a project-scoped, cursor-paginated article list with allowlisted server-side filters.
+      operationId: listAdminArticles
+      parameters:
+        - description: Project identifier
+          in: path
+          name: projectID
+          required: true
+          schema:
+            type: string
+        - description: Opaque article-list cursor
+          in: query
+          name: cursor
+          schema:
+            type: string
+        - description: Page size, up to 100
+          in: query
+          name: limit
+          schema:
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: Case-insensitive title, slug, or article-type search; wildcard characters are treated literally
+          in: query
+          name: q
+          schema:
+            maxLength: 100
+            type: string
+        - description: Exact latest-revision editorial state
+          in: query
+          name: editorialState
+          schema:
+            enum:
+              - draft
+              - in_review
+              - changes_requested
+              - approved
+            type: string
+        - description: Exact publication state; archived automatically includes archived records
+          in: query
+          name: publicationState
+          schema:
+            enum:
+              - unpublished
+              - scheduled
+              - published
+              - archived
+            type: string
+        - description: Include archived articles alongside active records
+          in: query
+          name: includeArchived
+          schema:
+            type: boolean
       responses:
         "200":
-          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListEnvelopeAdminArticle"
+          description: Article page
         "400":
-          description: Invalid request
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Invalid filter or pagination input
         "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Authentication required
         "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Insufficient permission
         "404":
-          description: Resource not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Project not found
         "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Internal server error
-      summary: GET /api/v1/projects/{projectID}/articles
+      security:
+        - adminSession: []
+      summary: List project articles
       tags:
         - Administration
     head:
-      description: Administrative API route.
-      operationId: head_api_v1_projects_projectid_articles
+      operationId: headAdminArticles
+      parameters:
+        - description: Project identifier
+          in: path
+          name: projectID
+          required: true
+          schema:
+            type: string
+        - description: Opaque article-list cursor
+          in: query
+          name: cursor
+          schema:
+            type: string
+        - description: Page size, up to 100
+          in: query
+          name: limit
+          schema:
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: Case-insensitive title, slug, or article-type search; wildcard characters are treated literally
+          in: query
+          name: q
+          schema:
+            maxLength: 100
+            type: string
+        - description: Exact latest-revision editorial state
+          in: query
+          name: editorialState
+          schema:
+            enum:
+              - draft
+              - in_review
+              - changes_requested
+              - approved
+            type: string
+        - description: Exact publication state; archived automatically includes archived records
+          in: query
+          name: publicationState
+          schema:
+            enum:
+              - unpublished
+              - scheduled
+              - published
+              - archived
+            type: string
+        - description: Include archived articles alongside active records
+          in: query
+          name: includeArchived
+          schema:
+            type: boolean
       responses:
         "200":
-          description: Successful response without a body
+          description: The article list is available
         "400":
-          description: Invalid request
+          description: Invalid filter or pagination input
         "401":
           description: Authentication required
         "403":
           description: Insufficient permission
         "404":
-          description: Resource not found
+          description: Project not found
         "500":
           description: Internal server error
-      summary: HEAD /api/v1/projects/{projectID}/articles
+      security:
+        - adminSession: []
+      summary: Check the project article list
       tags:
         - Administration
     post:
@@ -1857,6 +2008,71 @@ paths:
         "500":
           description: Internal server error
       summary: POST /api/v1/projects/{projectID}/articles/{articleID}/publish
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/articles/{articleID}/restore:
+    post:
+      description: Restores retained content and revisions without republishing it. The publication state becomes unpublished.
+      operationId: restoreArchivedArticle
+      parameters:
+        - description: Project identifier
+          in: path
+          name: projectID
+          required: true
+          schema:
+            type: string
+        - description: Archived article identifier
+          in: path
+          name: articleID
+          required: true
+          schema:
+            type: string
+        - description: Administrative session CSRF token
+          in: header
+          name: X-CSRF-Token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeAdminArticle"
+          description: Restored unpublished article
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Authentication required
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Publishing permission required
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Archived article not found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Project is not active
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal server error
+      security:
+        - adminSession: []
+      summary: Restore an archived article
       tags:
         - Administration
   /api/v1/projects/{projectID}/articles/{articleID}/revisions:

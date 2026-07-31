@@ -57,6 +57,7 @@ var implementedAdminRouteStatuses = map[string]string{
 	"GET /api/v1/projects/{projectID}/articles/{articleID}":                    "200",
 	"HEAD /api/v1/projects/{projectID}/articles/{articleID}":                   "200",
 	"DELETE /api/v1/projects/{projectID}/articles/{articleID}":                 "204",
+	"POST /api/v1/projects/{projectID}/articles/{articleID}/restore":           "200",
 	"POST /api/v1/projects/{projectID}/revisions/{revisionID}/submit":          "200",
 	"POST /api/v1/projects/{projectID}/revisions/{revisionID}/request-changes": "200",
 	"POST /api/v1/projects/{projectID}/revisions/{revisionID}/approve":         "200",
@@ -155,6 +156,7 @@ var implementedAdminRouteStatuses = map[string]string{
 // contract stays complete and available at /openapi.json and /openapi.yaml.
 func documentFiberRoutes(api huma.API, app *fiber.App) {
 	documentPasswordResetRoutes(api)
+	documentArticleManagementRoutes(api)
 	documentRollbackRoute(api)
 	documentCopyArticleRoute(api)
 	documentRevisionHistoryRoutes(api)
@@ -243,6 +245,144 @@ func documentFiberRoutes(api huma.API, app *fiber.App) {
 			}
 		}
 	}
+}
+
+func documentArticleManagementRoutes(api huma.API) {
+	openAPI := api.OpenAPI()
+	documentAdminSessionSecurity(openAPI)
+	registry := openAPI.Components.Schemas
+	listSchema := registry.Schema(reflect.TypeOf(ListEnvelope[store.AdminArticle]{}), true, "AdminArticleListResponse")
+	articleSchema := registry.Schema(reflect.TypeOf(Envelope[store.AdminArticle]{}), true, "AdminArticleResponse")
+	problemSchema := registry.Schema(reflect.TypeOf(Problem{}), true, "Problem")
+	problemResponse := func(description string) *huma.Response {
+		return &huma.Response{
+			Description: description,
+			Content: map[string]*huma.MediaType{
+				problemMediaType: {Schema: problemSchema},
+			},
+		}
+	}
+	projectParameter := &huma.Param{
+		Name:        "projectID",
+		In:          "path",
+		Description: "Project identifier",
+		Required:    true,
+		Schema:      &huma.Schema{Type: "string"},
+	}
+	listParameters := []*huma.Param{
+		projectParameter,
+		{
+			Name:        "cursor",
+			In:          "query",
+			Description: "Opaque article-list cursor",
+			Schema:      &huma.Schema{Type: "string"},
+		},
+		{
+			Name:        "limit",
+			In:          "query",
+			Description: "Page size, up to 100",
+			Schema:      &huma.Schema{Type: "integer", Minimum: float64Pointer(1), Maximum: float64Pointer(100)},
+		},
+		{
+			Name:        "q",
+			In:          "query",
+			Description: "Case-insensitive title, slug, or article-type search; wildcard characters are treated literally",
+			Schema:      &huma.Schema{Type: "string", MaxLength: intPointer(100)},
+		},
+		{
+			Name:        "editorialState",
+			In:          "query",
+			Description: "Exact latest-revision editorial state",
+			Schema:      &huma.Schema{Type: "string", Enum: []any{"draft", "in_review", "changes_requested", "approved"}},
+		},
+		{
+			Name:        "publicationState",
+			In:          "query",
+			Description: "Exact publication state; archived automatically includes archived records",
+			Schema:      &huma.Schema{Type: "string", Enum: []any{"unpublished", "scheduled", "published", "archived"}},
+		},
+		{
+			Name:        "includeArchived",
+			In:          "query",
+			Description: "Include archived articles alongside active records",
+			Schema:      &huma.Schema{Type: "boolean"},
+		},
+	}
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodGet,
+		Path:        "/api/v1/projects/{projectID}/articles",
+		OperationID: "listAdminArticles",
+		Summary:     "List project articles",
+		Description: "Returns a project-scoped, cursor-paginated article list with allowlisted server-side filters.",
+		Tags:        []string{"Administration"},
+		Parameters:  listParameters,
+		Security:    adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Article page", Content: map[string]*huma.MediaType{"application/json": {Schema: listSchema}}},
+			"400": problemResponse("Invalid filter or pagination input"),
+			"401": problemResponse("Authentication required"),
+			"403": problemResponse("Insufficient permission"),
+			"404": problemResponse("Project not found"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodHead,
+		Path:        "/api/v1/projects/{projectID}/articles",
+		OperationID: "headAdminArticles",
+		Summary:     "Check the project article list",
+		Tags:        []string{"Administration"},
+		Parameters:  listParameters,
+		Security:    adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The article list is available"},
+			"400": {Description: "Invalid filter or pagination input"},
+			"401": {Description: "Authentication required"},
+			"403": {Description: "Insufficient permission"},
+			"404": {Description: "Project not found"},
+			"500": {Description: "Internal server error"},
+		},
+	})
+
+	restoreParameters := []*huma.Param{
+		projectParameter,
+		{
+			Name:        "articleID",
+			In:          "path",
+			Description: "Archived article identifier",
+			Required:    true,
+			Schema:      &huma.Schema{Type: "string"},
+		},
+		{
+			Name:        "X-CSRF-Token",
+			In:          "header",
+			Description: "Administrative session CSRF token",
+			Required:    true,
+			Schema:      &huma.Schema{Type: "string"},
+		},
+	}
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodPost,
+		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/restore",
+		OperationID: "restoreArchivedArticle",
+		Summary:     "Restore an archived article",
+		Description: "Restores retained content and revisions without republishing it. The publication state becomes unpublished.",
+		Tags:        []string{"Administration"},
+		Parameters:  restoreParameters,
+		Security:    adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Restored unpublished article", Content: map[string]*huma.MediaType{"application/json": {Schema: articleSchema}}},
+			"401": problemResponse("Authentication required"),
+			"403": problemResponse("Publishing permission required"),
+			"404": problemResponse("Archived article not found"),
+			"409": problemResponse("Project is not active"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
+}
+
+func intPointer(value int) *int {
+	return &value
 }
 
 func documentPasswordResetRoutes(api huma.API) {
