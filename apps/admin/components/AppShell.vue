@@ -142,7 +142,7 @@
         </div>
 
         <div class="app-topbar__actions">
-          <NuxtLink v-if="activeProjectID" class="button button--primary button--compact" :to="projectPath('articles/create')">
+          <NuxtLink v-if="activeProjectID && !route.path.endsWith('/articles/create')" class="button button--primary button--compact" :to="projectPath('articles/create')">
             <Plus :size="17" />
             <span>New article</span>
           </NuxtLink>

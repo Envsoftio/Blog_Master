@@ -1,319 +1,225 @@
 <template>
-  <section class="min-h-screen">
-    <header class="border-b border-[#d7ded8] bg-white px-6 py-4 dark:border-[#343a38] dark:bg-[#202422]">
-      <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
-        <div class="flex min-w-0 items-center gap-3">
-          <NuxtLink
-            class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] bg-white text-[#28342d] hover:bg-[#eef5f1] dark:border-[#414a45] dark:bg-[#252b28] dark:text-[#eef4ef]"
-            :to="`/projects/${projectID}/articles`"
-            title="Back to articles"
-            aria-label="Back to articles"
-          >
-            <ArrowLeft class="h-4 w-4" />
-          </NuxtLink>
-          <div class="min-w-0">
-            <p class="truncate text-sm text-[#5d6a61] dark:text-[#aeb8b0]">{{ project?.name || 'Project' }}</p>
-          </div>
-        </div>
-        <div class="flex items-center gap-2">
-          <button
-            class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] bg-white text-[#28342d] hover:bg-[#eef5f1] disabled:opacity-50 dark:border-[#414a45] dark:bg-[#252b28] dark:text-[#eef4ef]"
-            type="button"
-            title="Refresh"
-            aria-label="Refresh"
-            :disabled="pending"
-            @click="refresh"
-          >
-            <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': pending }" />
-          </button>
-          <button
-            class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] bg-white text-[#28342d] hover:bg-[#fff4df] dark:border-[#414a45] dark:bg-[#252b28] dark:text-[#eef4ef]"
-            type="button"
-            title="Log out"
-            aria-label="Log out"
-            @click="logout"
-          >
-            <LogOut class="h-4 w-4" />
-          </button>
-        </div>
+  <div class="page-stack create-page">
+    <div class="page-heading">
+      <div>
+        <p>Start with the article brief, choose an editorial template, and prepare the opening revision.</p>
       </div>
-    </header>
+      <div class="create-heading-actions">
+        <NuxtLink class="button button--compact" :to="`/projects/${projectID}/articles`">
+          <ArrowLeft :size="16" />Back to content
+        </NuxtLink>
+        <button class="button button--compact" type="button" :disabled="pending" @click="refresh">
+          <RefreshCw :class="{ spin: pending }" :size="16" />Refresh
+        </button>
+      </div>
+    </div>
 
-    <div class="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-6 py-6 lg:grid-cols-[220px_1fr]">
-      <ProjectNav :project-id="projectID" :project="project" active="articles" />
+    <p v-if="errorMessage" class="ui-alert ui-alert--danger" role="alert">{{ errorMessage }}</p>
+    <p v-if="successMessage" class="ui-alert ui-alert--success" role="status">{{ successMessage }}</p>
 
-      <main class="space-y-5">
-        <p v-if="errorMessage" class="rounded-md border border-[#edc6c2] bg-[#fff4f2] px-4 py-3 text-sm text-[#9b2d23] dark:border-[#6d352f] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]" role="alert">
-          {{ errorMessage }}
-        </p>
-        <p v-if="successMessage" class="rounded-md border border-[#b9dcc9] bg-[#edf9f1] px-4 py-3 text-sm text-[#165a4a] dark:border-[#2d644a] dark:bg-[#13261e] dark:text-[#aee4d0]">
-          {{ successMessage }}
-        </p>
+    <div v-if="pending" class="loading-surface surface" aria-live="polite">
+      <LoaderCircle class="spin" :size="18" />Loading article workspace
+    </div>
 
-        <div v-if="pending" class="flex items-center gap-3 rounded-lg border border-[#cfd8d1] bg-white p-5 text-sm text-[#58625c] dark:border-[#3f4843] dark:bg-[#202522] dark:text-[#bec7c1]">
-          <LoaderCircle class="h-4 w-4 animate-spin" />
-          Loading create page
-        </div>
+    <div v-else class="create-layout">
+      <form v-if="canWriteArticles" class="create-form" @submit.prevent="createArticle">
+        <section class="create-card surface">
+          <div class="create-card__header">
+            <span class="create-card__icon"><FileText :size="18" /></span>
+            <div>
+              <span>Article brief</span>
+              <h2>Setup</h2>
+              <small v-if="draftSavedAt">{{ draftSaving ? 'Saving locally…' : `Recovered locally · ${formatSavedDate(draftSavedAt)}` }}</small>
+            </div>
+            <span class="status-pill create-card__status" :class="categoryReady ? 'status-pill--success' : 'status-pill--warning'">
+              {{ categoryReady ? 'Category ready' : 'Category required' }}
+            </span>
+          </div>
 
-        <div v-else class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <form v-if="canWriteArticles" class="space-y-5" @submit.prevent="createArticle">
-            <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Brief</p>
-                  <h2 class="mt-1 text-xl font-semibold tracking-normal">Article setup</h2>
-                  <p v-if="draftSavedAt" class="mt-1 text-xs text-[#667169] dark:text-[#aeb8b0]">
-                    {{ draftSaving ? 'Saving locally…' : `Recovered locally · ${formatSavedDate(draftSavedAt)}` }}
-                  </p>
-                </div>
-                <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="categoryReady ? 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]' : 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'">
-                  {{ categoryReady ? 'Category ready' : 'Category required' }}
-                </span>
-              </div>
+          <div class="create-card__body setup-fields">
+            <label class="field setup-fields__title">
+              <span>Title</span>
+              <input v-model.trim="articleForm.title" placeholder="A clear, useful working title" required>
+            </label>
+            <label class="field">
+              <span>Slug</span>
+              <input v-model.trim="articleForm.slug" class="mono-input" placeholder="article-slug" required @input="slugTouched = true">
+            </label>
+            <label class="field">
+              <span>Locale</span>
+              <input v-model.trim="articleForm.locale" placeholder="en" required>
+            </label>
+            <label class="field setup-fields__category">
+              <span>Primary category</span>
+              <select v-model="articleForm.primaryCategoryId" :disabled="categories.length === 0" required>
+                <option value="" disabled>Select category</option>
+                <option v-for="category in categories" :key="category.id" :value="category.id">{{ category.name }}</option>
+              </select>
+              <small v-if="categories.length === 0">Create a category from the side panel before saving the draft.</small>
+            </label>
+          </div>
+        </section>
 
-              <div class="mt-5 grid gap-4 md:grid-cols-2">
-                <label class="block space-y-2 md:col-span-2">
-                  <span class="text-sm font-medium">Title</span>
-                  <input v-model.trim="articleForm.title" class="h-11 w-full rounded-md border border-[#bfcac3] px-3 text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]" required />
+        <section class="create-card surface">
+          <div class="create-card__header">
+            <span class="create-card__icon create-card__icon--blue"><Layers3 :size="18" /></span>
+            <div><span>Content structure</span><h2>Editorial template</h2></div>
+          </div>
+          <div class="template-grid" role="listbox" aria-label="Article type">
+            <button
+              v-for="type in articleTypes"
+              :key="type"
+              class="template-option"
+              :class="{ 'is-selected': articleForm.articleType === type }"
+              type="button"
+              role="option"
+              :aria-selected="articleForm.articleType === type"
+              @click="articleForm.articleType = type"
+            >
+              <span>{{ labelize(type) }}</span>
+              <CheckCircle2 v-if="articleForm.articleType === type" :size="16" />
+            </button>
+          </div>
+        </section>
+
+        <section class="create-card surface">
+          <div class="create-card__header">
+            <span class="create-card__icon"><BookOpenCheck :size="18" /></span>
+            <div><span>Opening revision</span><h2>Editorial content</h2></div>
+          </div>
+
+          <div class="create-card__body revision-fields">
+            <div class="revision-summary-grid">
+              <label class="field">
+                <span>Deck</span>
+                <textarea v-model.trim="articleForm.deck" class="textarea--compact" placeholder="Supporting line beneath the title" />
+              </label>
+              <label class="field">
+                <span>Excerpt</span>
+                <textarea v-model.trim="articleForm.excerpt" class="textarea--compact" placeholder="Short summary for listings and feeds" />
+              </label>
+              <label class="field">
+                <span>Short answer</span>
+                <textarea v-model.trim="articleForm.shortAnswer" class="textarea--compact" placeholder="Direct answer for quick readers" />
+              </label>
+            </div>
+
+            <fieldset class="seo-fields">
+              <legend>SEO and social preview</legend>
+              <div class="seo-fields__grid">
+                <label class="field">
+                  <span>SEO title</span>
+                  <input v-model.trim="articleForm.seoTitle" placeholder="Defaults to article title">
                 </label>
-
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">Slug</span>
-                  <input
-                    v-model.trim="articleForm.slug"
-                    class="h-11 w-full rounded-md border border-[#bfcac3] px-3 font-mono text-sm text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]"
-                    required
-                    @input="slugTouched = true"
-                  />
-                </label>
-
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">Locale</span>
-                  <input v-model.trim="articleForm.locale" class="h-11 w-full rounded-md border border-[#bfcac3] px-3 text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]" required />
-                </label>
-
-                <label class="block space-y-2 md:col-span-2">
-                  <span class="text-sm font-medium">Primary category</span>
-                  <select
-                    v-model="articleForm.primaryCategoryId"
-                    class="h-11 w-full rounded-md border border-[#bfcac3] bg-white px-3 text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 disabled:opacity-60 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]"
-                    :disabled="categories.length === 0"
-                    required
-                  >
-                    <option value="" disabled>Select category</option>
-                    <option v-for="category in categories" :key="category.id" :value="category.id">{{ category.name }}</option>
+                <label class="field">
+                  <span>Robots</span>
+                  <select v-model="articleForm.robots">
+                    <option value="index,follow">Index, follow</option>
+                    <option value="index,nofollow">Index, nofollow</option>
+                    <option value="noindex,follow">Noindex, follow</option>
+                    <option value="noindex,nofollow">Noindex, nofollow</option>
                   </select>
                 </label>
-              </div>
-            </section>
-
-            <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex items-start gap-3">
-                <Layers3 class="mt-1 h-4 w-4 text-[#3162a3]" />
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Type</p>
-                  <h2 class="mt-1 text-xl font-semibold tracking-normal">Editorial template</h2>
-                </div>
-              </div>
-
-              <div class="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-3" role="listbox" aria-label="Article type">
-                <button
-                  v-for="type in articleTypes"
-                  :key="type"
-                  class="flex min-h-14 items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm transition"
-                  :class="articleForm.articleType === type
-                    ? 'border-[#165a4a] bg-[#e9f5ef] text-[#165a4a] dark:border-[#4b9479] dark:bg-[#142c24] dark:text-[#aee4d0]'
-                    : 'border-[#cfd8d1] hover:bg-[#f2f5f3] dark:border-[#3f4843] dark:hover:bg-[#171b18]'"
-                  type="button"
-                  role="option"
-                  :aria-selected="articleForm.articleType === type"
-                  @click="articleForm.articleType = type"
-                >
-                  <span class="capitalize">{{ labelize(type) }}</span>
-                  <CheckCircle2 v-if="articleForm.articleType === type" class="h-4 w-4 shrink-0" />
-                </button>
-              </div>
-            </section>
-
-            <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex items-start gap-3">
-                <FileText class="mt-1 h-4 w-4 text-[#165a4a]" />
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Draft</p>
-                  <h2 class="mt-1 text-xl font-semibold tracking-normal">Opening revision</h2>
-                </div>
-              </div>
-
-              <div class="mt-5 grid gap-4">
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">Deck</span>
-                  <textarea v-model.trim="articleForm.deck" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]" />
+                <label class="field seo-fields__wide">
+                  <span>Meta description</span>
+                  <textarea v-model.trim="articleForm.seoDescription" class="textarea--compact" placeholder="Defaults to excerpt" />
                 </label>
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">Excerpt</span>
-                  <textarea v-model.trim="articleForm.excerpt" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]" />
+                <label class="field">
+                  <span>Open Graph title</span>
+                  <input v-model.trim="articleForm.openGraphTitle" placeholder="Title used when shared">
                 </label>
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">Short answer</span>
-                  <textarea v-model.trim="articleForm.shortAnswer" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]" />
+                <label class="field">
+                  <span>Open Graph image URL</span>
+                  <input v-model.trim="articleForm.openGraphImage" type="url" placeholder="https://…">
                 </label>
-                <fieldset class="grid gap-4 rounded-md border border-[#d7ded8] p-4 dark:border-[#3f4843] md:grid-cols-2">
-                  <legend class="px-2 text-sm font-medium">SEO and social preview</legend>
-                  <label class="block space-y-2">
-                    <span class="text-sm font-medium">SEO title</span>
-                    <input v-model.trim="articleForm.seoTitle" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Defaults to article title" />
-                  </label>
-                  <label class="block space-y-2">
-                    <span class="text-sm font-medium">Robots</span>
-                    <select v-model="articleForm.robots" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]">
-                      <option value="index,follow">Index, follow</option>
-                      <option value="index,nofollow">Index, nofollow</option>
-                      <option value="noindex,follow">Noindex, follow</option>
-                      <option value="noindex,nofollow">Noindex, nofollow</option>
-                    </select>
-                  </label>
-                  <label class="block space-y-2 md:col-span-2">
-                    <span class="text-sm font-medium">Meta description</span>
-                    <textarea v-model.trim="articleForm.seoDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Defaults to excerpt" />
-                  </label>
-                  <label class="block space-y-2">
-                    <span class="text-sm font-medium">Open Graph title</span>
-                    <input v-model.trim="articleForm.openGraphTitle" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]" />
-                  </label>
-                  <label class="block space-y-2">
-                    <span class="text-sm font-medium">Open Graph image URL</span>
-                    <input v-model.trim="articleForm.openGraphImage" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="https://…" />
-                  </label>
-                  <label class="block space-y-2 md:col-span-2">
-                    <span class="text-sm font-medium">Open Graph description</span>
-                    <textarea v-model.trim="articleForm.openGraphDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
-                  </label>
-                </fieldset>
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">HTML</span>
-                  <textarea v-model.trim="articleForm.html" class="min-h-52 w-full rounded-md border border-[#bfcac3] px-3 py-2 font-mono text-sm text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]" />
+                <label class="field seo-fields__wide">
+                  <span>Open Graph description</span>
+                  <textarea v-model.trim="articleForm.openGraphDescription" class="textarea--compact" placeholder="Description used when shared" />
                 </label>
               </div>
-            </section>
+            </fieldset>
 
-            <div class="flex flex-wrap items-center justify-end gap-3">
-              <NuxtLink class="inline-flex h-10 items-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]" :to="`/projects/${projectID}/articles`">
-                <ArrowLeft class="h-4 w-4" />
-                Cancel
-              </NuxtLink>
-              <button
-                class="inline-flex h-10 items-center gap-2 rounded-md bg-[#165a4a] px-4 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
-                type="submit"
-                :disabled="creatingArticle || !canCreateArticle"
-              >
-                <LoaderCircle v-if="creatingArticle" class="h-4 w-4 animate-spin" />
-                <Save v-else class="h-4 w-4" />
-                Create draft
-              </button>
-            </div>
-          </form>
+            <label class="field">
+              <span>Article HTML</span>
+              <textarea v-model.trim="articleForm.html" class="article-html" placeholder="Write or paste the opening HTML revision…" />
+              <small>When left blank, the draft starts with a paragraph containing the article title.</small>
+            </label>
+          </div>
+        </section>
 
-          <section v-else class="rounded-lg border border-[#cfd8d1] bg-white p-8 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-            <FileText class="h-6 w-6 text-[#3162a3]" />
-            <h2 class="mt-4 text-xl font-semibold">Article creation is read-only</h2>
-            <p class="mt-2 max-w-xl text-sm text-[#5f6a63] dark:text-[#b8c2bb]">
-              This project is not active or your current project role cannot create article drafts.
-            </p>
-            <NuxtLink class="mt-5 inline-flex h-10 items-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]" :to="`/projects/${projectID}/articles`">
-              <ArrowLeft class="h-4 w-4" />
-              Back to articles
-            </NuxtLink>
-          </section>
-
-          <aside class="space-y-5">
-            <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex items-start justify-between gap-3">
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Preview</p>
-                  <h2 class="mt-1 text-lg font-semibold tracking-normal">{{ articleForm.title || 'Untitled draft' }}</h2>
-                </div>
-                <FileText class="mt-1 h-4 w-4 text-[#3162a3]" />
-              </div>
-              <dl class="mt-5 grid gap-3 text-sm">
-                <div>
-                  <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Type</dt>
-                  <dd class="mt-1 capitalize">{{ labelize(articleForm.articleType) }}</dd>
-                </div>
-                <div>
-                  <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Slug</dt>
-                  <dd class="mt-1 break-all font-mono text-xs">{{ articleForm.slug || 'not-set' }}</dd>
-                </div>
-                <div>
-                  <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Words</dt>
-                  <dd class="mt-1">{{ wordCount }}</dd>
-                </div>
-                <div>
-                  <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Canonical path</dt>
-                  <dd class="mt-1 break-all font-mono text-xs">{{ canonicalPath }}</dd>
-                </div>
-              </dl>
-            </section>
-
-            <form v-if="canManageTaxonomy" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="createCategory">
-              <div class="flex items-start gap-3">
-                <FolderTree class="mt-1 h-4 w-4 text-[#8a5b00]" />
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Taxonomy</p>
-                  <h2 class="mt-1 text-lg font-semibold tracking-normal">Category</h2>
-                </div>
-              </div>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Name</span>
-                <input v-model.trim="categoryForm.name" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]" required />
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Slug</span>
-                <input v-model.trim="categoryForm.slug" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 font-mono text-sm text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]" required />
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Description</span>
-                <textarea v-model.trim="categoryForm.description" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]" />
-              </label>
-              <label class="flex items-center gap-2 text-sm">
-                <input v-model="categoryForm.indexable" class="h-4 w-4 rounded border-[#bfcac3]" type="checkbox" />
-                Indexable
-              </label>
-              <button
-                class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
-                type="submit"
-                :disabled="creatingCategory || !canCreateCategory"
-              >
-                <LoaderCircle v-if="creatingCategory" class="h-4 w-4 animate-spin" />
-                <Plus v-else class="h-4 w-4" />
-                Create category
-              </button>
-            </form>
-
-            <section v-if="recentArticles.length" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex items-center justify-between gap-3">
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Recent</p>
-                  <h2 class="mt-1 text-lg font-semibold tracking-normal">Articles</h2>
-                </div>
-                <BookOpenCheck class="h-4 w-4 text-[#165a4a]" />
-              </div>
-              <div class="mt-4 space-y-3">
-                <NuxtLink
-                  v-for="article in recentArticles.slice(0, 4)"
-                  :key="article.id"
-                  class="block rounded-md border border-[#d7ded8] px-3 py-2 hover:bg-[#f2f5f3] dark:border-[#3f4843] dark:hover:bg-[#171b18]"
-                  :to="`/projects/${projectID}/articles/${article.id}`"
-                >
-                  <span class="block truncate text-sm font-medium">{{ article.title }}</span>
-                  <span class="mt-1 block truncate font-mono text-xs text-[#667169] dark:text-[#aeb8b0]">{{ article.slug }}</span>
-                </NuxtLink>
-              </div>
-            </section>
-          </aside>
+        <div class="create-form__actions surface">
+          <div>
+            <strong>{{ canCreateArticle ? 'Ready to create' : 'Complete the required fields' }}</strong>
+            <span>Title, slug, locale, and category are required.</span>
+          </div>
+          <NuxtLink class="button" :to="`/projects/${projectID}/articles`">Cancel</NuxtLink>
+          <button class="button button--primary" type="submit" :disabled="creatingArticle || !canCreateArticle">
+            <LoaderCircle v-if="creatingArticle" class="spin" :size="16" />
+            <Save v-else :size="16" />Create draft
+          </button>
         </div>
-      </main>
+      </form>
+
+      <section v-else class="empty-state create-read-only">
+        <div>
+          <span class="empty-state__icon"><FileText :size="20" /></span>
+          <h3>Article creation is read-only</h3>
+          <p>This project is inactive or your current role cannot create article drafts.</p>
+          <NuxtLink class="button" :to="`/projects/${projectID}/articles`"><ArrowLeft :size="16" />Back to content</NuxtLink>
+        </div>
+      </section>
+
+      <aside class="create-sidebar">
+        <section class="side-panel surface">
+          <div class="side-panel__header">
+            <span class="side-panel__icon"><FileText :size="17" /></span>
+            <div><span>Live summary</span><h2>Draft preview</h2></div>
+          </div>
+          <div class="draft-preview">
+            <span class="status-pill status-pill--warning">Draft</span>
+            <h3>{{ articleForm.title || 'Untitled draft' }}</h3>
+            <p>{{ articleForm.excerpt || articleForm.deck || 'Your excerpt or deck will appear here as you write.' }}</p>
+            <dl>
+              <div><dt>Template</dt><dd>{{ labelize(articleForm.articleType) }}</dd></div>
+              <div><dt>Words</dt><dd>{{ wordCount }}</dd></div>
+              <div><dt>Locale</dt><dd>{{ articleForm.locale || 'Not set' }}</dd></div>
+              <div><dt>Category</dt><dd>{{ selectedCategory?.name || 'Not set' }}</dd></div>
+            </dl>
+            <div class="draft-preview__path"><span>Canonical path</span><code>{{ canonicalPath }}</code></div>
+          </div>
+        </section>
+
+        <form v-if="canManageTaxonomy" class="side-panel surface" @submit.prevent="createCategory">
+          <div class="side-panel__header">
+            <span class="side-panel__icon side-panel__icon--amber"><FolderTree :size="17" /></span>
+            <div><span>Taxonomy</span><h2>Create category</h2></div>
+          </div>
+          <div class="side-panel__body">
+            <label class="field"><span>Name</span><input v-model.trim="categoryForm.name" placeholder="Category name" required></label>
+            <label class="field"><span>Slug</span><input v-model.trim="categoryForm.slug" class="mono-input" placeholder="category-slug" required></label>
+            <label class="field"><span>Description</span><textarea v-model.trim="categoryForm.description" class="textarea--compact" /></label>
+            <label class="checkbox-field"><input v-model="categoryForm.indexable" type="checkbox"><span>Indexable archive</span></label>
+            <button class="button side-panel__button" type="submit" :disabled="creatingCategory || !canCreateCategory">
+              <LoaderCircle v-if="creatingCategory" class="spin" :size="15" />
+              <Plus v-else :size="15" />Create and select category
+            </button>
+          </div>
+        </form>
+
+        <section v-if="recentArticles.length" class="side-panel surface">
+          <div class="side-panel__header">
+            <span class="side-panel__icon side-panel__icon--blue"><BookOpenCheck :size="17" /></span>
+            <div><span>Project activity</span><h2>Recent articles</h2></div>
+          </div>
+          <div class="recent-articles">
+            <NuxtLink v-for="article in recentArticles.slice(0, 4)" :key="article.id" :to="`/projects/${projectID}/articles/${article.id}`">
+              <span>{{ article.title }}</span><small>/{{ article.slug }}</small>
+            </NuxtLink>
+          </div>
+        </section>
+      </aside>
     </div>
-  </section>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -325,7 +231,6 @@ import {
   FolderTree,
   Layers3,
   LoaderCircle,
-  LogOut,
   Plus,
   RefreshCw,
   Save
@@ -404,6 +309,7 @@ const canCreateCategory = computed(() => canManageTaxonomy.value && Boolean(cate
 const htmlForSubmission = computed(() => articleForm.html.trim() || `<p>${escapeHTML(articleForm.title || 'Untitled draft')}</p>`)
 const plainText = computed(() => htmlToPlainText(htmlForSubmission.value))
 const wordCount = computed(() => plainText.value ? plainText.value.split(/\s+/).length : 0)
+const selectedCategory = computed(() => categories.value.find(category => category.id === articleForm.primaryCategoryId) || null)
 const canonicalPath = computed(() => {
   const basePath = project.value?.blogBasePath || '/blog'
   const normalizedBase = basePath.startsWith('/') ? basePath : `/${basePath}`
@@ -529,14 +435,6 @@ async function createArticle() {
   }
 }
 
-async function logout() {
-  try {
-    await api.logout()
-  } finally {
-    await navigateTo('/')
-  }
-}
-
 function clearMessages() {
   errorMessage.value = ''
   successMessage.value = ''
@@ -626,3 +524,110 @@ function escapeHTML(value: string) {
     .replaceAll("'", '&#039;')
 }
 </script>
+
+<style scoped>
+.create-heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.create-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; align-items: start; gap: 16px; }
+.create-form { display: grid; min-width: 0; gap: 16px; }
+.create-card { overflow: hidden; }
+.create-card__header,
+.side-panel__header { display: flex; align-items: flex-start; gap: 11px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.create-card__icon,
+.side-panel__icon { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border-radius: 7px; background: var(--primary-soft); color: var(--primary); }
+.create-card__icon--blue,
+.side-panel__icon--blue { background: var(--blue-soft); color: var(--blue); }
+.side-panel__icon--amber { background: var(--amber-soft); color: var(--amber); }
+.create-card__header > div,
+.side-panel__header > div { min-width: 0; }
+.create-card__header div > span,
+.side-panel__header div > span { color: var(--text-soft); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.create-card__header h2,
+.side-panel__header h2 { margin: 1px 0 0; font-size: 15px; }
+.create-card__header small { display: block; margin-top: 3px; color: var(--text-faint); font-size: 9px; }
+.create-card__status { align-self: center; margin-left: auto; white-space: nowrap; }
+.create-card__body { display: grid; gap: 14px; padding: 16px; }
+.setup-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.setup-fields__title,
+.setup-fields__category { grid-column: 1 / -1; }
+.field small { color: var(--text-faint); font-size: 9px; line-height: 1.45; }
+.mono-input,
+.article-html { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.template-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; padding: 14px 16px 16px; }
+.template-option { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); font-size: 11px; font-weight: 600; text-align: left; cursor: pointer; transition: border-color 140ms ease, background 140ms ease, color 140ms ease; }
+.template-option:hover { border-color: var(--border-strong); background: var(--surface-subtle); color: var(--text); }
+.template-option.is-selected { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); background: var(--primary-soft); color: var(--primary); }
+.revision-fields { gap: 16px; }
+.revision-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.textarea--compact { min-height: 82px !important; }
+.seo-fields { min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); }
+.seo-fields legend { padding: 0 7px; color: var(--text-soft); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.seo-fields__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.seo-fields__wide { grid-column: 1 / -1; }
+.article-html { min-height: 270px !important; font-size: 12px; line-height: 1.6; }
+.create-form__actions { position: sticky; z-index: 20; bottom: 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 11px 12px; background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(14px); box-shadow: var(--shadow-md); }
+.create-form__actions > div { display: grid; min-width: 0; }
+.create-form__actions strong { font-size: 11px; }
+.create-form__actions span { overflow: hidden; color: var(--text-faint); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.create-read-only { min-height: 360px; }
+.create-read-only .button { margin-top: 16px; }
+.create-sidebar { position: sticky; top: 96px; display: grid; gap: 14px; }
+.side-panel { overflow: hidden; }
+.side-panel__header { padding: 13px 14px; }
+.side-panel__icon { width: 34px; height: 34px; flex-basis: 34px; }
+.side-panel__header h2 { font-size: 14px; }
+.side-panel__body { display: grid; gap: 12px; padding: 14px; }
+.side-panel__button { width: 100%; }
+.draft-preview { padding: 15px; }
+.draft-preview h3 { overflow: hidden; margin: 10px 0 0; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.draft-preview > p { display: -webkit-box; overflow: hidden; min-height: 34px; margin: 5px 0 0; color: var(--text-soft); font-size: 10px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.draft-preview dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 14px 0 0; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: var(--border); }
+.draft-preview dl div { min-width: 0; padding: 9px; background: var(--surface-subtle); }
+.draft-preview dt { color: var(--text-faint); font-size: 8px; font-weight: 700; text-transform: uppercase; }
+.draft-preview dd { overflow: hidden; margin: 2px 0 0; font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.draft-preview__path { display: grid; gap: 3px; margin-top: 12px; }
+.draft-preview__path span { color: var(--text-faint); font-size: 8px; font-weight: 700; text-transform: uppercase; }
+.draft-preview__path code { overflow: hidden; padding: 7px 9px; border-radius: 5px; background: var(--surface-subtle); color: var(--text-soft); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.checkbox-field { display: inline-flex; align-items: center; gap: 7px; color: var(--text-soft); font-size: 10px; cursor: pointer; }
+.checkbox-field input { width: 15px; height: 15px; min-height: 0; margin: 0; accent-color: var(--primary); }
+.recent-articles { padding: 4px 14px 9px; }
+.recent-articles a { display: grid; min-width: 0; padding: 10px 0; border-bottom: 1px solid var(--border); color: var(--text); text-decoration: none; }
+.recent-articles a:last-child { border-bottom: 0; }
+.recent-articles a:hover span { color: var(--primary); }
+.recent-articles span,
+.recent-articles small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-articles span { font-size: 10px; font-weight: 650; }
+.recent-articles small { margin-top: 2px; color: var(--text-faint); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 8px; }
+.loading-surface { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 9px; color: var(--text-soft); }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 1180px) {
+  .create-layout { grid-template-columns: minmax(0, 1fr) 300px; }
+  .template-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .revision-summary-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 980px) {
+  .create-layout { grid-template-columns: 1fr; }
+  .create-sidebar { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .create-sidebar > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+}
+@media (max-width: 680px) {
+  .create-heading-actions,
+  .create-heading-actions .button { width: 100%; }
+  .setup-fields,
+  .seo-fields__grid { grid-template-columns: 1fr; }
+  .setup-fields__title,
+  .setup-fields__category,
+  .seo-fields__wide { grid-column: auto; }
+  .create-card__status { width: 100%; margin: 8px 0 0 47px; }
+  .create-card__header { flex-wrap: wrap; }
+  .create-form__actions { grid-template-columns: 1fr 1fr; }
+  .create-form__actions > div { grid-column: 1 / -1; }
+  .create-sidebar { grid-template-columns: 1fr; }
+  .create-sidebar > :last-child:nth-child(odd) { grid-column: auto; }
+}
+@media (max-width: 480px) {
+  .template-grid { grid-template-columns: 1fr; }
+  .create-form__actions .button { width: 100%; }
+  .draft-preview dl { grid-template-columns: 1fr; }
+}
+</style>
