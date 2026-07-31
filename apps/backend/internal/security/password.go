@@ -8,12 +8,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 )
 
 const (
-	passwordMinLength = 8
+	passwordMinLength = 15
 	argonTime         = uint32(3)
 	argonMemoryKiB    = uint32(64 * 1024)
 	argonThreads      = uint8(1)
@@ -21,10 +22,10 @@ const (
 	saltLength        = 16
 )
 
-var ErrPasswordTooShort = errors.New("password must be at least 8 characters")
+var ErrPasswordTooShort = errors.New("password must be at least 15 characters")
 
 func HashPassword(password string) (string, error) {
-	if len(password) < passwordMinLength {
+	if utf8.RuneCountInString(password) < passwordMinLength {
 		return "", ErrPasswordTooShort
 	}
 

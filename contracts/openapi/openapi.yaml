@@ -544,6 +544,21 @@ components:
         - token
         - password
       type: object
+    RevisionContributorRequest:
+      additionalProperties: false
+      properties:
+        authorId:
+          type: string
+        position:
+          format: int64
+          type: integer
+        role:
+          type: string
+      required:
+        - authorId
+        - role
+        - position
+      type: object
     RevisionRequest:
       additionalProperties: false
       properties:
@@ -557,6 +572,12 @@ components:
         baseRevisionId:
           type: string
         bodyDocument: {}
+        contributors:
+          items:
+            $ref: "#/components/schemas/RevisionContributorRequest"
+          type:
+            - array
+            - "null"
         deck:
           type: string
         excerpt:

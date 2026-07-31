@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -195,33 +196,35 @@ type csrfResponse struct {
 }
 
 type projectRequest struct {
-	WorkspaceID         string   `json:"workspaceId"`
-	WorkspaceSlug       string   `json:"workspaceSlug"`
-	WorkspaceName       string   `json:"workspaceName"`
-	Slug                string   `json:"slug"`
-	Name                string   `json:"name"`
-	PrimaryDomain       string   `json:"primaryDomain"`
-	VerifiedDomains     []string `json:"verifiedDomains"`
-	BlogBasePath        string   `json:"blogBasePath"`
-	DefaultLocale       string   `json:"defaultLocale"`
-	SupportedLocales    []string `json:"supportedLocales"`
-	Timezone            string   `json:"timezone"`
-	PublisherName       string   `json:"publisherName"`
-	PublisherURL        string   `json:"publisherUrl"`
-	DefaultRobotsPolicy string   `json:"defaultRobotsPolicy"`
+	WorkspaceID              string   `json:"workspaceId"`
+	WorkspaceSlug            string   `json:"workspaceSlug"`
+	WorkspaceName            string   `json:"workspaceName"`
+	Slug                     string   `json:"slug"`
+	Name                     string   `json:"name"`
+	PrimaryDomain            string   `json:"primaryDomain"`
+	VerifiedDomains          []string `json:"verifiedDomains"`
+	BlogBasePath             string   `json:"blogBasePath"`
+	DefaultLocale            string   `json:"defaultLocale"`
+	SupportedLocales         []string `json:"supportedLocales"`
+	Timezone                 string   `json:"timezone"`
+	PublisherName            string   `json:"publisherName"`
+	PublisherURL             string   `json:"publisherUrl"`
+	DefaultRobotsPolicy      string   `json:"defaultRobotsPolicy"`
+	SoloOwnerApprovalEnabled *bool    `json:"soloOwnerApprovalEnabled,omitempty"`
 }
 
 type projectPatchRequest struct {
-	Name                *string   `json:"name"`
-	PrimaryDomain       *string   `json:"primaryDomain"`
-	VerifiedDomains     *[]string `json:"verifiedDomains"`
-	BlogBasePath        *string   `json:"blogBasePath"`
-	DefaultLocale       *string   `json:"defaultLocale"`
-	SupportedLocales    *[]string `json:"supportedLocales"`
-	Timezone            *string   `json:"timezone"`
-	PublisherName       *string   `json:"publisherName"`
-	PublisherURL        *string   `json:"publisherUrl"`
-	DefaultRobotsPolicy *string   `json:"defaultRobotsPolicy"`
+	Name                     *string   `json:"name"`
+	PrimaryDomain            *string   `json:"primaryDomain"`
+	VerifiedDomains          *[]string `json:"verifiedDomains"`
+	BlogBasePath             *string   `json:"blogBasePath"`
+	DefaultLocale            *string   `json:"defaultLocale"`
+	SupportedLocales         *[]string `json:"supportedLocales"`
+	Timezone                 *string   `json:"timezone"`
+	PublisherName            *string   `json:"publisherName"`
+	PublisherURL             *string   `json:"publisherUrl"`
+	DefaultRobotsPolicy      *string   `json:"defaultRobotsPolicy"`
+	SoloOwnerApprovalEnabled *bool     `json:"soloOwnerApprovalEnabled"`
 }
 
 type memberInvitationRequest struct {
@@ -235,29 +238,37 @@ type memberPatchRequest struct {
 }
 
 type articleRequest struct {
-	ArticleType       string     `json:"articleType"`
-	Title             string     `json:"title"`
-	Slug              string     `json:"slug"`
-	Locale            string     `json:"locale"`
-	PrimaryCategoryID string     `json:"primaryCategoryId"`
-	Deck              string     `json:"deck"`
-	Excerpt           string     `json:"excerpt"`
-	ShortAnswer       string     `json:"shortAnswer"`
-	BodyDocument      any        `json:"bodyDocument"`
-	HTML              string     `json:"html"`
-	SEO               seoRequest `json:"seo"`
+	ArticleType       string                       `json:"articleType"`
+	Title             string                       `json:"title"`
+	Slug              string                       `json:"slug"`
+	Locale            string                       `json:"locale"`
+	PrimaryCategoryID string                       `json:"primaryCategoryId"`
+	Contributors      []revisionContributorRequest `json:"contributors"`
+	Deck              string                       `json:"deck"`
+	Excerpt           string                       `json:"excerpt"`
+	ShortAnswer       string                       `json:"shortAnswer"`
+	BodyDocument      any                          `json:"bodyDocument"`
+	HTML              string                       `json:"html"`
+	SEO               seoRequest                   `json:"seo"`
 }
 
 type revisionRequest struct {
-	BaseRevisionID    string     `json:"baseRevisionId"`
-	Title             string     `json:"title"`
-	PrimaryCategoryID string     `json:"primaryCategoryId"`
-	Deck              string     `json:"deck"`
-	Excerpt           string     `json:"excerpt"`
-	ShortAnswer       string     `json:"shortAnswer"`
-	BodyDocument      any        `json:"bodyDocument"`
-	HTML              string     `json:"html"`
-	SEO               seoRequest `json:"seo"`
+	BaseRevisionID    string                       `json:"baseRevisionId"`
+	Title             string                       `json:"title"`
+	PrimaryCategoryID string                       `json:"primaryCategoryId"`
+	Contributors      []revisionContributorRequest `json:"contributors"`
+	Deck              string                       `json:"deck"`
+	Excerpt           string                       `json:"excerpt"`
+	ShortAnswer       string                       `json:"shortAnswer"`
+	BodyDocument      any                          `json:"bodyDocument"`
+	HTML              string                       `json:"html"`
+	SEO               seoRequest                   `json:"seo"`
+}
+
+type revisionContributorRequest struct {
+	AuthorID string `json:"authorId"`
+	Role     string `json:"role"`
+	Position int    `json:"position"`
 }
 
 type seoRequest struct {
@@ -540,7 +551,8 @@ func (s *Server) resetPassword(c fiber.Ctx) error {
 	if input.Token == "" {
 		return problem(c, fiber.StatusBadRequest, "Invalid or expired reset link", "")
 	}
-	if len(input.Password) < passwordMinLength || len(input.Password) > passwordMaxLength {
+	passwordLength := utf8.RuneCountInString(input.Password)
+	if passwordLength < passwordMinLength || passwordLength > passwordMaxLength {
 		return problem(c, fiber.StatusBadRequest, "Invalid password", "Password must be between 15 and 128 characters")
 	}
 	passwordHash, err := security.HashPassword(input.Password)
@@ -2003,35 +2015,37 @@ const sqliteUTCFormat = "2006-01-02 15:04:05"
 
 func (input projectRequest) toStoreInput() store.ProjectInput {
 	return store.ProjectInput{
-		WorkspaceID:         input.WorkspaceID,
-		WorkspaceSlug:       input.WorkspaceSlug,
-		WorkspaceName:       input.WorkspaceName,
-		Slug:                input.Slug,
-		Name:                input.Name,
-		PrimaryDomain:       input.PrimaryDomain,
-		VerifiedDomains:     input.VerifiedDomains,
-		BlogBasePath:        input.BlogBasePath,
-		DefaultLocale:       input.DefaultLocale,
-		SupportedLocales:    input.SupportedLocales,
-		Timezone:            input.Timezone,
-		PublisherName:       input.PublisherName,
-		PublisherURL:        input.PublisherURL,
-		DefaultRobotsPolicy: input.DefaultRobotsPolicy,
+		WorkspaceID:              input.WorkspaceID,
+		WorkspaceSlug:            input.WorkspaceSlug,
+		WorkspaceName:            input.WorkspaceName,
+		Slug:                     input.Slug,
+		Name:                     input.Name,
+		PrimaryDomain:            input.PrimaryDomain,
+		VerifiedDomains:          input.VerifiedDomains,
+		BlogBasePath:             input.BlogBasePath,
+		DefaultLocale:            input.DefaultLocale,
+		SupportedLocales:         input.SupportedLocales,
+		Timezone:                 input.Timezone,
+		PublisherName:            input.PublisherName,
+		PublisherURL:             input.PublisherURL,
+		DefaultRobotsPolicy:      input.DefaultRobotsPolicy,
+		SoloOwnerApprovalEnabled: input.SoloOwnerApprovalEnabled != nil && *input.SoloOwnerApprovalEnabled,
 	}
 }
 
 func (input projectPatchRequest) toStorePatch() store.ProjectPatch {
 	return store.ProjectPatch{
-		Name:                input.Name,
-		PrimaryDomain:       input.PrimaryDomain,
-		VerifiedDomains:     input.VerifiedDomains,
-		BlogBasePath:        input.BlogBasePath,
-		DefaultLocale:       input.DefaultLocale,
-		SupportedLocales:    input.SupportedLocales,
-		Timezone:            input.Timezone,
-		PublisherName:       input.PublisherName,
-		PublisherURL:        input.PublisherURL,
-		DefaultRobotsPolicy: input.DefaultRobotsPolicy,
+		Name:                     input.Name,
+		PrimaryDomain:            input.PrimaryDomain,
+		VerifiedDomains:          input.VerifiedDomains,
+		BlogBasePath:             input.BlogBasePath,
+		DefaultLocale:            input.DefaultLocale,
+		SupportedLocales:         input.SupportedLocales,
+		Timezone:                 input.Timezone,
+		PublisherName:            input.PublisherName,
+		PublisherURL:             input.PublisherURL,
+		DefaultRobotsPolicy:      input.DefaultRobotsPolicy,
+		SoloOwnerApprovalEnabled: input.SoloOwnerApprovalEnabled,
 	}
 }
 
@@ -2054,6 +2068,7 @@ func (input articleRequest) toStoreInput() store.ArticleInput {
 		Slug:              input.Slug,
 		Locale:            input.Locale,
 		PrimaryCategoryID: input.PrimaryCategoryID,
+		Contributors:      contributorInputs(input.Contributors),
 		Deck:              input.Deck,
 		Excerpt:           input.Excerpt,
 		ShortAnswer:       input.ShortAnswer,
@@ -2068,6 +2083,7 @@ func (input revisionRequest) toStoreInput() store.RevisionInput {
 		BaseRevisionID:    input.BaseRevisionID,
 		Title:             input.Title,
 		PrimaryCategoryID: input.PrimaryCategoryID,
+		Contributors:      contributorInputs(input.Contributors),
 		Deck:              input.Deck,
 		Excerpt:           input.Excerpt,
 		ShortAnswer:       input.ShortAnswer,
@@ -2075,6 +2091,21 @@ func (input revisionRequest) toStoreInput() store.RevisionInput {
 		HTML:              input.HTML,
 		SEO:               input.SEO.toStoreInput(),
 	}
+}
+
+func contributorInputs(input []revisionContributorRequest) []store.RevisionContributorInput {
+	if input == nil {
+		return nil
+	}
+	out := make([]store.RevisionContributorInput, 0, len(input))
+	for _, contributor := range input {
+		out = append(out, store.RevisionContributorInput{
+			AuthorID: contributor.AuthorID,
+			Role:     contributor.Role,
+			Position: contributor.Position,
+		})
+	}
+	return out
 }
 
 func (input seoRequest) toStoreInput() store.SEOInput {

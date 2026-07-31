@@ -88,8 +88,9 @@ type Author struct {
 }
 
 type Contributor struct {
-	Author Author `json:"author"`
-	Role   string `json:"role"`
+	Author   Author `json:"author"`
+	Role     string `json:"role"`
+	Position int    `json:"position"`
 }
 
 type Series struct {

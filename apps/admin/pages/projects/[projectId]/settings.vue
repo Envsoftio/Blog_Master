@@ -127,6 +127,21 @@
               </select>
             </label>
 
+            <label class="flex items-start gap-3 rounded-md border border-[#e1bd70] bg-[#fff8e7] p-3 text-sm text-[#6b4905] dark:border-[#665223] dark:bg-[#2b2415] dark:text-[#f5d992]">
+              <input
+                v-model="form.soloOwnerApprovalEnabled"
+                class="mt-1 h-4 w-4"
+                type="checkbox"
+                :disabled="project?.role !== 'project_owner'"
+              >
+              <span>
+                <strong class="block">Allow owner self-approval</strong>
+                <span class="mt-1 block text-xs">
+                  When enabled, a project owner may approve an exact revision they created. Other roles can never self-approve.
+                </span>
+              </span>
+            </label>
+
             <button
               v-if="canManageProject"
               class="inline-flex items-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
@@ -253,6 +268,7 @@ type AdminProject = {
   publisherName?: string
   publisherUrl?: string
   defaultRobotsPolicy: string
+  soloOwnerApprovalEnabled: boolean
   role: string
   createdAt: string
   updatedAt: string
@@ -298,7 +314,8 @@ const form = reactive({
   timezone: 'UTC',
   publisherName: '',
   publisherUrl: '',
-  defaultRobotsPolicy: 'index,follow'
+  defaultRobotsPolicy: 'index,follow',
+  soloOwnerApprovalEnabled: false
 })
 
 const canManageProject = computed(() => project.value?.role === 'project_owner' || project.value?.role === 'project_admin')
@@ -424,10 +441,11 @@ function setProject(value: AdminProject) {
   form.publisherName = value.publisherName || ''
   form.publisherUrl = value.publisherUrl || ''
   form.defaultRobotsPolicy = value.defaultRobotsPolicy || 'index,follow'
+  form.soloOwnerApprovalEnabled = Boolean(value.soloOwnerApprovalEnabled)
 }
 
 function projectPatchBody() {
-  return {
+  const body: Record<string, unknown> = {
     name: form.name,
     primaryDomain: form.primaryDomain,
     verifiedDomains: splitLines(form.verifiedDomains),
@@ -439,6 +457,10 @@ function projectPatchBody() {
     publisherUrl: form.publisherUrl,
     defaultRobotsPolicy: form.defaultRobotsPolicy
   }
+  if (project.value?.role === 'project_owner') {
+    body.soloOwnerApprovalEnabled = form.soloOwnerApprovalEnabled
+  }
+  return body
 }
 
 async function logout() {

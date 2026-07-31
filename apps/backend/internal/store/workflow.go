@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 
 	"seoblog/apps/backend/internal/security"
@@ -133,6 +134,7 @@ type ArticleInput struct {
 	Slug              string
 	Locale            string
 	PrimaryCategoryID string
+	Contributors      []RevisionContributorInput
 	Deck              string
 	Excerpt           string
 	ShortAnswer       string
@@ -145,12 +147,19 @@ type RevisionInput struct {
 	BaseRevisionID    string
 	Title             string
 	PrimaryCategoryID string
+	Contributors      []RevisionContributorInput
 	Deck              string
 	Excerpt           string
 	ShortAnswer       string
 	BodyDocument      any
 	HTML              string
 	SEO               SEOInput
+}
+
+type RevisionContributorInput struct {
+	AuthorID string
+	Role     string
+	Position int
 }
 
 type SEOInput struct {
@@ -390,7 +399,14 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 	if err != nil {
 		return AdminArticle{}, err
 	}
-	contentHash, err := revisionContentHash(input.Title, rendered.HTML, rendered.DocumentJSON, taxonomyJSON, seoJSON)
+	attribution, err := buildRevisionAttribution(ctx, tx, projectID, "", input.Contributors)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	contentHash, err := revisionContentHash(
+		input.Title, rendered.HTML, rendered.DocumentJSON, taxonomyJSON, seoJSON,
+		attribution.AuthorSnapshotJSON, attribution.ContributorSnapshotJSON,
+	)
 	if err != nil {
 		return AdminArticle{}, err
 	}
@@ -410,13 +426,18 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 		INSERT INTO content_revisions(
 		  id, project_id, content_id, revision_number, created_by_type, created_by_user_id,
 		  title, deck, excerpt, short_answer, body_document_json, sanitized_html, plain_text,
-		  markdown_export, table_of_contents_json, word_count, reading_time_seconds, locale, taxonomy_snapshot_json,
+		  markdown_export, table_of_contents_json, word_count, reading_time_seconds, locale,
+		  author_snapshot_json, contributor_snapshot_json, taxonomy_snapshot_json,
 		  seo_snapshot_json, content_hash, editorial_state
-		) VALUES (?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
+		) VALUES (?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
 	`, revisionID, projectID, articleID, actorUserID, input.Title, nullIfEmpty(input.Deck),
 		nullIfEmpty(input.Excerpt), nullIfEmpty(input.ShortAnswer), rendered.DocumentJSON, rendered.HTML, rendered.PlainText,
 		rendered.Markdown, rendered.TableOfContents, wordCount(rendered.PlainText), readingTimeSeconds(rendered.PlainText),
-		input.Locale, taxonomyJSON, seoJSON, contentHash); err != nil {
+		input.Locale, attribution.AuthorSnapshotJSON, attribution.ContributorSnapshotJSON,
+		taxonomyJSON, seoJSON, contentHash); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := insertRevisionContributors(ctx, tx, projectID, revisionID, attribution.Records); err != nil {
 		return AdminArticle{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -515,7 +536,14 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	if err != nil {
 		return AdminRevision{}, err
 	}
-	contentHash, err := revisionContentHash(input.Title, rendered.HTML, rendered.DocumentJSON, taxonomyJSON, seoJSON)
+	attribution, err := buildRevisionAttribution(ctx, tx, projectID, baseRevisionID, input.Contributors)
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	contentHash, err := revisionContentHash(
+		input.Title, rendered.HTML, rendered.DocumentJSON, taxonomyJSON, seoJSON,
+		attribution.AuthorSnapshotJSON, attribution.ContributorSnapshotJSON,
+	)
 	if err != nil {
 		return AdminRevision{}, err
 	}
@@ -523,15 +551,20 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 		INSERT INTO content_revisions(
 		  id, project_id, content_id, revision_number, base_revision_id, created_by_type, created_by_user_id,
 		  title, deck, excerpt, short_answer, body_document_json, sanitized_html, plain_text,
-		  markdown_export, table_of_contents_json, word_count, reading_time_seconds, locale, taxonomy_snapshot_json,
+		  markdown_export, table_of_contents_json, word_count, reading_time_seconds, locale,
+		  author_snapshot_json, contributor_snapshot_json, taxonomy_snapshot_json,
 		  seo_snapshot_json, content_hash, editorial_state
 		) VALUES (?, ?, ?, ?, ?, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((
 		  SELECT locale FROM project_publications WHERE project_id = ? AND content_id = ? LIMIT 1
-		), 'en'), ?, ?, ?, 'draft')
+		), 'en'), ?, ?, ?, ?, ?, 'draft')
 	`, revisionID, projectID, articleID, nextNumber, input.BaseRevisionID, actorUserID, input.Title, nullIfEmpty(input.Deck),
 		nullIfEmpty(input.Excerpt), nullIfEmpty(input.ShortAnswer), rendered.DocumentJSON, rendered.HTML, rendered.PlainText,
 		rendered.Markdown, rendered.TableOfContents, wordCount(rendered.PlainText), readingTimeSeconds(rendered.PlainText),
-		projectID, articleID, taxonomyJSON, seoJSON, contentHash); err != nil {
+		projectID, articleID, attribution.AuthorSnapshotJSON, attribution.ContributorSnapshotJSON,
+		taxonomyJSON, seoJSON, contentHash); err != nil {
+		return AdminRevision{}, err
+	}
+	if err := insertRevisionContributors(ctx, tx, projectID, revisionID, attribution.Records); err != nil {
 		return AdminRevision{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -624,7 +657,9 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 	if err != nil {
 		return AdminArticle{}, err
 	}
-	contentHash, err := revisionContentHash(source.Title, source.SanitizedHTML, source.BodyDocumentJSON, taxonomyJSON, seoJSON)
+	contentHash, err := revisionContentHash(
+		source.Title, source.SanitizedHTML, source.BodyDocumentJSON, taxonomyJSON, seoJSON, "[]", "[]",
+	)
 	if err != nil {
 		return AdminArticle{}, err
 	}
@@ -729,6 +764,10 @@ func (s *Store) ApproveRevision(ctx context.Context, actorUserID, projectID, rev
 		return AdminRevision{}, err
 	}
 	defer tx.Rollback()
+	selfApproval, err := enforceRevisionApprovalPolicy(ctx, tx, actorUserID, projectID, revisionID)
+	if err != nil {
+		return AdminRevision{}, err
+	}
 	if err := ensureRevisionClaimsApproved(ctx, tx, projectID, revisionID); err != nil {
 		return AdminRevision{}, err
 	}
@@ -759,18 +798,64 @@ func (s *Store) ApproveRevision(ctx context.Context, actorUserID, projectID, rev
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO approval_decisions(
-		  id, project_id, content_id, revision_id, decision, content_hash, decided_by, note
-		) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?)
-	`, decisionID, projectID, revision.ArticleID, revisionID, approvedContentHash, actorUserID, nullIfEmpty(note)); err != nil {
+		  id, project_id, content_id, revision_id, decision, content_hash,
+		  decided_by, note, self_approval
+		) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?)
+	`, decisionID, projectID, revision.ArticleID, revisionID, approvedContentHash,
+		actorUserID, nullIfEmpty(note), selfApproval); err != nil {
 		return AdminRevision{}, err
 	}
-	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "revision.approve", "revision", revisionID, "success", nil); err != nil {
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "revision.approve", "revision", revisionID, "success", map[string]any{
+		"self_approval": selfApproval,
+		"content_hash":  approvedContentHash,
+	}); err != nil {
 		return AdminRevision{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return AdminRevision{}, err
 	}
 	return s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
+}
+
+func enforceRevisionApprovalPolicy(
+	ctx context.Context,
+	tx *sql.Tx,
+	actorUserID, projectID, revisionID string,
+) (bool, error) {
+	var role, creatorType, creatorUserID string
+	var soloOwnerApprovalEnabled bool
+	err := tx.QueryRowContext(ctx, `
+		SELECT membership.role, revision.created_by_type,
+		       COALESCE(revision.created_by_user_id, ''),
+		       project.solo_owner_approval_enabled
+		FROM content_revisions revision
+		JOIN projects project
+		  ON project.id = revision.project_id
+		JOIN project_memberships membership
+		  ON membership.project_id = revision.project_id
+		 AND membership.user_id = ?
+		 AND membership.status = 'active'
+		WHERE revision.project_id = ? AND revision.id = ?
+	`, actorUserID, projectID, revisionID).Scan(
+		&role,
+		&creatorType,
+		&creatorUserID,
+		&soloOwnerApprovalEnabled,
+	)
+	if err != nil {
+		return false, err
+	}
+	selfApproval := creatorType == "human" && creatorUserID != "" && creatorUserID == actorUserID
+	if !selfApproval {
+		return false, nil
+	}
+	if role != "project_owner" {
+		return false, fmt.Errorf("%w: reviewers cannot approve a revision they created", ErrInvalidWorkflow)
+	}
+	if !soloOwnerApprovalEnabled {
+		return false, fmt.Errorf("%w: project owner self-approval requires explicit solo-owner mode", ErrInvalidWorkflow)
+	}
+	return true, nil
 }
 
 func (s *Store) ScheduleArticle(ctx context.Context, actorUserID, projectID, articleID string, input PublicationInput) (AdminArticle, error) {
@@ -2735,13 +2820,249 @@ func decodeMapValue(parent map[string]any, key string) map[string]any {
 	return value
 }
 
-func revisionContentHash(title, html, bodyJSON, taxonomyJSON, seoJSON string) (string, error) {
+type revisionContributorRecord struct {
+	AuthorID           string
+	Role               string
+	Position           int
+	Author             Author
+	PublicSnapshotJSON string
+}
+
+type revisionAttribution struct {
+	Records                 []revisionContributorRecord
+	AuthorSnapshotJSON      string
+	ContributorSnapshotJSON string
+}
+
+var contributorRoleOrder = map[string]int{
+	"primary_author":  0,
+	"co_author":       1,
+	"editor":          2,
+	"expert_reviewer": 3,
+	"photographer":    4,
+	"other":           5,
+}
+
+func buildRevisionAttribution(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID, baseRevisionID string,
+	input []RevisionContributorInput,
+) (revisionAttribution, error) {
+	if input == nil && baseRevisionID != "" {
+		return inheritRevisionAttribution(ctx, tx, projectID, baseRevisionID)
+	}
+	if len(input) == 0 {
+		return revisionAttribution{
+			Records:                 []revisionContributorRecord{},
+			AuthorSnapshotJSON:      "[]",
+			ContributorSnapshotJSON: "[]",
+		}, nil
+	}
+
+	normalized, err := normalizeRevisionContributorInputs(input)
+	if err != nil {
+		return revisionAttribution{}, err
+	}
+	records := make([]revisionContributorRecord, 0, len(normalized))
+	for _, contributor := range normalized {
+		row := tx.QueryRowContext(ctx, `
+			SELECT `+authorColumns+`
+			FROM authors
+			WHERE project_id = ? AND id = ? AND status = 'active'
+		`, projectID, contributor.AuthorID)
+		author, err := scanAuthor(row)
+		if errors.Is(err, sql.ErrNoRows) {
+			return revisionAttribution{}, fmt.Errorf("%w: contributor author %q must be active in the selected project", ErrValidation, contributor.AuthorID)
+		}
+		if err != nil {
+			return revisionAttribution{}, err
+		}
+		publicSnapshot, err := json.Marshal(author)
+		if err != nil {
+			return revisionAttribution{}, err
+		}
+		records = append(records, revisionContributorRecord{
+			AuthorID:           contributor.AuthorID,
+			Role:               contributor.Role,
+			Position:           contributor.Position,
+			Author:             author,
+			PublicSnapshotJSON: string(publicSnapshot),
+		})
+	}
+	return attributionFromRecords(records)
+}
+
+func normalizeRevisionContributorInputs(input []RevisionContributorInput) ([]RevisionContributorInput, error) {
+	normalized := make([]RevisionContributorInput, 0, len(input))
+	seenAssignments := map[string]struct{}{}
+	seenPositions := map[string]struct{}{}
+	primaryAuthors := 0
+	for _, contributor := range input {
+		contributor.AuthorID = strings.TrimSpace(contributor.AuthorID)
+		contributor.Role = strings.ToLower(strings.TrimSpace(contributor.Role))
+		if contributor.AuthorID == "" {
+			return nil, fmt.Errorf("%w: contributor authorId is required", ErrValidation)
+		}
+		if _, supported := contributorRoleOrder[contributor.Role]; !supported {
+			return nil, fmt.Errorf("%w: unsupported contributor role %q", ErrValidation, contributor.Role)
+		}
+		if contributor.Position < 0 {
+			return nil, fmt.Errorf("%w: contributor position cannot be negative", ErrValidation)
+		}
+		if contributor.Role == "primary_author" {
+			primaryAuthors++
+			if contributor.Position != 0 {
+				return nil, fmt.Errorf("%w: primary author position must be zero", ErrValidation)
+			}
+		}
+		assignmentKey := contributor.AuthorID + "\x00" + contributor.Role
+		if _, duplicate := seenAssignments[assignmentKey]; duplicate {
+			return nil, fmt.Errorf("%w: contributor role is duplicated for author %q", ErrValidation, contributor.AuthorID)
+		}
+		seenAssignments[assignmentKey] = struct{}{}
+		positionKey := contributor.Role + "\x00" + fmt.Sprint(contributor.Position)
+		if _, duplicate := seenPositions[positionKey]; duplicate {
+			return nil, fmt.Errorf("%w: contributor position %d is duplicated for role %q", ErrValidation, contributor.Position, contributor.Role)
+		}
+		seenPositions[positionKey] = struct{}{}
+		normalized = append(normalized, contributor)
+	}
+	if primaryAuthors != 1 {
+		return nil, fmt.Errorf("%w: contributors must include exactly one primary author", ErrValidation)
+	}
+	sort.SliceStable(normalized, func(left, right int) bool {
+		leftRank := contributorRoleOrder[normalized[left].Role]
+		rightRank := contributorRoleOrder[normalized[right].Role]
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if normalized[left].Position != normalized[right].Position {
+			return normalized[left].Position < normalized[right].Position
+		}
+		return normalized[left].AuthorID < normalized[right].AuthorID
+	})
+	return normalized, nil
+}
+
+func inheritRevisionAttribution(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID, baseRevisionID string,
+) (revisionAttribution, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT author_id, role, position, public_snapshot_json
+		FROM revision_contributors
+		WHERE project_id = ? AND revision_id = ?
+	`, projectID, baseRevisionID)
+	if err != nil {
+		return revisionAttribution{}, err
+	}
+	defer rows.Close()
+
+	records := []revisionContributorRecord{}
+	for rows.Next() {
+		var record revisionContributorRecord
+		if err := rows.Scan(&record.AuthorID, &record.Role, &record.Position, &record.PublicSnapshotJSON); err != nil {
+			return revisionAttribution{}, err
+		}
+		if err := json.Unmarshal([]byte(record.PublicSnapshotJSON), &record.Author); err != nil {
+			return revisionAttribution{}, fmt.Errorf("decode inherited contributor snapshot: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return revisionAttribution{}, err
+	}
+	if len(records) > 0 {
+		return attributionFromRecords(records)
+	}
+
+	var authorSnapshotJSON, contributorSnapshotJSON string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT author_snapshot_json, contributor_snapshot_json
+		FROM content_revisions
+		WHERE project_id = ? AND id = ?
+	`, projectID, baseRevisionID).Scan(&authorSnapshotJSON, &contributorSnapshotJSON); err != nil {
+		return revisionAttribution{}, err
+	}
+	return revisionAttribution{
+		Records:                 records,
+		AuthorSnapshotJSON:      authorSnapshotJSON,
+		ContributorSnapshotJSON: contributorSnapshotJSON,
+	}, nil
+}
+
+func attributionFromRecords(records []revisionContributorRecord) (revisionAttribution, error) {
+	sort.SliceStable(records, func(left, right int) bool {
+		leftRank := contributorRoleOrder[records[left].Role]
+		rightRank := contributorRoleOrder[records[right].Role]
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if records[left].Position != records[right].Position {
+			return records[left].Position < records[right].Position
+		}
+		return records[left].AuthorID < records[right].AuthorID
+	})
+	authors := []Author{}
+	contributors := []Contributor{}
+	for _, record := range records {
+		switch record.Role {
+		case "primary_author", "co_author":
+			authors = append(authors, record.Author)
+		default:
+			contributors = append(contributors, Contributor{
+				Author:   record.Author,
+				Role:     record.Role,
+				Position: record.Position,
+			})
+		}
+	}
+	authorSnapshotJSON, err := json.Marshal(authors)
+	if err != nil {
+		return revisionAttribution{}, err
+	}
+	contributorSnapshotJSON, err := json.Marshal(contributors)
+	if err != nil {
+		return revisionAttribution{}, err
+	}
+	return revisionAttribution{
+		Records:                 records,
+		AuthorSnapshotJSON:      string(authorSnapshotJSON),
+		ContributorSnapshotJSON: string(contributorSnapshotJSON),
+	}, nil
+}
+
+func insertRevisionContributors(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID, revisionID string,
+	records []revisionContributorRecord,
+) error {
+	for _, record := range records {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO revision_contributors(
+			  project_id, revision_id, author_id, role, position, public_snapshot_json
+			) VALUES (?, ?, ?, ?, ?, ?)
+		`, projectID, revisionID, record.AuthorID, record.Role, record.Position, record.PublicSnapshotJSON); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func revisionContentHash(
+	title, html, bodyJSON, taxonomyJSON, seoJSON, authorJSON, contributorJSON string,
+) (string, error) {
 	raw, err := json.Marshal(map[string]string{
-		"title":    title,
-		"html":     html,
-		"body":     bodyJSON,
-		"taxonomy": taxonomyJSON,
-		"seo":      seoJSON,
+		"title":        title,
+		"html":         html,
+		"body":         bodyJSON,
+		"taxonomy":     taxonomyJSON,
+		"seo":          seoJSON,
+		"authors":      authorJSON,
+		"contributors": contributorJSON,
 	})
 	if err != nil {
 		return "", err

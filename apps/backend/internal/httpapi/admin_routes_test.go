@@ -162,6 +162,9 @@ func TestAdminLoginMeAndProjectCreate(t *testing.T) {
 	if created.Data.PublicProjectKey == "" {
 		t.Fatal("expected public project key")
 	}
+	if created.Data.SoloOwnerApprovalEnabled {
+		t.Fatal("expected new projects to deny owner self-approval by default")
+	}
 
 	var membershipRole string
 	if err := db.QueryRow(`
@@ -1817,6 +1820,155 @@ func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 	}
 }
 
+func TestRevisionContributorsAreScopedOrderedAndImmutable(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct horse password")
+	otherOwnerLogin := seedAndLogin(t, server, db, "other-owner@example.test", "other owner correct password")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"attribution","name":"Attribution"}`)
+	otherProject := createTestProject(t, server, otherOwnerLogin, `{"slug":"other-attribution","name":"Other Attribution"}`)
+	category := createTestCategory(t, server, ownerLogin, project.ID, `{"slug":"guides","name":"Guides"}`)
+	primaryAuthor := createTestAuthor(t, server, ownerLogin, project.ID, `{"slug":"primary-author","displayName":"Primary Author","shortBio":"Primary bio"}`)
+	coAuthor := createTestAuthor(t, server, ownerLogin, project.ID, `{"slug":"co-author","displayName":"Co Author"}`)
+	editor := createTestAuthor(t, server, ownerLogin, project.ID, `{"slug":"editor-credit","displayName":"Editor Credit"}`)
+	foreignAuthor := createTestAuthor(t, server, otherOwnerLogin, otherProject.ID, `{"slug":"foreign-author","displayName":"Foreign Author"}`)
+
+	crossProjectRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles",
+		`{"articleType":"guide","title":"Foreign Byline","slug":"foreign-byline","primaryCategoryId":"`+category.ID+`","html":"<p>Foreign.</p>","contributors":[{"authorId":"`+foreignAuthor.ID+`","role":"primary_author","position":0}]}`,
+		ownerLogin,
+	)
+	crossProjectResponse := mustTest(t, server, crossProjectRequest)
+	if crossProjectResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected cross-project author assignment to fail with 400, got %d: %s", crossProjectResponse.StatusCode, readBody(t, crossProjectResponse))
+	}
+
+	multiplePrimaryRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles",
+		`{"articleType":"guide","title":"Multiple Primary","slug":"multiple-primary","primaryCategoryId":"`+category.ID+`","html":"<p>Invalid.</p>","contributors":[{"authorId":"`+primaryAuthor.ID+`","role":"primary_author","position":0},{"authorId":"`+coAuthor.ID+`","role":"primary_author","position":0}]}`,
+		ownerLogin,
+	)
+	multiplePrimaryResponse := mustTest(t, server, multiplePrimaryRequest)
+	if multiplePrimaryResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected multiple primary authors to fail with 400, got %d: %s", multiplePrimaryResponse.StatusCode, readBody(t, multiplePrimaryResponse))
+	}
+
+	article := createTestArticle(
+		t,
+		server,
+		ownerLogin,
+		project.ID,
+		`{"articleType":"guide","title":"Attributed Guide","slug":"attributed-guide","primaryCategoryId":"`+category.ID+`","html":"<p>Attributed.</p>","contributors":[{"authorId":"`+editor.ID+`","role":"editor","position":0},{"authorId":"`+coAuthor.ID+`","role":"co_author","position":0},{"authorId":"`+primaryAuthor.ID+`","role":"primary_author","position":0}]}`,
+	)
+	firstRevisionID := article.LatestRevision.ID
+	firstDetail := getTestRevisionDetail(t, server, ownerLogin, project.ID, article.ID, firstRevisionID)
+	firstAuthors := decodeAuthorSnapshot(t, firstDetail.AuthorSnapshot)
+	firstContributors := decodeContributorSnapshot(t, firstDetail.ContributorSnapshot)
+	if len(firstAuthors) != 2 || firstAuthors[0].ID != primaryAuthor.ID || firstAuthors[1].ID != coAuthor.ID {
+		t.Fatalf("expected primary author followed by ordered co-authors, got %#v", firstAuthors)
+	}
+	if len(firstContributors) != 1 || firstContributors[0].Author.ID != editor.ID ||
+		firstContributors[0].Role != "editor" || firstContributors[0].Position != 0 {
+		t.Fatalf("expected an ordered editor credit, got %#v", firstContributors)
+	}
+	var contributorRows int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM revision_contributors
+		WHERE project_id = ? AND revision_id = ?
+	`, project.ID, firstRevisionID).Scan(&contributorRows); err != nil {
+		t.Fatal(err)
+	}
+	if contributorRows != 3 {
+		t.Fatalf("expected three revision contributor records, got %d", contributorRows)
+	}
+
+	renameRequest := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+project.ID+"/authors/"+primaryAuthor.ID,
+		`{"displayName":"Renamed Author","slug":"renamed-author"}`,
+		ownerLogin,
+	)
+	renameResponse := mustTest(t, server, renameRequest)
+	if renameResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected author rename 200, got %d: %s", renameResponse.StatusCode, readBody(t, renameResponse))
+	}
+	firstDetailAfterRename := getTestRevisionDetail(t, server, ownerLogin, project.ID, article.ID, firstRevisionID)
+	if got := decodeAuthorSnapshot(t, firstDetailAfterRename.AuthorSnapshot)[0].DisplayName; got != "Primary Author" {
+		t.Fatalf("expected historical revision byline to remain immutable, got %q", got)
+	}
+
+	inheritedRevision := createTestRevision(
+		t,
+		server,
+		ownerLogin,
+		project.ID,
+		article.ID,
+		`{"title":"Attributed Guide","html":"<p>Attributed.</p>"}`,
+	)
+	inheritedDetail := getTestRevisionDetail(t, server, ownerLogin, project.ID, article.ID, inheritedRevision.ID)
+	inheritedAuthors := decodeAuthorSnapshot(t, inheritedDetail.AuthorSnapshot)
+	if len(inheritedAuthors) != 2 || inheritedAuthors[0].DisplayName != "Primary Author" {
+		t.Fatalf("expected omitted contributor input to inherit the immutable byline, got %#v", inheritedAuthors)
+	}
+	var inheritedRows int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM revision_contributors
+		WHERE project_id = ? AND revision_id = ?
+	`, project.ID, inheritedRevision.ID).Scan(&inheritedRows); err != nil {
+		t.Fatal(err)
+	}
+	if inheritedRows != 3 {
+		t.Fatalf("expected inherited contributor records, got %d", inheritedRows)
+	}
+
+	refreshedRevision := createTestRevision(
+		t,
+		server,
+		ownerLogin,
+		project.ID,
+		article.ID,
+		`{"title":"Attributed Guide","html":"<p>Attributed.</p>","contributors":[{"authorId":"`+primaryAuthor.ID+`","role":"primary_author","position":0}]}`,
+	)
+	refreshedDetail := getTestRevisionDetail(t, server, ownerLogin, project.ID, article.ID, refreshedRevision.ID)
+	refreshedAuthors := decodeAuthorSnapshot(t, refreshedDetail.AuthorSnapshot)
+	if len(refreshedAuthors) != 1 || refreshedAuthors[0].DisplayName != "Renamed Author" {
+		t.Fatalf("expected explicit reassignment to snapshot the current public profile, got %#v", refreshedAuthors)
+	}
+	if refreshedRevision.ContentHash == inheritedRevision.ContentHash {
+		t.Fatal("expected attribution changes to alter the approval-bound content hash")
+	}
+
+	approveTestRevision(t, server, ownerLogin, project.ID, inheritedRevision.ID)
+	publishTestArticle(t, server, ownerLogin, project.ID, article.ID, inheritedRevision.ID, "attributed-guide")
+	publishedRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts/attributed-guide?locale=en", nil)
+	publishedRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	publishedResponse := mustTest(t, server, publishedRequest)
+	if publishedResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected attributed published article 200, got %d: %s", publishedResponse.StatusCode, readBody(t, publishedResponse))
+	}
+	var published Envelope[store.PublishedPost]
+	decodeJSONResponse(t, publishedResponse, &published)
+	if len(published.Data.Authors) != 2 || published.Data.Authors[0].DisplayName != "Primary Author" ||
+		len(published.Data.Contributors) != 1 || published.Data.Contributors[0].Role != "editor" {
+		t.Fatalf("expected immutable attribution in public JSON, got authors=%#v contributors=%#v", published.Data.Authors, published.Data.Contributors)
+	}
+
+	filteredRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts?author=primary-author", nil)
+	filteredRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	filteredResponse := mustTest(t, server, filteredRequest)
+	if filteredResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected author-filtered list 200, got %d: %s", filteredResponse.StatusCode, readBody(t, filteredResponse))
+	}
+	var filtered ListEnvelope[store.PublishedPost]
+	decodeJSONResponse(t, filteredResponse, &filtered)
+	if len(filtered.Data) != 1 || filtered.Data[0].ID != article.ID {
+		t.Fatalf("expected author-filtered published article, got %#v", filtered.Data)
+	}
+}
+
 func TestSourcesClaimsAndApprovalGate(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct password")
@@ -2029,6 +2181,132 @@ func TestSourcesClaimsAndApprovalGate(t *testing.T) {
 	}
 	if claimAuditCount != 2 {
 		t.Fatalf("expected claim create and verify audit events, got %d", claimAuditCount)
+	}
+}
+
+func TestRevisionSelfApprovalRequiresExplicitSoloOwnerMode(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct horse password")
+	adminLogin := seedAndLogin(t, server, db, "admin@example.test", "admin correct horse password")
+	project := createTestProject(
+		t,
+		server,
+		ownerLogin,
+		`{"slug":"approval-policy","name":"Approval Policy","soloOwnerApprovalEnabled":false}`,
+	)
+	if project.SoloOwnerApprovalEnabled {
+		t.Fatal("expected solo-owner approval to default to disabled")
+	}
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'project_admin', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, adminLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+	category := createTestCategory(t, server, ownerLogin, project.ID, `{"slug":"guides","name":"Guides"}`)
+
+	ownerArticle := createTestArticle(
+		t,
+		server,
+		ownerLogin,
+		project.ID,
+		`{"articleType":"guide","title":"Owner Draft","slug":"owner-draft","primaryCategoryId":"`+category.ID+`","html":"<p>Owner draft.</p>"}`,
+	)
+	ownerApproval := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/revisions/"+ownerArticle.LatestRevision.ID+"/approve",
+		`{}`,
+		ownerLogin,
+	)
+	ownerApprovalResponse := mustTest(t, server, ownerApproval)
+	if ownerApprovalResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected owner self-approval without opt-in to fail with 409, got %d: %s", ownerApprovalResponse.StatusCode, readBody(t, ownerApprovalResponse))
+	}
+
+	adminEnable := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+project.ID,
+		`{"soloOwnerApprovalEnabled":true}`,
+		adminLogin,
+	)
+	adminEnableResponse := mustTest(t, server, adminEnable)
+	if adminEnableResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected project admin solo-owner setting denial, got %d: %s", adminEnableResponse.StatusCode, readBody(t, adminEnableResponse))
+	}
+
+	ownerEnable := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+project.ID,
+		`{"soloOwnerApprovalEnabled":true}`,
+		ownerLogin,
+	)
+	ownerEnableResponse := mustTest(t, server, ownerEnable)
+	if ownerEnableResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected owner to enable solo-owner approval, got %d: %s", ownerEnableResponse.StatusCode, readBody(t, ownerEnableResponse))
+	}
+	var updatedProject Envelope[store.AdminProject]
+	decodeJSONResponse(t, ownerEnableResponse, &updatedProject)
+	if !updatedProject.Data.SoloOwnerApprovalEnabled {
+		t.Fatal("expected enabled solo-owner approval in the project response")
+	}
+
+	approvedOwnerRevision := approveTestRevision(t, server, ownerLogin, project.ID, ownerArticle.LatestRevision.ID)
+	var ownerSelfApproval int
+	var ownerDecisionHash string
+	if err := db.QueryRow(`
+		SELECT self_approval, content_hash
+		FROM approval_decisions
+		WHERE project_id = ? AND revision_id = ?
+	`, project.ID, ownerArticle.LatestRevision.ID).Scan(&ownerSelfApproval, &ownerDecisionHash); err != nil {
+		t.Fatal(err)
+	}
+	if ownerSelfApproval != 1 || ownerDecisionHash != approvedOwnerRevision.ContentHash {
+		t.Fatalf("expected an exact-revision self-approval decision, got self=%d hash=%q", ownerSelfApproval, ownerDecisionHash)
+	}
+	var approvalAuditMetadata string
+	if err := db.QueryRow(`
+		SELECT metadata_json
+		FROM audit_events
+		WHERE project_id = ? AND action = 'revision.approve' AND target_id = ?
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, project.ID, ownerArticle.LatestRevision.ID).Scan(&approvalAuditMetadata); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(approvalAuditMetadata, `"self_approval":true`) ||
+		!strings.Contains(approvalAuditMetadata, approvedOwnerRevision.ContentHash) {
+		t.Fatalf("expected self-approval and content hash audit metadata, got %s", approvalAuditMetadata)
+	}
+
+	adminArticle := createTestArticle(
+		t,
+		server,
+		adminLogin,
+		project.ID,
+		`{"articleType":"guide","title":"Admin Draft","slug":"admin-draft","primaryCategoryId":"`+category.ID+`","html":"<p>Admin draft.</p>"}`,
+	)
+	adminApproval := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/revisions/"+adminArticle.LatestRevision.ID+"/approve",
+		`{}`,
+		adminLogin,
+	)
+	adminApprovalResponse := mustTest(t, server, adminApproval)
+	if adminApprovalResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected non-owner self-approval to fail with 409, got %d: %s", adminApprovalResponse.StatusCode, readBody(t, adminApprovalResponse))
+	}
+
+	approveTestRevision(t, server, ownerLogin, project.ID, adminArticle.LatestRevision.ID)
+	var nonSelfApproval int
+	if err := db.QueryRow(`
+		SELECT self_approval
+		FROM approval_decisions
+		WHERE project_id = ? AND revision_id = ?
+	`, project.ID, adminArticle.LatestRevision.ID).Scan(&nonSelfApproval); err != nil {
+		t.Fatal(err)
+	}
+	if nonSelfApproval != 0 {
+		t.Fatalf("expected owner approval of another user's revision to be non-self, got %d", nonSelfApproval)
 	}
 }
 
@@ -4672,7 +4950,21 @@ func resetTokenFromMessage(t *testing.T, message mailer.Message) string {
 
 func createTestProject(t *testing.T, server *Server, login adminLoginResult, body string) store.AdminProject {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", strings.NewReader(body))
+	var requestBody map[string]any
+	if err := json.Unmarshal([]byte(body), &requestBody); err != nil {
+		t.Fatal(err)
+	}
+	if _, provided := requestBody["soloOwnerApprovalEnabled"]; !provided {
+		// Most workflow fixtures use the creating owner as the reviewer. Keep that
+		// test setup explicit while production projects continue to default to the
+		// safer no-self-approval policy.
+		requestBody["soloOwnerApprovalEnabled"] = true
+	}
+	encodedBody, err := json.Marshal(requestBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects", bytes.NewReader(encodedBody))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-CSRF-Token", login.csrfToken)
 	addCookies(request, login.cookies)
@@ -4877,6 +5169,54 @@ func createTestRevision(t *testing.T, server *Server, login adminLoginResult, pr
 	var payload Envelope[store.AdminRevision]
 	decodeJSONResponse(t, response, &payload)
 	return payload.Data
+}
+
+func getTestRevisionDetail(
+	t *testing.T,
+	server *Server,
+	login adminLoginResult,
+	projectID, articleID, revisionID string,
+) store.AdminRevisionDetail {
+	t.Helper()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/projects/"+projectID+"/articles/"+articleID+"/revisions/"+revisionID,
+		nil,
+	)
+	addCookies(request, login.cookies)
+	response := mustTest(t, server, request)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected revision detail 200, got %d: %s", response.StatusCode, readBody(t, response))
+	}
+	var payload Envelope[store.AdminRevisionDetail]
+	decodeJSONResponse(t, response, &payload)
+	return payload.Data
+}
+
+func decodeAuthorSnapshot(t *testing.T, snapshot any) []store.Author {
+	t.Helper()
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var authors []store.Author
+	if err := json.Unmarshal(raw, &authors); err != nil {
+		t.Fatal(err)
+	}
+	return authors
+}
+
+func decodeContributorSnapshot(t *testing.T, snapshot any) []store.Contributor {
+	t.Helper()
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contributors []store.Contributor
+	if err := json.Unmarshal(raw, &contributors); err != nil {
+		t.Fatal(err)
+	}
+	return contributors
 }
 
 func approveTestRevision(t *testing.T, server *Server, login adminLoginResult, projectID, revisionID string) store.AdminRevision {

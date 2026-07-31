@@ -61,26 +61,27 @@ type Session struct {
 }
 
 type AdminProject struct {
-	ID                  string   `json:"id"`
-	WorkspaceID         string   `json:"workspaceId"`
-	WorkspaceSlug       string   `json:"workspaceSlug"`
-	WorkspaceName       string   `json:"workspaceName"`
-	Slug                string   `json:"slug"`
-	Name                string   `json:"name"`
-	Status              string   `json:"status"`
-	PublicProjectKey    string   `json:"publicProjectKey"`
-	PrimaryDomain       string   `json:"primaryDomain,omitempty"`
-	VerifiedDomains     []string `json:"verifiedDomains"`
-	BlogBasePath        string   `json:"blogBasePath"`
-	DefaultLocale       string   `json:"defaultLocale"`
-	SupportedLocales    []string `json:"supportedLocales"`
-	Timezone            string   `json:"timezone"`
-	PublisherName       string   `json:"publisherName,omitempty"`
-	PublisherURL        string   `json:"publisherUrl,omitempty"`
-	DefaultRobotsPolicy string   `json:"defaultRobotsPolicy"`
-	Role                string   `json:"role,omitempty"`
-	CreatedAt           string   `json:"createdAt"`
-	UpdatedAt           string   `json:"updatedAt"`
+	ID                       string   `json:"id"`
+	WorkspaceID              string   `json:"workspaceId"`
+	WorkspaceSlug            string   `json:"workspaceSlug"`
+	WorkspaceName            string   `json:"workspaceName"`
+	Slug                     string   `json:"slug"`
+	Name                     string   `json:"name"`
+	Status                   string   `json:"status"`
+	PublicProjectKey         string   `json:"publicProjectKey"`
+	PrimaryDomain            string   `json:"primaryDomain,omitempty"`
+	VerifiedDomains          []string `json:"verifiedDomains"`
+	BlogBasePath             string   `json:"blogBasePath"`
+	DefaultLocale            string   `json:"defaultLocale"`
+	SupportedLocales         []string `json:"supportedLocales"`
+	Timezone                 string   `json:"timezone"`
+	PublisherName            string   `json:"publisherName,omitempty"`
+	PublisherURL             string   `json:"publisherUrl,omitempty"`
+	DefaultRobotsPolicy      string   `json:"defaultRobotsPolicy"`
+	SoloOwnerApprovalEnabled bool     `json:"soloOwnerApprovalEnabled"`
+	Role                     string   `json:"role,omitempty"`
+	CreatedAt                string   `json:"createdAt"`
+	UpdatedAt                string   `json:"updatedAt"`
 }
 
 type AdminProjectMember struct {
@@ -120,33 +121,35 @@ type invitationAcceptanceCandidate struct {
 }
 
 type ProjectInput struct {
-	WorkspaceID         string
-	WorkspaceSlug       string
-	WorkspaceName       string
-	Slug                string
-	Name                string
-	PrimaryDomain       string
-	VerifiedDomains     []string
-	BlogBasePath        string
-	DefaultLocale       string
-	SupportedLocales    []string
-	Timezone            string
-	PublisherName       string
-	PublisherURL        string
-	DefaultRobotsPolicy string
+	WorkspaceID              string
+	WorkspaceSlug            string
+	WorkspaceName            string
+	Slug                     string
+	Name                     string
+	PrimaryDomain            string
+	VerifiedDomains          []string
+	BlogBasePath             string
+	DefaultLocale            string
+	SupportedLocales         []string
+	Timezone                 string
+	PublisherName            string
+	PublisherURL             string
+	DefaultRobotsPolicy      string
+	SoloOwnerApprovalEnabled bool
 }
 
 type ProjectPatch struct {
-	Name                *string
-	PrimaryDomain       *string
-	VerifiedDomains     *[]string
-	BlogBasePath        *string
-	DefaultLocale       *string
-	SupportedLocales    *[]string
-	Timezone            *string
-	PublisherName       *string
-	PublisherURL        *string
-	DefaultRobotsPolicy *string
+	Name                     *string
+	PrimaryDomain            *string
+	VerifiedDomains          *[]string
+	BlogBasePath             *string
+	DefaultLocale            *string
+	SupportedLocales         *[]string
+	Timezone                 *string
+	PublisherName            *string
+	PublisherURL             *string
+	DefaultRobotsPolicy      *string
+	SoloOwnerApprovalEnabled *bool
 }
 
 type ProjectMemberInviteInput struct {
@@ -527,13 +530,14 @@ func (s *Store) CreateProject(ctx context.Context, actorUserID string, input Pro
 		INSERT INTO projects(
 		  id, workspace_id, slug, name, public_project_key, primary_domain,
 		  verified_domains_json, blog_base_path, default_locale, supported_locales,
-		  timezone, publisher_name, publisher_url, default_robots_policy, created_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		  timezone, publisher_name, publisher_url, default_robots_policy,
+		  solo_owner_approval_enabled, created_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		projectID, workspaceID, input.Slug, input.Name, publicProjectKey, nullIfEmpty(input.PrimaryDomain),
 		verifiedDomainsJSON, input.BlogBasePath, input.DefaultLocale, supportedLocalesJSON,
 		input.Timezone, nullIfEmpty(input.PublisherName), nullIfEmpty(input.PublisherURL),
-		input.DefaultRobotsPolicy, actorUserID,
+		input.DefaultRobotsPolicy, input.SoloOwnerApprovalEnabled, actorUserID,
 	); err != nil {
 		return AdminProject{}, err
 	}
@@ -556,26 +560,32 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 	if err := s.requireProjectManagement(ctx, actorUserID, projectID); err != nil {
 		return AdminProject{}, err
 	}
+	if patch.SoloOwnerApprovalEnabled != nil {
+		if err := s.requireProjectOwner(ctx, actorUserID, projectID); err != nil {
+			return AdminProject{}, err
+		}
+	}
 
 	current, err := s.GetProjectForUser(ctx, actorUserID, projectID)
 	if err != nil {
 		return AdminProject{}, err
 	}
 	next := ProjectInput{
-		WorkspaceID:         current.WorkspaceID,
-		WorkspaceSlug:       current.WorkspaceSlug,
-		WorkspaceName:       current.WorkspaceName,
-		Slug:                current.Slug,
-		Name:                current.Name,
-		PrimaryDomain:       current.PrimaryDomain,
-		VerifiedDomains:     current.VerifiedDomains,
-		BlogBasePath:        current.BlogBasePath,
-		DefaultLocale:       current.DefaultLocale,
-		SupportedLocales:    current.SupportedLocales,
-		Timezone:            current.Timezone,
-		PublisherName:       current.PublisherName,
-		PublisherURL:        current.PublisherURL,
-		DefaultRobotsPolicy: current.DefaultRobotsPolicy,
+		WorkspaceID:              current.WorkspaceID,
+		WorkspaceSlug:            current.WorkspaceSlug,
+		WorkspaceName:            current.WorkspaceName,
+		Slug:                     current.Slug,
+		Name:                     current.Name,
+		PrimaryDomain:            current.PrimaryDomain,
+		VerifiedDomains:          current.VerifiedDomains,
+		BlogBasePath:             current.BlogBasePath,
+		DefaultLocale:            current.DefaultLocale,
+		SupportedLocales:         current.SupportedLocales,
+		Timezone:                 current.Timezone,
+		PublisherName:            current.PublisherName,
+		PublisherURL:             current.PublisherURL,
+		DefaultRobotsPolicy:      current.DefaultRobotsPolicy,
+		SoloOwnerApprovalEnabled: current.SoloOwnerApprovalEnabled,
 	}
 	if patch.Name != nil {
 		next.Name = strings.TrimSpace(*patch.Name)
@@ -606,6 +616,9 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 	}
 	if patch.DefaultRobotsPolicy != nil {
 		next.DefaultRobotsPolicy = strings.TrimSpace(*patch.DefaultRobotsPolicy)
+	}
+	if patch.SoloOwnerApprovalEnabled != nil {
+		next.SoloOwnerApprovalEnabled = *patch.SoloOwnerApprovalEnabled
 	}
 	next = applyProjectDefaults(next)
 	if err := validateProjectInput(next); err != nil {
@@ -638,11 +651,12 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 		    publisher_name = ?,
 		    publisher_url = ?,
 		    default_robots_policy = ?,
+		    solo_owner_approval_enabled = ?,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, next.Name, nullIfEmpty(next.PrimaryDomain), verifiedDomainsJSON, next.BlogBasePath,
 		next.DefaultLocale, supportedLocalesJSON, next.Timezone, nullIfEmpty(next.PublisherName),
-		nullIfEmpty(next.PublisherURL), next.DefaultRobotsPolicy, projectID)
+		nullIfEmpty(next.PublisherURL), next.DefaultRobotsPolicy, next.SoloOwnerApprovalEnabled, projectID)
 	if err != nil {
 		return AdminProject{}, err
 	}
@@ -651,7 +665,9 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 	} else if changed != 1 {
 		return AdminProject{}, sql.ErrNoRows
 	}
-	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "project.update", "project", projectID, "success", nil); err != nil {
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "project.update", "project", projectID, "success", map[string]any{
+		"solo_owner_approval_enabled": next.SoloOwnerApprovalEnabled,
+	}); err != nil {
 		return AdminProject{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -2070,6 +2086,7 @@ const adminProjectColumns = `
 	project.blog_base_path, project.default_locale, project.supported_locales,
 	project.timezone, COALESCE(project.publisher_name, ''),
 	COALESCE(project.publisher_url, ''), project.default_robots_policy,
+	project.solo_owner_approval_enabled,
 	membership.role, project.created_at, project.updated_at
 `
 
@@ -2103,6 +2120,7 @@ func scanAdminProject(row rowScanner) (AdminProject, error) {
 		&project.PublisherName,
 		&project.PublisherURL,
 		&project.DefaultRobotsPolicy,
+		&project.SoloOwnerApprovalEnabled,
 		&project.Role,
 		&project.CreatedAt,
 		&project.UpdatedAt,

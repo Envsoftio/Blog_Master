@@ -48,7 +48,7 @@ Create the first admin owner with the one-time CLI command after migrations:
 ```bash
 cd apps/backend
 cp .env.example .env
-# Edit .env and set SEOBLOG_BOOTSTRAP_PASSWORD to a strong 8+ character password.
+# Edit .env and set SEOBLOG_BOOTSTRAP_PASSWORD to a strong 15+ character password.
 go run ./cmd/admincli bootstrap-owner -email owner@example.com
 ```
 

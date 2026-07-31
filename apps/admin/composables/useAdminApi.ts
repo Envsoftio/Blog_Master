@@ -31,6 +31,7 @@ export type AdminProject = {
   publisherName?: string
   publisherUrl?: string
   defaultRobotsPolicy?: string
+  soloOwnerApprovalEnabled: boolean
   createdAt?: string
   updatedAt?: string
 }
@@ -549,6 +550,7 @@ export type ProjectCreatePayload = {
   defaultLocale: string
   supportedLocales: string[]
   timezone: string
+  soloOwnerApprovalEnabled?: boolean
 }
 
 export type CategoryCreatePayload = {
@@ -573,6 +575,7 @@ export type ProjectUpdatePayload = Partial<{
   publisherName: string
   publisherUrl: string
   defaultRobotsPolicy: string
+  soloOwnerApprovalEnabled: boolean
 }>
 
 export type ArticleCreatePayload = {
@@ -581,6 +584,7 @@ export type ArticleCreatePayload = {
   slug: string
   locale?: string
   primaryCategoryId: string
+  contributors?: RevisionContributorInput[]
   deck?: string
   excerpt?: string
   shortAnswer?: string
@@ -593,12 +597,19 @@ export type ArticleRevisionPayload = {
   baseRevisionId: string
   title: string
   primaryCategoryId?: string
+  contributors?: RevisionContributorInput[]
   deck?: string
   excerpt?: string
   shortAnswer?: string
   bodyDocument?: unknown
   html?: string
   seo?: SEOInputPayload
+}
+
+export type RevisionContributorInput = {
+  authorId: string
+  role: 'primary_author' | 'co_author' | 'editor' | 'expert_reviewer' | 'photographer' | 'other'
+  position: number
 }
 
 export type ArticleCopyPayload = {

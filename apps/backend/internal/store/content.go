@@ -129,11 +129,9 @@ func (s *Store) ListPublishedPosts(
 		  AND (? = '' OR EXISTS (
 		      SELECT 1
 		      FROM revision_contributors rc
-		      JOIN authors a
-		        ON a.project_id = rc.project_id AND a.id = rc.author_id
 		      WHERE rc.project_id = ci.project_id
 		        AND rc.revision_id = cr.id
-		        AND a.slug = ?
+		        AND json_extract(rc.public_snapshot_json, '$.slug') = ?
 		  ))
 		  AND (? = '' OR EXISTS (
 		      SELECT 1

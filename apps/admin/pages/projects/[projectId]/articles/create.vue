@@ -57,6 +57,16 @@
               </select>
               <small v-if="categories.length === 0">Create a category from the side panel before saving the draft.</small>
             </label>
+            <label class="field">
+              <span>Primary author</span>
+              <select v-model="articleForm.primaryAuthorId" :disabled="authors.length === 0" required>
+                <option value="" disabled>Select author</option>
+                <option v-for="author in authors" :key="author.id" :value="author.id">{{ author.displayName }}</option>
+              </select>
+              <small v-if="authors.length === 0">
+                Create an active profile on the <NuxtLink :to="`/projects/${projectID}/authors`">Authors page</NuxtLink> before saving the draft.
+              </small>
+            </label>
           </div>
         </section>
 
@@ -150,7 +160,7 @@
         <div class="create-form__actions surface">
           <div>
             <strong>{{ canCreateArticle ? 'Ready to create' : 'Complete the required fields' }}</strong>
-            <span>Title, slug, locale, and category are required.</span>
+            <span>Title, slug, locale, category, and a primary author are required.</span>
           </div>
           <NuxtLink class="button" :to="`/projects/${projectID}/articles`">Cancel</NuxtLink>
           <button class="button button--primary" type="submit" :disabled="creatingArticle || !canCreateArticle">
@@ -184,6 +194,7 @@
               <div><dt>Words</dt><dd>{{ wordCount }}</dd></div>
               <div><dt>Locale</dt><dd>{{ articleForm.locale || 'Not set' }}</dd></div>
               <div><dt>Category</dt><dd>{{ selectedCategory ? categoryPathLabel(selectedCategory) : 'Not set' }}</dd></div>
+              <div><dt>Author</dt><dd>{{ selectedAuthor?.displayName || 'Not set' }}</dd></div>
             </dl>
             <div class="draft-preview__path"><span>Canonical path</span><code>{{ canonicalPath }}</code></div>
           </div>
@@ -243,7 +254,7 @@ import {
   RefreshCw,
   Save
 } from 'lucide-vue-next'
-import type { AdminArticle, AdminProject, SEOInputPayload, TaxonomyTerm } from '~/composables/useAdminApi'
+import type { AdminArticle, AdminAuthor, AdminProject, SEOInputPayload, TaxonomyTerm } from '~/composables/useAdminApi'
 import {
   ARTICLE_TYPES,
   articleBodyDocumentFromHTML,
@@ -263,6 +274,7 @@ const projectID = computed(() => {
 
 const project = ref<AdminProject | null>(null)
 const categories = ref<TaxonomyTerm[]>([])
+const authors = ref<AdminAuthor[]>([])
 const recentArticles = ref<AdminArticle[]>([])
 const pending = ref(true)
 const creatingArticle = ref(false)
@@ -284,6 +296,7 @@ const articleForm = reactive({
   slug: '',
   locale: '',
   primaryCategoryId: '',
+  primaryAuthorId: '',
   deck: '',
   excerpt: '',
   shortAnswer: '',
@@ -314,12 +327,14 @@ const canCreateArticle = computed(() => Boolean(
   && articleForm.slug.trim()
   && articleForm.locale.trim()
   && articleForm.primaryCategoryId
+  && articleForm.primaryAuthorId
 ))
 const canCreateCategory = computed(() => canManageTaxonomy.value && Boolean(categoryForm.name.trim() && categoryForm.slug.trim()))
 const htmlForSubmission = computed(() => articleForm.html.trim() || `<p>${escapeHTML(articleForm.title || 'Untitled draft')}</p>`)
 const plainText = computed(() => htmlToPlainText(htmlForSubmission.value))
 const wordCount = computed(() => plainText.value ? plainText.value.split(/\s+/).length : 0)
 const selectedCategory = computed(() => categories.value.find(category => category.id === articleForm.primaryCategoryId) || null)
+const selectedAuthor = computed(() => authors.value.find(author => author.id === articleForm.primaryAuthorId) || null)
 const categoryParentOptions = computed(() => categories.value.filter(category => (category.ancestors?.length || 0) < 2))
 const canonicalPath = computed(() => {
   const basePath = project.value?.blogBasePath || '/blog'
@@ -365,19 +380,26 @@ async function refresh() {
   pending.value = true
   clearMessages()
   try {
-    const [projectResponse, categoryResponse, articleResponse] = await Promise.all([
+    const [projectResponse, categoryResponse, authorResponse, articleResponse] = await Promise.all([
       api.getProject(projectID.value),
       api.listCategories(projectID.value),
+      api.listAuthors(projectID.value),
       api.listArticles(projectID.value, 20)
     ])
     project.value = projectResponse.data
     categories.value = [...categoryResponse.data].sort((left, right) => categoryPathLabel(left).localeCompare(categoryPathLabel(right)))
+    authors.value = authorResponse.data
+      .filter(author => author.status === 'active')
+      .sort((left, right) => left.displayName.localeCompare(right.displayName))
     recentArticles.value = articleResponse.data
     if (!articleForm.locale) {
       articleForm.locale = project.value.defaultLocale || 'en'
     }
     if (!articleForm.primaryCategoryId && categories.value[0]) {
       articleForm.primaryCategoryId = categories.value[0].id
+    }
+    if (!articleForm.primaryAuthorId && authors.value[0]) {
+      articleForm.primaryAuthorId = authors.value[0].id
     }
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load article creation data.')
@@ -424,6 +446,7 @@ async function createArticle() {
       slug: articleForm.slug,
       locale: articleForm.locale,
       primaryCategoryId: articleForm.primaryCategoryId,
+      contributors: [{ authorId: articleForm.primaryAuthorId, role: 'primary_author', position: 0 }],
       deck: articleForm.deck,
       excerpt: articleForm.excerpt,
       shortAnswer: articleForm.shortAnswer,
@@ -499,7 +522,7 @@ function restoreCreateDraft() {
         fields?: Record<string, unknown>
       }
       const keys = [
-        'articleType', 'title', 'slug', 'locale', 'primaryCategoryId', 'deck', 'excerpt', 'shortAnswer',
+        'articleType', 'title', 'slug', 'locale', 'primaryCategoryId', 'primaryAuthorId', 'deck', 'excerpt', 'shortAnswer',
         'seoTitle', 'seoDescription', 'robots', 'openGraphTitle', 'openGraphDescription', 'openGraphImage', 'html'
       ]
       if (

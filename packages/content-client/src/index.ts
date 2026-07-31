@@ -71,6 +71,7 @@ export type Author = {
 export type Contributor = {
   author: Author
   role: string
+  position: number
 }
 
 export type Series = {

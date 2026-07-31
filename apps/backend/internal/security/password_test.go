@@ -3,12 +3,12 @@ package security
 import "testing"
 
 func TestPasswordHashRoundTrip(t *testing.T) {
-	hash, err := HashPassword("12345678")
+	hash, err := HashPassword("123456789012345")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ok, err := VerifyPassword(hash, "12345678")
+	ok, err := VerifyPassword(hash, "123456789012345")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -16,7 +16,7 @@ func TestPasswordHashRoundTrip(t *testing.T) {
 		t.Fatal("expected password to verify")
 	}
 
-	ok, err = VerifyPassword(hash, "87654321")
+	ok, err = VerifyPassword(hash, "543210987654321")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,10 @@ func TestPasswordHashRoundTrip(t *testing.T) {
 }
 
 func TestPasswordHashRejectsShortPassword(t *testing.T) {
-	if _, err := HashPassword("1234567"); err != ErrPasswordTooShort {
+	if _, err := HashPassword("12345678901234"); err != ErrPasswordTooShort {
 		t.Fatalf("expected ErrPasswordTooShort, got %v", err)
+	}
+	if _, err := HashPassword("🔐🔐🔐🔐🔐"); err != ErrPasswordTooShort {
+		t.Fatalf("expected unicode passwords to use character count, got %v", err)
 	}
 }
