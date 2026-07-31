@@ -170,11 +170,11 @@ function contributorRoleValue(event: Event) {
 <style scoped>
 .contributors-editor { min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--border, #d7ded8); border-radius: 7px; }
 .contributors-editor legend { padding: 0 7px; font-size: 12px; font-weight: 650; }
-.contributors-editor__help { margin: 0 0 12px; color: var(--text-faint, #667169); font-size: 11px; line-height: 1.5; }
+.contributors-editor__help { margin: 0 0 12px; color: var(--text-faint, #667169); font-size: 13px; line-height: 1.5; }
 .contributors-editor__rows { display: grid; gap: 8px; }
 .contributors-editor__row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; align-items: end; gap: 8px; }
 .contributors-editor__row label { display: grid; gap: 5px; min-width: 0; }
-.contributors-editor__row label span { color: var(--text-soft, #4f5b54); font-size: 10px; font-weight: 650; }
+.contributors-editor__row label span { color: var(--text-soft, #4f5b54); font-size: 12px; font-weight: 650; }
 .contributors-editor select { width: 100%; min-height: 40px; padding: 0 10px; border: 1px solid var(--border-strong, #bfcac3); border-radius: 6px; background: var(--surface, #fff); color: var(--text, #28342d); }
 .contributors-editor__actions { display: flex; gap: 4px; }
 .contributors-editor__actions button,
@@ -183,11 +183,11 @@ function contributorRoleValue(event: Event) {
 .contributors-editor__actions button:disabled,
 .contributors-editor__footer button:disabled { cursor: not-allowed; opacity: .45; }
 .contributors-editor__actions .contributors-editor__remove { color: #9b2d23; }
-.contributors-editor__empty { margin: 0; padding: 12px; border-radius: 6px; background: var(--surface-subtle, #f5f7f5); color: var(--text-faint, #667169); font-size: 11px; }
+.contributors-editor__empty { margin: 0; padding: 12px; border-radius: 6px; background: var(--surface-subtle, #f5f7f5); color: var(--text-faint, #667169); font-size: 13px; }
 .contributors-editor__footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
 .contributors-editor__footer button { min-height: 36px; }
 .contributors-editor__valid,
-.contributors-editor__invalid { font-size: 10px; font-weight: 650; }
+.contributors-editor__invalid { font-size: 12px; font-weight: 650; }
 .contributors-editor__valid { color: #165a4a; }
 .contributors-editor__invalid { color: #9b2d23; }
 @media (max-width: 680px) {

@@ -107,20 +107,20 @@ async function createTag() {
 <style scoped>
 .taxonomy-actions { display: flex; gap: 7px; }
 .tag-form { display: grid; grid-template-columns: 1fr 1fr 1.5fr auto; gap: 12px; align-items: end; padding: 16px; }
-.checkbox-field { display: inline-flex; min-height: 40px; align-items: center; gap: 7px; font-size: 10px; }
+.checkbox-field { display: inline-flex; min-height: 40px; align-items: center; gap: 7px; font-size: 12px; }
 .checkbox-field input { width: 15px; height: 15px; min-height: 0; }
 .tag-form__actions { display: flex; grid-column: 1 / -1; justify-content: flex-end; gap: 7px; }
 .tag-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px; }
 .tag-toolbar label { display: flex; width: min(320px, 100%); align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); }
-.tag-toolbar input { width: 100%; min-height: 34px; padding: 0; border: 0 !important; box-shadow: none !important; background: transparent !important; font-size: 11px; }
-.tag-toolbar > span { padding-right: 6px; color: var(--text-soft); font-size: 10px; }
+.tag-toolbar input { width: 100%; min-height: 34px; padding: 0; border: 0 !important; box-shadow: none !important; background: transparent !important; font-size: 13px; }
+.tag-toolbar > span { padding-right: 6px; color: var(--text-soft); font-size: 12px; }
 .tag-list { overflow: hidden; }
 .tag-item { display: grid; grid-template-columns: 34px minmax(150px, .7fr) minmax(200px, 1.3fr) auto; align-items: center; gap: 12px; padding: 12px 15px; border-bottom: 1px solid var(--border); }
 .tag-item:last-child { border-bottom: 0; }
 .tag-item__icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 6px; background: var(--primary-soft); color: var(--primary); }
 .tag-item h3, .tag-item p { overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
-.tag-item h3 { font-size: 11px; }
-.tag-item div p, .tag-item > p { margin-top: 2px; color: var(--text-soft); font-size: 9px; }
+.tag-item h3 { font-size: 13px; }
+.tag-item div p, .tag-item > p { margin-top: 2px; color: var(--text-soft); font-size: 12px; }
 .loading-surface { display: flex; min-height: 120px; align-items: center; justify-content: center; gap: 9px; color: var(--text-soft); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

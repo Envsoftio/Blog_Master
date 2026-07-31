@@ -223,11 +223,11 @@ function relativeDate(value?: string) {
 <style scoped>
 .review-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px; }
 .segmented-control { display: flex; gap: 3px; overflow-x: auto; }
-.segmented-control button { display: inline-flex; min-height: 34px; align-items: center; gap: 7px; padding: 6px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text-soft); font-size: 11px; font-weight: 600; white-space: nowrap; cursor: pointer; }
-.segmented-control button span { display: grid; min-width: 19px; height: 19px; place-items: center; border-radius: 10px; background: var(--surface); font-size: 9px; }
+.segmented-control button { display: inline-flex; min-height: 34px; align-items: center; gap: 7px; padding: 6px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text-soft); font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.segmented-control button span { display: grid; min-width: 19px; height: 19px; place-items: center; border-radius: 10px; background: var(--surface); font-size: 12px; }
 .segmented-control button.is-active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
 .review-search { display: flex; width: min(260px, 100%); align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); }
-.review-search input { width: 100%; min-height: 34px; padding: 0; border: 0 !important; box-shadow: none !important; background: transparent !important; font-size: 11px; }
+.review-search input { width: 100%; min-height: 34px; padding: 0; border: 0 !important; box-shadow: none !important; background: transparent !important; font-size: 13px; }
 .review-list { overflow: hidden; }
 .review-item { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 17px; border-bottom: 1px solid var(--border); }
 .review-item:last-child { border-bottom: 0; }
@@ -237,8 +237,8 @@ function relativeDate(value?: string) {
 .review-item__copy { min-width: 0; }
 .review-item__title { display: flex; min-width: 0; align-items: center; gap: 9px; }
 .review-item__title a { overflow: hidden; color: var(--text); font-size: 13px; font-weight: 650; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
-.review-item__copy > p { overflow: hidden; max-width: 720px; margin: 4px 0 0; color: var(--text-soft); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.review-item__meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; color: var(--text-faint); font-size: 9px; text-transform: capitalize; }
+.review-item__copy > p { overflow: hidden; max-width: 720px; margin: 4px 0 0; color: var(--text-soft); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.review-item__meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; color: var(--text-faint); font-size: 12px; text-transform: capitalize; }
 .review-item__meta span { display: inline-flex; align-items: center; gap: 4px; }
 .review-item__actions { display: flex; flex: 0 0 auto; gap: 6px; }
 .loading-surface { display: flex; min-height: 130px; align-items: center; justify-content: center; gap: 9px; color: var(--text-soft); }

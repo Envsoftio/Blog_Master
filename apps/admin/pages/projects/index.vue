@@ -222,30 +222,30 @@ function normalizeBlogPath(value: string) {
 .project-form__heading { display: flex; align-items: center; gap: 11px; min-height: 66px; padding: 13px 16px; border-bottom: 1px solid var(--border); }
 .project-form__icon { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 7px; background: var(--primary-soft); color: var(--primary); }
 .project-form__heading p, .project-form__heading h3 { margin: 0; }
-.project-form__heading p { color: var(--text-soft); font-size: 9px; }
+.project-form__heading p { color: var(--text-soft); font-size: 12px; }
 .project-form__heading h3 { margin-top: 1px; font-size: 14px; }
 .project-form__heading .icon-button { margin-left: auto; }
 .project-form__body { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding: 18px; }
 .project-form__footer { display: flex; justify-content: flex-end; gap: 7px; padding: 12px 18px; border-top: 1px solid var(--border); background: var(--surface-subtle); }
 .projects-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px; }
 .project-search { display: flex; width: min(360px, 100%); align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); }
-.project-search input { width: 100%; min-height: 34px; padding: 0; border: 0 !important; box-shadow: none !important; background: transparent !important; font-size: 11px; }
+.project-search input { width: 100%; min-height: 34px; padding: 0; border: 0 !important; box-shadow: none !important; background: transparent !important; font-size: 13px; }
 .project-filters { display: flex; gap: 7px; }
-.project-filters .input { width: 132px; min-height: 34px; padding-block: 5px; font-size: 10px; }
+.project-filters .input { width: 132px; min-height: 34px; padding-block: 5px; font-size: 12px; }
 .projects-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .project-card { overflow: hidden; }
 .project-card__top { display: grid; grid-template-columns: 40px minmax(0, 1fr) 34px; align-items: center; gap: 10px; padding: 15px; }
-.project-avatar { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 7px; background: #e8b95a; color: #2a2112; font-size: 11px; font-weight: 750; }
+.project-avatar { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 7px; background: #e8b95a; color: #2a2112; font-size: 13px; font-weight: 750; }
 .project-card__top > div { min-width: 0; }
 .project-card h3, .project-card p { overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
 .project-card h3 { font-size: 13px; }
-.project-card p { margin-top: 3px; color: var(--text-soft); font-size: 9px; }
+.project-card p { margin-top: 3px; color: var(--text-soft); font-size: 12px; }
 .project-card__status { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 15px; border-block: 1px solid var(--border); background: var(--surface-subtle); }
-.project-card__status > span:last-child { color: var(--text-soft); font-size: 9px; text-transform: capitalize; }
+.project-card__status > span:last-child { color: var(--text-soft); font-size: 12px; text-transform: capitalize; }
 .project-card dl { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin: 0; background: var(--border); }
 .project-card dl > div { min-width: 0; padding: 11px 14px; background: var(--surface); }
-.project-card dt { display: flex; align-items: center; gap: 5px; color: var(--text-soft); font-size: 8px; }
-.project-card dd { overflow: hidden; margin: 4px 0 0; font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.project-card dt { display: flex; align-items: center; gap: 5px; color: var(--text-soft); font-size: 12px; }
+.project-card dd { overflow: hidden; margin: 4px 0 0; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .project-card__actions { display: flex; gap: 7px; padding: 12px 14px; border-top: 1px solid var(--border); }
 .project-card__actions .button { flex: 1; justify-content: space-between; }
 .loading-surface { display: flex; min-height: 140px; align-items: center; justify-content: center; gap: 9px; color: var(--text-soft); }

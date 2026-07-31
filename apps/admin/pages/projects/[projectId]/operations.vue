@@ -154,7 +154,7 @@ function relativeDate(value: string) {
 .health-card__icon--ok { background: var(--primary-soft); color: var(--primary); }
 .health-card > div { min-width: 0; }
 .health-card span, .health-card h3 { overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
-.health-card > div span { color: var(--text-soft); font-size: 9px; }
+.health-card > div span { color: var(--text-soft); font-size: 12px; }
 .health-card h3 { margin-top: 2px; font-size: 13px; }
 .operations-layout { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 16px; align-items: start; }
 .impact-panel, .events-panel { overflow: hidden; }
@@ -162,12 +162,12 @@ function relativeDate(value: string) {
 .panel-heading__icon { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 7px; background: var(--primary-soft); color: var(--primary); }
 .panel-heading__icon--blue { background: var(--blue-soft); color: var(--blue); }
 .panel-heading p, .panel-heading h3 { margin: 0; }
-.panel-heading p { color: var(--text-soft); font-size: 9px; }
+.panel-heading p { color: var(--text-soft); font-size: 12px; }
 .panel-heading h3 { margin-top: 1px; font-size: 14px; }
 .panel-heading > :last-child { margin-left: auto; }
 .impact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); }
 .impact-grid > div { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 56px; padding: 10px 14px; background: var(--surface); color: var(--text-soft); }
-.impact-grid span { font-size: 10px; }
+.impact-grid span { font-size: 12px; }
 .impact-grid strong { color: var(--text); font-size: 15px; }
 .events-list { display: grid; }
 .event-item { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px 15px; border-bottom: 1px solid var(--border); }
@@ -176,8 +176,8 @@ function relativeDate(value: string) {
 .event-dot--failed { background: var(--danger); }
 .event-item > div { display: flex; min-width: 0; flex-direction: column; }
 .event-item strong, .event-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.event-item strong { font-size: 10px; text-transform: capitalize; }
-.event-item small { margin-top: 2px; color: var(--text-soft); font-size: 8px; text-transform: capitalize; }
+.event-item strong { font-size: 12px; text-transform: capitalize; }
+.event-item small { margin-top: 2px; color: var(--text-soft); font-size: 12px; text-transform: capitalize; }
 .empty-state--embedded { min-height: 220px; border: 0; border-radius: 0; box-shadow: none; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

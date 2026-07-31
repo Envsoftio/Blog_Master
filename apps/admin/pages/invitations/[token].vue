@@ -96,15 +96,15 @@ async function acceptInvitation() {
 .invite-input > svg:first-child { position: absolute; z-index: 1; left: 12px; }
 .invite-input input { min-height: 44px; padding-left: 39px; padding-right: 40px; }
 .invite-input button { position: absolute; right: 6px; display: grid; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--text-soft); cursor: pointer; }
-.password-rule { display: flex; align-items: center; gap: 6px; color: var(--text-faint); font-size: 8px; }
+.password-rule { display: flex; align-items: center; gap: 6px; color: var(--text-faint); font-size: 12px; }
 .password-rule.is-ready { color: var(--primary); }
 .invite-submit { width: 100%; min-height: 44px; }
 .invitation-complete { display: grid; justify-items: center; }
 .invitation-complete__icon { display: grid; width: 46px; height: 46px; place-items: center; border-radius: 8px; background: var(--primary-soft); color: var(--primary); }
 .invitation-complete dl { display: grid; width: 100%; grid-template-columns: 1fr 1fr; gap: 1px; margin: 20px 0; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--border); }
 .invitation-complete dl > div { min-width: 0; padding: 11px; background: var(--surface); }
-.invitation-complete dt { color: var(--text-soft); font-size: 8px; }
-.invitation-complete dd { overflow: hidden; margin: 3px 0 0; font-size: 9px; font-weight: 600; text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
+.invitation-complete dt { color: var(--text-soft); font-size: 12px; }
+.invitation-complete dd { overflow: hidden; margin: 3px 0 0; font-size: 12px; font-weight: 600; text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
 .invitation-complete .button { width: 100%; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

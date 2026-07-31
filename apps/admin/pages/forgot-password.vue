@@ -58,11 +58,11 @@ async function requestReset() {
 .auth-input svg { position: absolute; z-index: 1; left: 12px; }
 .auth-input input { min-height: 44px; padding-left: 39px; }
 .auth-submit { width: 100%; min-height: 44px; }
-.auth-back { display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: var(--text-soft); font-size: 9px; text-decoration: none; }
+.auth-back { display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: var(--text-soft); font-size: 12px; text-decoration: none; }
 .auth-confirmation { display: grid; justify-items: center; text-align: center; }
 .auth-confirmation > span { display: grid; width: 46px; height: 46px; place-items: center; border-radius: 8px; background: var(--primary-soft); color: var(--primary); }
 .auth-confirmation h2 { margin: 15px 0 0; font-size: 18px; }
-.auth-confirmation p { margin: 7px 0 18px; color: var(--text-soft); font-size: 10px; }
+.auth-confirmation p { margin: 7px 0 18px; color: var(--text-soft); font-size: 12px; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

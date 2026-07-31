@@ -103,13 +103,13 @@ async function resetPassword() {
 .password-strength { display: flex; align-items: center; gap: 9px; }
 .password-strength > span { height: 4px; flex: 1; overflow: hidden; border-radius: 2px; background: var(--border); }
 .password-strength i { display: block; height: 100%; background: var(--primary); transition: width .2s ease; }
-.password-strength small { min-width: 80px; color: var(--text-soft); font-size: 8px; text-align: right; }
+.password-strength small { min-width: 80px; color: var(--text-soft); font-size: 12px; text-align: right; }
 .auth-submit { width: 100%; min-height: 44px; }
-.auth-back { display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: var(--text-soft); font-size: 9px; text-decoration: none; }
+.auth-back { display: inline-flex; align-items: center; justify-content: center; gap: 5px; color: var(--text-soft); font-size: 12px; text-decoration: none; }
 .auth-confirmation { display: grid; justify-items: center; text-align: center; }
 .auth-confirmation > span { display: grid; width: 46px; height: 46px; place-items: center; border-radius: 8px; background: var(--primary-soft); color: var(--primary); }
 .auth-confirmation h2 { margin: 15px 0 0; font-size: 18px; }
-.auth-confirmation p { margin: 7px 0 18px; color: var(--text-soft); font-size: 10px; }
+.auth-confirmation p { margin: 7px 0 18px; color: var(--text-soft); font-size: 12px; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

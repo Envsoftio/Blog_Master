@@ -54,8 +54,8 @@ const themeOptions = [
 .auth-page__main { display: grid; min-height: 100vh; place-items: center; padding: 90px 18px 32px; }
 .auth-card { width: 100%; max-width: 430px; padding: 29px; box-shadow: var(--shadow-md); }
 .auth-card__heading { margin-bottom: 24px; }
-.auth-card__heading > span { color: var(--primary); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.auth-card__heading > span { color: var(--primary); font-size: 12px; font-weight: 700; text-transform: uppercase; }
 .auth-card__heading h1 { margin: 5px 0 0; font-size: 22px; }
-.auth-card__heading p { margin: 6px 0 0; color: var(--text-soft); font-size: 10px; }
+.auth-card__heading p { margin: 6px 0 0; color: var(--text-soft); font-size: 12px; }
 @media (max-width: 520px) { .auth-page__top { padding-inline: 15px; } .auth-card { padding: 23px 18px; } }
 </style>
