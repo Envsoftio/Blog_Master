@@ -612,6 +612,21 @@ export type RevisionContributorInput = {
   position: number
 }
 
+export function hasValidRevisionContributors(input: RevisionContributorInput[]) {
+  if (input.filter(contributor => contributor.role === 'primary_author').length !== 1) return false
+  const assignments = new Set<string>()
+  const positions = new Set<string>()
+  for (const contributor of input) {
+    if (!contributor.authorId || contributor.position < 0) return false
+    const assignment = `${contributor.authorId}\u0000${contributor.role}`
+    const position = `${contributor.role}\u0000${contributor.position}`
+    if (assignments.has(assignment) || positions.has(position)) return false
+    assignments.add(assignment)
+    positions.add(position)
+  }
+  return true
+}
+
 export type ArticleCopyPayload = {
   destinationProjectId: string
   sourceRevisionId: string

@@ -768,6 +768,9 @@ func (s *Store) ApproveRevision(ctx context.Context, actorUserID, projectID, rev
 	if err != nil {
 		return AdminRevision{}, err
 	}
+	if err := ensureRevisionPrimaryAuthor(ctx, tx, projectID, revisionID); err != nil {
+		return AdminRevision{}, err
+	}
 	if err := ensureRevisionClaimsApproved(ctx, tx, projectID, revisionID); err != nil {
 		return AdminRevision{}, err
 	}
@@ -815,6 +818,48 @@ func (s *Store) ApproveRevision(ctx context.Context, actorUserID, projectID, rev
 		return AdminRevision{}, err
 	}
 	return s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
+}
+
+func ensureRevisionPrimaryAuthor(ctx context.Context, tx *sql.Tx, projectID, revisionID string) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT contributor.author_id, contributor.public_snapshot_json
+		FROM revision_contributors contributor
+		WHERE contributor.project_id = ?
+		  AND contributor.revision_id = ?
+		  AND contributor.role = 'primary_author'
+	`, projectID, revisionID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type primaryAuthorRecord struct {
+		AuthorID     string
+		SnapshotJSON string
+	}
+	primaryAuthors := []primaryAuthorRecord{}
+	for rows.Next() {
+		var record primaryAuthorRecord
+		if err := rows.Scan(&record.AuthorID, &record.SnapshotJSON); err != nil {
+			return err
+		}
+		primaryAuthors = append(primaryAuthors, record)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(primaryAuthors) != 1 {
+		return fmt.Errorf("%w: approval requires exactly one accountable primary author", ErrInvalidWorkflow)
+	}
+
+	var snapshot Author
+	if err := json.Unmarshal([]byte(primaryAuthors[0].SnapshotJSON), &snapshot); err != nil {
+		return fmt.Errorf("%w: primary author snapshot is invalid", ErrInvalidWorkflow)
+	}
+	if snapshot.ID != primaryAuthors[0].AuthorID || strings.TrimSpace(snapshot.DisplayName) == "" {
+		return fmt.Errorf("%w: primary author snapshot is incomplete", ErrInvalidWorkflow)
+	}
+	return nil
 }
 
 func enforceRevisionApprovalPolicy(

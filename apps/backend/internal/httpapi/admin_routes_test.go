@@ -1969,6 +1969,64 @@ func TestRevisionContributorsAreScopedOrderedAndImmutable(t *testing.T) {
 	}
 }
 
+func TestRevisionApprovalRequiresAccountablePrimaryAuthor(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct horse password")
+	reviewerLogin := seedAndLogin(t, server, db, "reviewer@example.test", "reviewer correct horse password")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"approval-byline","name":"Approval Byline"}`)
+	category := createTestCategory(t, server, ownerLogin, project.ID, `{"slug":"guides","name":"Guides"}`)
+	primaryAuthor := createTestAuthor(t, server, ownerLogin, project.ID, `{"slug":"accountable-author","displayName":"Accountable Author"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'reviewer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, reviewerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	legacyRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/articles",
+		`{"articleType":"guide","title":"Legacy Byline","slug":"legacy-byline","primaryCategoryId":"`+category.ID+`","html":"<p>Missing attribution.</p>","contributors":[]}`,
+		ownerLogin,
+	)
+	legacyResponse := mustTest(t, server, legacyRequest)
+	if legacyResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected legacy article fixture 201, got %d: %s", legacyResponse.StatusCode, readBody(t, legacyResponse))
+	}
+	var legacyArticle Envelope[store.AdminArticle]
+	decodeJSONResponse(t, legacyResponse, &legacyArticle)
+	if legacyArticle.Data.LatestRevision == nil {
+		t.Fatal("expected legacy article revision")
+	}
+
+	approvalRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/revisions/"+legacyArticle.Data.LatestRevision.ID+"/approve",
+		`{}`,
+		reviewerLogin,
+	)
+	approvalResponse := mustTest(t, server, approvalRequest)
+	if approvalResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected missing primary author to block approval with 409, got %d: %s", approvalResponse.StatusCode, readBody(t, approvalResponse))
+	}
+	if body := readBody(t, approvalResponse); !strings.Contains(body, "accountable primary author") {
+		t.Fatalf("expected primary-author approval error, got %s", body)
+	}
+
+	attributedRevision := createTestRevision(
+		t,
+		server,
+		ownerLogin,
+		project.ID,
+		legacyArticle.Data.ID,
+		`{"title":"Legacy Byline","html":"<p>Attribution restored.</p>","contributors":[{"authorId":"`+primaryAuthor.ID+`","role":"primary_author","position":0}]}`,
+	)
+	approved := approveTestRevision(t, server, reviewerLogin, project.ID, attributedRevision.ID)
+	if approved.EditorialState != "approved" {
+		t.Fatalf("expected attributed revision approval, got %#v", approved)
+	}
+}
+
 func TestSourcesClaimsAndApprovalGate(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct password")
@@ -5120,6 +5178,31 @@ func jsonContainsID(value any, id string) bool {
 
 func createTestArticle(t *testing.T, server *Server, login adminLoginResult, projectID, body string) store.AdminArticle {
 	t.Helper()
+	var requestBody map[string]any
+	if err := json.Unmarshal([]byte(body), &requestBody); err != nil {
+		t.Fatal(err)
+	}
+	if _, contributorInputProvided := requestBody["contributors"]; !contributorInputProvided {
+		articleSlug, _ := requestBody["slug"].(string)
+		authorBody, err := json.Marshal(map[string]string{
+			"slug":        "test-author-" + articleSlug,
+			"displayName": "Test Author for " + articleSlug,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		author := createTestAuthor(t, server, login, projectID, string(authorBody))
+		requestBody["contributors"] = []map[string]any{{
+			"authorId": author.ID,
+			"role":     "primary_author",
+			"position": 0,
+		}}
+		encoded, err := json.Marshal(requestBody)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = string(encoded)
+	}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/articles", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-CSRF-Token", login.csrfToken)

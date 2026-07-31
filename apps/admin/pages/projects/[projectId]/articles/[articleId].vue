@@ -604,6 +604,11 @@
                   <option v-for="category in categories" :key="category.id" :value="category.id">{{ categoryPathLabel(category) }}</option>
                 </select>
               </label>
+              <RevisionContributorsEditor
+                :model-value="revisionForm.contributors"
+                :authors="authors"
+                @update:model-value="updateRevisionContributors"
+              />
               <label class="block space-y-2">
                 <span class="text-sm font-medium">Deck</span>
                 <textarea v-model.trim="revisionForm.deck" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
@@ -885,7 +890,8 @@ import {
   UserCheck,
   XCircle
 } from 'lucide-vue-next'
-import { articleBodyDocumentFromHTML } from '~/composables/useAdminApi'
+import type { AdminAuthor, RevisionContributorInput } from '~/composables/useAdminApi'
+import { articleBodyDocumentFromHTML, hasValidRevisionContributors } from '~/composables/useAdminApi'
 
 type APIEnvelope<T> = {
   data: T
@@ -971,6 +977,8 @@ type ComparisonDiffLine = {
 type ArticleDraftFields = {
   title: string
   primaryCategoryId: string
+  contributors: RevisionContributorInput[]
+  attributionEdited: boolean
   deck: string
   excerpt: string
   shortAnswer: string
@@ -984,7 +992,7 @@ type ArticleDraftFields = {
 }
 
 type ArticleDraftSnapshot = {
-  schemaVersion: 1
+  schemaVersion: 2
   projectId: string
   articleId: string
   baseRevisionId: string
@@ -1077,6 +1085,7 @@ const currentUser = useState<{ id: string } | null>('admin-user', () => null)
 const projects = ref<AdminProject[]>([])
 const article = ref<AdminArticle | null>(null)
 const categories = ref<TaxonomyTerm[]>([])
+const authors = ref<AdminAuthor[]>([])
 const copyDestinationCategories = ref<TaxonomyTerm[]>([])
 const members = ref<AdminProjectMember[]>([])
 const comments = ref<ReviewComment[]>([])
@@ -1107,6 +1116,7 @@ const staleDraft = ref<ArticleDraftSnapshot | null>(null)
 const baseDraftHTML = ref('')
 const baseDraftDocument = ref<unknown>({ type: 'doc', content: [] })
 const baseDraftRevisionID = ref('')
+const attributionEdited = ref(false)
 const commentPending = reactive<Record<string, string>>({})
 const assignmentPending = reactive<Record<string, string>>({})
 let comparisonRequestVersion = 0
@@ -1118,6 +1128,7 @@ let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
 const revisionForm = reactive({
   title: '',
   primaryCategoryId: '',
+  contributors: [] as RevisionContributorInput[],
   deck: '',
   excerpt: '',
   shortAnswer: '',
@@ -1172,7 +1183,9 @@ const canWriteArticles = computed(() => projectIsActive.value && ['project_owner
 const canReviewArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'reviewer'].includes(project.value?.role || ''))
 const canPublishArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
 const canComment = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'reviewer', 'writer'].includes(project.value?.role || ''))
-const canCreateRevision = computed(() => canWriteArticles.value && Boolean(revisionForm.title.trim()))
+const canCreateRevision = computed(() => canWriteArticles.value && Boolean(
+  revisionForm.title.trim() && hasValidRevisionContributors(revisionForm.contributors)
+))
 const copyDestinations = computed(() => projects.value.filter(candidate =>
   candidate.id !== projectID.value
   && candidate.status === 'active'
@@ -1303,11 +1316,12 @@ async function refresh() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, projectListResponse, memberResponse, categoryResponse, articleResponse, assignmentResponse, commentResponse, revisionResponse] = await Promise.all([
+    const [projectResponse, projectListResponse, memberResponse, categoryResponse, authorResponse, articleResponse, assignmentResponse, commentResponse, revisionResponse] = await Promise.all([
       $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
       fetchAllCopyProjects(),
       fetchAllReviewAssignees(),
       fetchAllCategories(projectID.value),
+      $fetch<APIListEnvelope<AdminAuthor>>(`/api/v1/projects/${projectID.value}/authors`, { credentials: 'include' }),
       $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}`, { credentials: 'include' }),
       $fetch<APIListEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/assignments`, {
         credentials: 'include',
@@ -1326,6 +1340,7 @@ async function refresh() {
     projects.value = projectListResponse
     members.value = memberResponse
     categories.value = sortCategories(categoryResponse)
+    authors.value = apiListData(authorResponse).sort((left, right) => left.displayName.localeCompare(right.displayName))
     setArticle(articleResponse.data)
     assignments.value = apiListData(assignmentResponse)
     nextAssignmentCursor.value = assignmentResponse.meta?.nextCursor || ''
@@ -1411,6 +1426,7 @@ async function createRevision() {
         baseRevisionId: latestRevisionID(),
         title: revisionForm.title,
         primaryCategoryId: revisionForm.primaryCategoryId,
+        ...(attributionEdited.value ? { contributors: revisionForm.contributors } : {}),
         deck: revisionForm.deck,
         excerpt: revisionForm.excerpt,
         shortAnswer: revisionForm.shortAnswer,
@@ -1929,6 +1945,8 @@ function setRevisionDraftFromDetail(revision: AdminRevisionDetail) {
   const seo = seoFieldsFromSnapshot(revision.seoSnapshot)
   revisionForm.title = revision.title
   revisionForm.primaryCategoryId = primaryCategoryIDFromSnapshot(revision.taxonomySnapshot)
+  revisionForm.contributors = contributorInputsFromSnapshots(revision.authorSnapshot, revision.contributorSnapshot)
+  attributionEdited.value = false
   revisionForm.deck = revision.deck || ''
   revisionForm.excerpt = revision.excerpt || ''
   revisionForm.shortAnswer = revision.shortAnswer || ''
@@ -1995,6 +2013,46 @@ function primaryCategoryIDFromSnapshot(snapshot: unknown) {
   return typeof taxonomy.primaryCategory?.id === 'string' ? taxonomy.primaryCategory.id : ''
 }
 
+function contributorInputsFromSnapshots(authorSnapshot: unknown, contributorSnapshot: unknown): RevisionContributorInput[] {
+  const authorInputs = Array.isArray(authorSnapshot)
+    ? authorSnapshot.flatMap((value, index): RevisionContributorInput[] => {
+        if (!value || typeof value !== 'object') return []
+        const authorID = (value as Record<string, unknown>).id
+        if (typeof authorID !== 'string' || !authorID) return []
+        return [{
+          authorId: authorID,
+          role: index === 0 ? 'primary_author' : 'co_author',
+          position: index === 0 ? 0 : index - 1
+        }]
+      })
+    : []
+  const creditedInputs = Array.isArray(contributorSnapshot)
+    ? contributorSnapshot.flatMap((value): RevisionContributorInput[] => {
+        if (!value || typeof value !== 'object') return []
+        const snapshot = value as Record<string, unknown>
+        const author = snapshot.author && typeof snapshot.author === 'object'
+          ? snapshot.author as Record<string, unknown>
+          : {}
+        if (typeof author.id !== 'string' || !isContributorRole(snapshot.role)) return []
+        return [{
+          authorId: author.id,
+          role: snapshot.role,
+          position: typeof snapshot.position === 'number' ? snapshot.position : 0
+        }]
+      })
+    : []
+  return [...authorInputs, ...creditedInputs]
+}
+
+function isContributorRole(value: unknown): value is RevisionContributorInput['role'] {
+  return ['primary_author', 'co_author', 'editor', 'expert_reviewer', 'photographer', 'other'].includes(String(value))
+}
+
+function updateRevisionContributors(value: RevisionContributorInput[]) {
+  revisionForm.contributors = value
+  attributionEdited.value = true
+}
+
 function categoryPathLabel(category: TaxonomyTerm) {
   return [...(category.ancestors || []).map(ancestor => ancestor.name), category.name].join(' / ')
 }
@@ -2024,12 +2082,16 @@ function persistLocalDraft() {
   }
   const savedAt = new Date().toISOString()
   const snapshot: ArticleDraftSnapshot = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: projectID.value,
     articleId: articleID.value,
     baseRevisionId: baseDraftRevisionID.value || latestRevisionID(),
     savedAt,
-    fields: { ...revisionForm }
+    fields: {
+      ...revisionForm,
+      contributors: revisionForm.contributors.map(contributor => ({ ...contributor })),
+      attributionEdited: attributionEdited.value
+    }
   }
   try {
     localStorage.setItem(localDraftKey(), JSON.stringify(snapshot))
@@ -2077,7 +2139,9 @@ function discardLocalDraft() {
 
 function applyLocalDraft(snapshot: ArticleDraftSnapshot) {
   draftPersistenceEnabled = false
-  Object.assign(revisionForm, snapshot.fields)
+  const { attributionEdited: savedAttributionEdited, ...fields } = snapshot.fields
+  Object.assign(revisionForm, fields)
+  attributionEdited.value = savedAttributionEdited
   draftSavedAt.value = snapshot.savedAt
   nextTick(() => {
     draftPersistenceEnabled = true
@@ -2088,9 +2152,37 @@ function readLocalDraft(): ArticleDraftSnapshot | null {
   try {
     const raw = localStorage.getItem(localDraftKey())
     if (!raw) return null
-    const value = JSON.parse(raw) as Partial<ArticleDraftSnapshot>
+    const value = JSON.parse(raw) as {
+      schemaVersion?: unknown
+      projectId?: unknown
+      articleId?: unknown
+      baseRevisionId?: unknown
+      savedAt?: unknown
+      fields?: unknown
+    }
     if (
-      value.schemaVersion !== 1
+      value.schemaVersion === 1
+      && value.projectId === projectID.value
+      && value.articleId === articleID.value
+      && typeof value.baseRevisionId === 'string'
+      && typeof value.savedAt === 'string'
+      && isLegacyArticleDraftFields(value.fields)
+    ) {
+      return {
+        schemaVersion: 2,
+        projectId: value.projectId,
+        articleId: value.articleId,
+        baseRevisionId: value.baseRevisionId,
+        savedAt: value.savedAt,
+        fields: {
+          ...value.fields,
+          contributors: revisionForm.contributors.map(contributor => ({ ...contributor })),
+          attributionEdited: false
+        }
+      }
+    }
+    if (
+      value.schemaVersion !== 2
       || value.projectId !== projectID.value
       || value.articleId !== articleID.value
       || typeof value.baseRevisionId !== 'string'
@@ -2107,14 +2199,36 @@ function readLocalDraft(): ArticleDraftSnapshot | null {
   }
 }
 
-function isArticleDraftFields(value: unknown): value is ArticleDraftFields {
+function isLegacyArticleDraftFields(value: unknown): value is Omit<ArticleDraftFields, 'contributors' | 'attributionEdited'> {
   if (!value || typeof value !== 'object') return false
   const fields = value as Record<string, unknown>
   return [
     'title', 'primaryCategoryId', 'deck', 'excerpt', 'shortAnswer', 'seoTitle', 'seoDescription',
     'robots', 'openGraphTitle', 'openGraphDescription', 'openGraphImage', 'html'
+  ].every(key => typeof fields[key] === 'string')
+}
+
+function isArticleDraftFields(value: unknown): value is ArticleDraftFields {
+  if (!value || typeof value !== 'object') return false
+  const fields = value as Record<string, unknown>
+  const stringsAreValid = [
+    'title', 'primaryCategoryId', 'deck', 'excerpt', 'shortAnswer', 'seoTitle', 'seoDescription',
+    'robots', 'openGraphTitle', 'openGraphDescription', 'openGraphImage', 'html'
   ]
     .every(key => typeof fields[key] === 'string')
+  return stringsAreValid
+    && typeof fields.attributionEdited === 'boolean'
+    && isContributorDraftValue(fields.contributors)
+}
+
+function isContributorDraftValue(value: unknown): value is RevisionContributorInput[] {
+  return Array.isArray(value) && value.every((contributor) => {
+    if (!contributor || typeof contributor !== 'object') return false
+    const candidate = contributor as Record<string, unknown>
+    return typeof candidate.authorId === 'string'
+      && isContributorRole(candidate.role)
+      && typeof candidate.position === 'number'
+  })
 }
 
 function removeLocalDraft() {

@@ -57,16 +57,19 @@
               </select>
               <small v-if="categories.length === 0">Create a category from the side panel before saving the draft.</small>
             </label>
-            <label class="field">
-              <span>Primary author</span>
-              <select v-model="articleForm.primaryAuthorId" :disabled="authors.length === 0" required>
-                <option value="" disabled>Select author</option>
-                <option v-for="author in authors" :key="author.id" :value="author.id">{{ author.displayName }}</option>
-              </select>
-              <small v-if="authors.length === 0">
-                Create an active profile on the <NuxtLink :to="`/projects/${projectID}/authors`">Authors page</NuxtLink> before saving the draft.
-              </small>
-            </label>
+          </div>
+        </section>
+
+        <section class="create-card surface">
+          <div class="create-card__header">
+            <span class="create-card__icon create-card__icon--blue"><Users :size="18" /></span>
+            <div><span>Public attribution</span><h2>Authors and credits</h2></div>
+          </div>
+          <div class="create-card__body">
+            <RevisionContributorsEditor v-model="articleForm.contributors" :authors="authors" />
+            <small v-if="authors.length === 0" class="attribution-help">
+              Create an active profile on the <NuxtLink :to="`/projects/${projectID}/authors`">Authors page</NuxtLink> before saving the draft.
+            </small>
           </div>
         </section>
 
@@ -195,6 +198,7 @@
               <div><dt>Locale</dt><dd>{{ articleForm.locale || 'Not set' }}</dd></div>
               <div><dt>Category</dt><dd>{{ selectedCategory ? categoryPathLabel(selectedCategory) : 'Not set' }}</dd></div>
               <div><dt>Author</dt><dd>{{ selectedAuthor?.displayName || 'Not set' }}</dd></div>
+              <div><dt>Credits</dt><dd>{{ articleForm.contributors.length }}</dd></div>
             </dl>
             <div class="draft-preview__path"><span>Canonical path</span><code>{{ canonicalPath }}</code></div>
           </div>
@@ -252,12 +256,14 @@ import {
   LoaderCircle,
   Plus,
   RefreshCw,
-  Save
+  Save,
+  Users
 } from 'lucide-vue-next'
-import type { AdminArticle, AdminAuthor, AdminProject, SEOInputPayload, TaxonomyTerm } from '~/composables/useAdminApi'
+import type { AdminArticle, AdminAuthor, AdminProject, RevisionContributorInput, SEOInputPayload, TaxonomyTerm } from '~/composables/useAdminApi'
 import {
   ARTICLE_TYPES,
   articleBodyDocumentFromHTML,
+  hasValidRevisionContributors,
   htmlToPlainText,
   labelize,
   normalizeAPIError,
@@ -296,7 +302,7 @@ const articleForm = reactive({
   slug: '',
   locale: '',
   primaryCategoryId: '',
-  primaryAuthorId: '',
+  contributors: [] as RevisionContributorInput[],
   deck: '',
   excerpt: '',
   shortAnswer: '',
@@ -327,14 +333,17 @@ const canCreateArticle = computed(() => Boolean(
   && articleForm.slug.trim()
   && articleForm.locale.trim()
   && articleForm.primaryCategoryId
-  && articleForm.primaryAuthorId
+  && hasValidRevisionContributors(articleForm.contributors)
 ))
 const canCreateCategory = computed(() => canManageTaxonomy.value && Boolean(categoryForm.name.trim() && categoryForm.slug.trim()))
 const htmlForSubmission = computed(() => articleForm.html.trim() || `<p>${escapeHTML(articleForm.title || 'Untitled draft')}</p>`)
 const plainText = computed(() => htmlToPlainText(htmlForSubmission.value))
 const wordCount = computed(() => plainText.value ? plainText.value.split(/\s+/).length : 0)
 const selectedCategory = computed(() => categories.value.find(category => category.id === articleForm.primaryCategoryId) || null)
-const selectedAuthor = computed(() => authors.value.find(author => author.id === articleForm.primaryAuthorId) || null)
+const selectedAuthor = computed(() => {
+  const primaryAuthorID = articleForm.contributors.find(contributor => contributor.role === 'primary_author')?.authorId
+  return authors.value.find(author => author.id === primaryAuthorID) || null
+})
 const categoryParentOptions = computed(() => categories.value.filter(category => (category.ancestors?.length || 0) < 2))
 const canonicalPath = computed(() => {
   const basePath = project.value?.blogBasePath || '/blog'
@@ -398,8 +407,8 @@ async function refresh() {
     if (!articleForm.primaryCategoryId && categories.value[0]) {
       articleForm.primaryCategoryId = categories.value[0].id
     }
-    if (!articleForm.primaryAuthorId && authors.value[0]) {
-      articleForm.primaryAuthorId = authors.value[0].id
+    if (articleForm.contributors.length === 0 && authors.value[0]) {
+      articleForm.contributors = [{ authorId: authors.value[0].id, role: 'primary_author', position: 0 }]
     }
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load article creation data.')
@@ -446,7 +455,7 @@ async function createArticle() {
       slug: articleForm.slug,
       locale: articleForm.locale,
       primaryCategoryId: articleForm.primaryCategoryId,
-      contributors: [{ authorId: articleForm.primaryAuthorId, role: 'primary_author', position: 0 }],
+      contributors: articleForm.contributors,
       deck: articleForm.deck,
       excerpt: articleForm.excerpt,
       shortAnswer: articleForm.shortAnswer,
@@ -494,7 +503,7 @@ function persistCreateDraft() {
   const savedAt = new Date().toISOString()
   try {
     localStorage.setItem(createDraftKey(), JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       projectId: projectID.value,
       savedAt,
       slugTouched: slugTouched.value,
@@ -521,18 +530,34 @@ function restoreCreateDraft() {
         slugTouched?: unknown
         fields?: Record<string, unknown>
       }
-      const keys = [
-        'articleType', 'title', 'slug', 'locale', 'primaryCategoryId', 'primaryAuthorId', 'deck', 'excerpt', 'shortAnswer',
+      const stringKeys = [
+        'articleType', 'title', 'slug', 'locale', 'primaryCategoryId', 'deck', 'excerpt', 'shortAnswer',
         'seoTitle', 'seoDescription', 'robots', 'openGraphTitle', 'openGraphDescription', 'openGraphImage', 'html'
       ]
       if (
+        saved.schemaVersion === 2
+        && saved.projectId === projectID.value
+        && typeof saved.savedAt === 'string'
+        && saved.fields
+        && stringKeys.every(key => typeof saved.fields?.[key] === 'string')
+        && isContributorDraftValue(saved.fields.contributors)
+      ) {
+        Object.assign(articleForm, Object.fromEntries(stringKeys.map(key => [key, saved.fields?.[key]])))
+        articleForm.contributors = saved.fields.contributors.map(contributor => ({ ...contributor }))
+        slugTouched.value = saved.slugTouched === true
+        draftSavedAt.value = saved.savedAt
+      } else if (
         saved.schemaVersion === 1
         && saved.projectId === projectID.value
         && typeof saved.savedAt === 'string'
         && saved.fields
-        && keys.every(key => typeof saved.fields?.[key] === 'string')
+        && stringKeys.every(key => typeof saved.fields?.[key] === 'string')
+        && typeof saved.fields.primaryAuthorId === 'string'
       ) {
-        Object.assign(articleForm, Object.fromEntries(keys.map(key => [key, saved.fields?.[key]])))
+        Object.assign(articleForm, Object.fromEntries(stringKeys.map(key => [key, saved.fields?.[key]])))
+        articleForm.contributors = saved.fields.primaryAuthorId
+          ? [{ authorId: saved.fields.primaryAuthorId, role: 'primary_author', position: 0 }]
+          : articleForm.contributors
         slugTouched.value = saved.slugTouched === true
         draftSavedAt.value = saved.savedAt
       } else {
@@ -544,6 +569,16 @@ function restoreCreateDraft() {
   }
   nextTick(() => {
     draftPersistenceEnabled = true
+  })
+}
+
+function isContributorDraftValue(value: unknown): value is RevisionContributorInput[] {
+  return Array.isArray(value) && value.every((contributor) => {
+    if (!contributor || typeof contributor !== 'object') return false
+    const candidate = contributor as Record<string, unknown>
+    return typeof candidate.authorId === 'string'
+      && typeof candidate.role === 'string'
+      && typeof candidate.position === 'number'
   })
 }
 
@@ -598,6 +633,8 @@ function escapeHTML(value: string) {
 .template-option:hover { border-color: var(--border-strong); background: var(--surface-subtle); color: var(--text); }
 .template-option.is-selected { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); background: var(--primary-soft); color: var(--primary); }
 .revision-fields { gap: 16px; }
+.attribution-help { color: var(--text-faint); font-size: 10px; }
+.attribution-help a { color: var(--primary); }
 .revision-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .textarea--compact { min-height: 82px !important; }
 .seo-fields { min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); }
