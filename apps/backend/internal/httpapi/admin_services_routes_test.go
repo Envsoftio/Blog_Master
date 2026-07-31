@@ -877,6 +877,44 @@ func TestAdminMediaDeleteKeepsRowWhenB2DeleteFails(t *testing.T) {
 	}
 }
 
+func TestAdminMediaDeleteWithoutStorageKeepsDatabaseRow(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	mediaStorage := newFakeMediaStorage()
+	server.mediaStorage = mediaStorage
+	server.cfg.B2MediaPresignTTL = 15 * time.Minute
+	login := seedAndLogin(t, server, db, "media-delete-no-storage-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"media-delete-no-storage","name":"Media Delete No Storage"}`)
+	createResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/media/uploads",
+		`{"filename":"hero.png","contentType":"image/png","bytes":128}`,
+		login,
+	))
+	if createResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected media create 201, got %d: %s", createResponse.StatusCode, readBody(t, createResponse))
+	}
+	var created Envelope[store.AdminMediaAsset]
+	decodeJSONResponse(t, createResponse, &created)
+	mediaStorage.objects[created.Data.ObjectKey] = []byte("uploaded object")
+	server.mediaStorage = nil
+
+	deleteResponse := mustTest(t, server, newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/media/"+created.Data.ID,
+		`{}`,
+		login,
+	))
+	if deleteResponse.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected unconfigured storage delete to fail with 502, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+	if _, exists := mediaStorage.objects[created.Data.ObjectKey]; !exists {
+		t.Fatal("expected B2 object to remain when storage is unavailable")
+	}
+	if _, err := server.store.GetMediaAsset(context.Background(), login.userID, project.ID, created.Data.ID); err != nil {
+		t.Fatalf("expected media row to remain after storage-unavailable delete: %v", err)
+	}
+}
+
 func TestAdminMediaDeleteRefusesRootFolderObjectKey(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	mediaStorage := newFakeMediaStorage()

@@ -245,7 +245,7 @@ func (s *Server) serveMediaAssetFile(c fiber.Ctx) error {
 
 func (s *Server) deleteMediaObjects(ctx context.Context, asset store.AdminMediaAsset) error {
 	if s.mediaStorage == nil {
-		return nil
+		return fmt.Errorf("B2 media storage is not configured")
 	}
 	keys := []string{asset.ObjectKey}
 	if asset.Status == "ready" {

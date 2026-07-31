@@ -6,6 +6,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,6 +54,19 @@ type SignedUpload struct {
 	Fields    map[string]string `json:"fields,omitempty"`
 	ExpiresAt string            `json:"expiresAt"`
 	MaxBytes  int64             `json:"maxBytes"`
+}
+
+type objectVersion struct {
+	Key       string `xml:"Key"`
+	VersionID string `xml:"VersionId"`
+}
+
+type listObjectVersionsResponse struct {
+	IsTruncated         bool            `xml:"IsTruncated"`
+	NextKeyMarker       string          `xml:"NextKeyMarker"`
+	NextVersionIDMarker string          `xml:"NextVersionIdMarker"`
+	Versions            []objectVersion `xml:"Version"`
+	DeleteMarkers       []objectVersion `xml:"DeleteMarker"`
 }
 
 func New(config Config) (*Client, error) {
@@ -207,23 +222,82 @@ func (c *Client) PutObject(ctx context.Context, key string, body []byte, content
 	return nil
 }
 
+// DeleteObject permanently removes all versions of key. A versionless S3
+// DELETE only creates a delete marker in B2 and leaves the stored bytes behind.
 func (c *Client) DeleteObject(ctx context.Context, key string) error {
-	request, err := c.signedRequest(ctx, http.MethodDelete, key, nil, "")
+	versions, err := c.listObjectVersions(ctx, key)
 	if err != nil {
 		return err
 	}
-	response, err := c.httpClient.Do(request)
-	if err != nil {
-		return fmt.Errorf("delete B2 object: %w", err)
+	var errs []error
+	for _, version := range versions {
+		query := url.Values{"versionId": {version.VersionID}}
+		request, err := c.signedObjectRequest(ctx, http.MethodDelete, key, query, nil, "")
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		response, err := c.httpClient.Do(request)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("delete B2 object version %q: %w", version.VersionID, err))
+			continue
+		}
+		if response.StatusCode != http.StatusNotFound && (response.StatusCode < 200 || response.StatusCode >= 300) {
+			errs = append(errs, b2StatusError("delete B2 object version", response))
+		}
+		response.Body.Close()
 	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusNotFound {
-		return nil
+	return errors.Join(errs...)
+}
+
+func (c *Client) listObjectVersions(ctx context.Context, key string) ([]objectVersion, error) {
+	query := url.Values{
+		"max-keys": {"1000"},
+		"prefix":   {key},
+		"versions": {""},
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return b2StatusError("delete B2 object", response)
+	var result []objectVersion
+	previousCursor := ""
+	for {
+		request, err := c.signedBucketRequest(ctx, http.MethodGet, query)
+		if err != nil {
+			return nil, err
+		}
+		response, err := c.httpClient.Do(request)
+		if err != nil {
+			return nil, fmt.Errorf("list B2 object versions: %w", err)
+		}
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			err := b2StatusError("list B2 object versions", response)
+			response.Body.Close()
+			return nil, err
+		}
+		var page listObjectVersionsResponse
+		err = xml.NewDecoder(io.LimitReader(response.Body, 4*1024*1024)).Decode(&page)
+		response.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("decode B2 object versions: %w", err)
+		}
+		for _, version := range append(page.Versions, page.DeleteMarkers...) {
+			if version.Key == key && strings.TrimSpace(version.VersionID) != "" {
+				result = append(result, version)
+			}
+		}
+		if !page.IsTruncated {
+			return result, nil
+		}
+		cursor := page.NextKeyMarker + "\x00" + page.NextVersionIDMarker
+		if strings.TrimSpace(page.NextKeyMarker) == "" || cursor == previousCursor {
+			return nil, fmt.Errorf("list B2 object versions returned an invalid pagination cursor")
+		}
+		previousCursor = cursor
+		query.Set("key-marker", page.NextKeyMarker)
+		if page.NextVersionIDMarker == "" {
+			query.Del("version-id-marker")
+		} else {
+			query.Set("version-id-marker", page.NextVersionIDMarker)
+		}
 	}
-	return nil
 }
 
 func (c *Client) GetObject(ctx context.Context, key string, maxBytes int64) ([]byte, string, error) {
@@ -254,6 +328,26 @@ func (c *Client) GetObject(ctx context.Context, key string, maxBytes int64) ([]b
 }
 
 func (c *Client) signedRequest(ctx context.Context, method, key string, body []byte, contentType string) (*http.Request, error) {
+	return c.signedObjectRequest(ctx, method, key, nil, body, contentType)
+}
+
+func (c *Client) signedObjectRequest(ctx context.Context, method, key string, query url.Values, body []byte, contentType string) (*http.Request, error) {
+	if c == nil {
+		return nil, fmt.Errorf("B2 media storage is not configured")
+	}
+	target := c.objectURL(key)
+	return c.signedURLRequest(ctx, method, target, canonicalPath(c.bucket, key), query, body, contentType)
+}
+
+func (c *Client) signedBucketRequest(ctx context.Context, method string, query url.Values) (*http.Request, error) {
+	if c == nil {
+		return nil, fmt.Errorf("B2 media storage is not configured")
+	}
+	target := c.bucketURL()
+	return c.signedURLRequest(ctx, method, target, "/"+escapeKey(c.bucket), query, nil, "")
+}
+
+func (c *Client) signedURLRequest(ctx context.Context, method string, target *url.URL, canonicalURI string, query url.Values, body []byte, contentType string) (*http.Request, error) {
 	if c == nil {
 		return nil, fmt.Errorf("B2 media storage is not configured")
 	}
@@ -266,7 +360,9 @@ func (c *Client) signedRequest(ctx context.Context, method, key string, body []b
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, c.objectURL(key).String(), reader)
+	canonicalQuery := canonicalQueryString(query)
+	target.RawQuery = canonicalQuery
+	request, err := http.NewRequestWithContext(ctx, method, target.String(), reader)
 	if err != nil {
 		return nil, err
 	}
@@ -283,12 +379,12 @@ func (c *Client) signedRequest(ctx context.Context, method, key string, body []b
 	for name, value := range headers {
 		request.Header.Set(name, value)
 	}
-	signedHeaders := signedHeaderNames(headers, c.endpoint.Host)
+	signedHeaders := signedHeaderNames(headers, target.Host)
 	canonicalRequest := strings.Join([]string{
 		method,
-		canonicalPath(c.bucket, key),
-		"",
-		canonicalHeaders(headers, c.endpoint.Host),
+		canonicalURI,
+		canonicalQuery,
+		canonicalHeaders(headers, target.Host),
 		strings.Join(signedHeaders, ";"),
 		payloadHash,
 	}, "\n")
@@ -308,6 +404,33 @@ func (c *Client) signedRequest(ctx context.Context, method, key string, body []b
 		signature,
 	))
 	return request, nil
+}
+
+func canonicalQueryString(values url.Values) string {
+	if len(values) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		items := append([]string(nil), values[key]...)
+		if len(items) == 0 {
+			items = []string{""}
+		}
+		sort.Strings(items)
+		for _, value := range items {
+			parts = append(parts, awsQueryEscape(key)+"="+awsQueryEscape(value))
+		}
+	}
+	return strings.Join(parts, "&")
+}
+
+func awsQueryEscape(value string) string {
+	return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
 }
 
 func (c *Client) signature(shortDate, credentialScope, amzDate, canonicalRequest string) string {
