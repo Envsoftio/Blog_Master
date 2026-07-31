@@ -204,6 +204,16 @@
                     <XCircle class="h-4 w-4" />
                     Unpublish
                   </button>
+                  <button
+                    class="inline-flex items-center gap-2 rounded-md border border-[#d9b7aa] px-3 py-2 text-sm font-medium text-[#9b2d23] hover:bg-[#fff4f2] disabled:opacity-60 dark:border-[#6d352f] dark:text-[#ffc4bd] dark:hover:bg-[#2a1c1a]"
+                    type="button"
+                    :disabled="Boolean(actionPending[article.id]) || !canArchiveArticles"
+                    @click="archiveArticle(article)"
+                  >
+                    <LoaderCircle v-if="actionPending[article.id] === 'archive'" class="h-4 w-4 animate-spin" />
+                    <Trash2 v-else class="h-4 w-4" />
+                    Archive
+                  </button>
                 </div>
 
                 <form class="grid gap-2 sm:grid-cols-[minmax(190px,1fr)_auto]" @submit.prevent="scheduleArticle(article)">
@@ -285,6 +295,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Trash2,
   UploadCloud,
   XCircle
 } from 'lucide-vue-next'
@@ -375,6 +386,7 @@ const categoryForm = reactive({
 })
 
 const canCreateCategory = computed(() => Boolean(categoryForm.name.trim() && categoryForm.slug.trim()))
+const canArchiveArticles = computed(() => ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
 const filteredArticles = computed(() => {
   const term = search.value.toLowerCase()
   return articles.value.filter(article => {
@@ -506,6 +518,30 @@ async function unpublishArticle(article: AdminArticle) {
     })
     successMessage.value = 'Article unpublished.'
   })
+}
+
+async function archiveArticle(article: AdminArticle) {
+  if (!canArchiveArticles.value) return
+  const message = article.publicationState === 'published'
+    ? `Archive "${article.title}"? This will unpublish it from the content API and hide it from the admin list.`
+    : `Archive "${article.title}"? This will hide it from the admin list while retaining its revision history.`
+  if (!window.confirm(message)) return
+  actionPending[article.id] = 'archive'
+  clearMessages()
+  try {
+    const csrfToken = await getCSRFToken()
+    await $fetch(`/api/v1/projects/${projectID.value}/articles/${article.id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: { 'X-CSRF-Token': csrfToken }
+    })
+    successMessage.value = 'Article archived.'
+    await fetchArticles()
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, 'Could not archive article.')
+  } finally {
+    delete actionPending[article.id]
+  }
 }
 
 async function mutateArticle(article: AdminArticle, action: string, operation: (csrfToken: string) => Promise<void>) {

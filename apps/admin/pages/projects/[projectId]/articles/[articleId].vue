@@ -771,6 +771,29 @@
                 Rollback
               </button>
             </form>
+
+            <section class="space-y-4 rounded-lg border border-[#d9b7aa] bg-white p-5 shadow-sm dark:border-[#6d352f] dark:bg-[#202522]">
+              <div class="flex items-start gap-3">
+                <Trash2 class="mt-1 h-4 w-4 text-[#9b2d23] dark:text-[#ffc4bd]" />
+                <div>
+                  <p class="text-sm text-[#9b2d23] dark:text-[#ffc4bd]">Danger zone</p>
+                  <h2 class="mt-1 text-lg font-semibold tracking-normal">Archive article</h2>
+                </div>
+              </div>
+              <p class="text-sm text-[#5f6a63] dark:text-[#b8c2bb]">
+                Hides this article from the admin list. If it is published, it is also removed from the Content API and downstream cache events are queued.
+              </p>
+              <button
+                class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#d9b7aa] px-4 text-sm font-medium text-[#9b2d23] hover:bg-[#fff4f2] disabled:opacity-60 dark:border-[#6d352f] dark:text-[#ffc4bd] dark:hover:bg-[#2a1c1a]"
+                type="button"
+                :disabled="actionPending === 'archive' || !canArchiveArticle"
+                @click="archiveArticle"
+              >
+                <LoaderCircle v-if="actionPending === 'archive'" class="h-4 w-4 animate-spin" />
+                <Trash2 v-else class="h-4 w-4" />
+                Archive article
+              </button>
+            </section>
           </div>
         </div>
       </div>
@@ -795,10 +818,12 @@ import {
   RefreshCw,
   RotateCcw,
   Send,
+  Trash2,
   UploadCloud,
   UserCheck,
   XCircle
 } from 'lucide-vue-next'
+import { articleBodyDocumentFromHTML } from '~/composables/useAdminApi'
 
 type APIEnvelope<T> = {
   data: T
@@ -1065,6 +1090,7 @@ const assignmentEligibleMembers = computed(() => members.value.filter(member =>
   && assignmentTypeAllowedForRole(assignmentForm.assignmentType, member.role)
 ))
 const canManageAssignments = computed(() => ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
+const canArchiveArticle = computed(() => ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
 const canCreateAssignment = computed(() => Boolean(
   assignmentForm.assignedTo
   && assignmentEligibleMembers.value.some(member => member.userId === assignmentForm.assignedTo)
@@ -1245,6 +1271,7 @@ async function createRevision() {
   clearMessages()
   try {
     const csrfToken = await getCSRFToken()
+    const html = revisionForm.html.trim() || `<p>${escapeHTML(revisionForm.title)}</p>`
     const response = await $fetch<APIEnvelope<AdminRevision>>(`/api/v1/projects/${projectID.value}/articles/${article.value.id}/revisions`, {
       method: 'POST',
       credentials: 'include',
@@ -1256,7 +1283,8 @@ async function createRevision() {
         deck: revisionForm.deck,
         excerpt: revisionForm.excerpt,
         shortAnswer: revisionForm.shortAnswer,
-        html: revisionForm.html || `<p>${escapeHTML(revisionForm.title)}</p>`
+        bodyDocument: articleBodyDocumentFromHTML(html, revisionForm.title),
+        html
       }
     })
     revisionForm.title = ''
@@ -1442,6 +1470,28 @@ async function rollbackArticle() {
     rollbackForm.revisionId = ''
     successMessage.value = 'Article rolled back.'
   })
+}
+
+async function archiveArticle() {
+  if (!article.value || !canArchiveArticle.value) return
+  const message = article.value.publicationState === 'published'
+    ? `Archive "${article.value.title}"? This will unpublish it from the content API and hide it from the admin article list.`
+    : `Archive "${article.value.title}"? This will hide it from the admin article list while retaining its revision history.`
+  if (!window.confirm(message)) return
+  actionPending.value = 'archive'
+  clearMessages()
+  try {
+    const csrfToken = await getCSRFToken()
+    await $fetch(`/api/v1/projects/${projectID.value}/articles/${article.value.id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: { 'X-CSRF-Token': csrfToken }
+    })
+    await navigateTo(`/projects/${projectID.value}/articles`)
+  } catch (error) {
+    errorMessage.value = normalizeAPIError(error, 'Could not archive article.')
+    actionPending.value = ''
+  }
 }
 
 async function mutateArticle(action: string, operation: (csrfToken: string) => Promise<void>) {

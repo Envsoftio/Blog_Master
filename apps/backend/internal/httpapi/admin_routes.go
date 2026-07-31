@@ -60,6 +60,8 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/projects/:projectID/invitations", invitationCreationSourceRateLimiter(), s.requireAdminSession, s.requireAdminCSRF, invitationRecipientRateLimiter(), s.inviteProjectMember)
 	api.Patch("/projects/:projectID/members/:userID", s.requireAdminSession, s.requireAdminCSRF, s.updateProjectMemberRole)
 	api.Delete("/projects/:projectID/members/:userID", s.requireAdminSession, s.requireAdminCSRF, s.removeProjectMember)
+	api.Post("/projects/:projectID/members/:userID/disable-login", s.requireAdminSession, s.requireAdminCSRF, s.requireRecentReauthentication, s.disableProjectMemberLogin)
+	api.Post("/projects/:projectID/members/:userID/enable-login", s.requireAdminSession, s.requireAdminCSRF, s.requireRecentReauthentication, s.enableProjectMemberLogin)
 
 	api.Get("/projects/:projectID/api-keys", s.requireAdminSession, s.listProjectAPIKeys)
 	api.Post("/projects/:projectID/api-keys", s.requireAdminSession, s.requireAdminCSRF, s.requireRecentReauthentication, s.createProjectAPIKey)
@@ -69,6 +71,7 @@ func (s *Server) registerAdminRoutes() {
 	api.Get("/projects/:projectID/articles", s.requireAdminSession, s.listArticles)
 	api.Post("/projects/:projectID/articles", s.requireAdminSession, s.requireAdminCSRF, s.createArticle)
 	api.Get("/projects/:projectID/articles/:articleID", s.requireAdminSession, s.getArticle)
+	api.Delete("/projects/:projectID/articles/:articleID", s.requireAdminSession, s.requireAdminCSRF, s.archiveArticle)
 	api.Get("/projects/:projectID/articles/:articleID/revisions", s.requireAdminSession, s.listRevisionHistory)
 	api.Post("/projects/:projectID/articles/:articleID/revisions", s.requireAdminSession, s.requireAdminCSRF, s.createRevision)
 	api.Get("/projects/:projectID/articles/:articleID/revisions/:revisionID", s.requireAdminSession, s.getRevisionDetail)
@@ -843,6 +846,40 @@ func (s *Server) removeProjectMember(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
+func (s *Server) disableProjectMemberLogin(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	member, err := s.store.DisableProjectMemberLogin(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("userID"),
+	)
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not disable member login")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminProjectMember]{Data: member})
+}
+
+func (s *Server) enableProjectMemberLogin(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	member, err := s.store.EnableProjectMemberLogin(
+		c.UserContext(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("userID"),
+	)
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not enable member login")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminProjectMember]{Data: member})
+}
+
 func (s *Server) listAuditEvents(c *fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
@@ -977,6 +1014,17 @@ func (s *Server) getArticle(c *fiber.Ctx) error {
 		return s.adminReadError(c, err, "Article not found", "Could not load article")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
+}
+
+func (s *Server) archiveArticle(c *fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	if err := s.store.ArchiveArticle(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID")); err != nil {
+		return s.adminMutationError(c, err, "Could not archive article")
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 func (s *Server) listRevisionHistory(c *fiber.Ctx) error {

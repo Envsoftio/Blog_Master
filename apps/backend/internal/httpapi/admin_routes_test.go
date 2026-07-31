@@ -586,6 +586,158 @@ func TestMembershipRoleChangePreservesSessionsAndUsesLiveAuthorization(t *testin
 	}
 }
 
+func TestProjectMemberLoginDisableRevokesSessionsAndCanBeReenabled(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	memberPassword := "member correct horse password"
+	memberLogin := seedAndLogin(t, server, db, "member@example.test", memberPassword)
+	project := createTestProject(t, server, ownerLogin, `{"slug":"disable-login","name":"Disable Login"}`)
+	otherProject := createTestProject(t, server, memberLogin, `{"slug":"member-owned","name":"Member Owned"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, memberLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'project_owner', 'active', CURRENT_TIMESTAMP)
+	`, otherProject.ID, ownerLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	disableRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/members/"+memberLogin.userID+"/disable-login",
+		"",
+		ownerLogin,
+	)
+	disableResponse := mustTest(t, server, disableRequest)
+	if disableResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected disable login 200, got %d: %s", disableResponse.StatusCode, readBody(t, disableResponse))
+	}
+	var disabled Envelope[store.AdminProjectMember]
+	decodeJSONResponse(t, disableResponse, &disabled)
+	if disabled.Data.UserStatus != "disabled" || disabled.Data.Status != "active" {
+		t.Fatalf("expected disabled account with retained active membership, got %#v", disabled.Data)
+	}
+
+	meRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	addCookies(meRequest, memberLogin.cookies)
+	meResponse := mustTest(t, server, meRequest)
+	if meResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected disabled user's existing session to be revoked, got %d: %s", meResponse.StatusCode, readBody(t, meResponse))
+	}
+
+	loginBody, err := json.Marshal(loginRequest{Email: "member@example.test", Password: memberPassword})
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabledLoginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(loginBody))
+	disabledLoginRequest.Header.Set("Content-Type", "application/json")
+	disabledLoginResponse := mustTest(t, server, disabledLoginRequest)
+	if disabledLoginResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected disabled user login to fail, got %d: %s", disabledLoginResponse.StatusCode, readBody(t, disabledLoginResponse))
+	}
+
+	var selectedMembershipStatus, otherMembershipStatus string
+	if err := db.QueryRow(`
+		SELECT status
+		FROM project_memberships
+		WHERE project_id = ? AND user_id = ?
+	`, project.ID, memberLogin.userID).Scan(&selectedMembershipStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`
+		SELECT status
+		FROM project_memberships
+		WHERE project_id = ? AND user_id = ?
+	`, otherProject.ID, memberLogin.userID).Scan(&otherMembershipStatus); err != nil {
+		t.Fatal(err)
+	}
+	if selectedMembershipStatus != "active" || otherMembershipStatus != "active" {
+		t.Fatalf("expected disabling login to preserve memberships, got selected=%q other=%q", selectedMembershipStatus, otherMembershipStatus)
+	}
+
+	enableRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/members/"+memberLogin.userID+"/enable-login",
+		"",
+		ownerLogin,
+	)
+	enableResponse := mustTest(t, server, enableRequest)
+	if enableResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected enable login 200, got %d: %s", enableResponse.StatusCode, readBody(t, enableResponse))
+	}
+	var enabled Envelope[store.AdminProjectMember]
+	decodeJSONResponse(t, enableResponse, &enabled)
+	if enabled.Data.UserStatus != "active" {
+		t.Fatalf("expected enabled account status, got %#v", enabled.Data)
+	}
+
+	reenabledLogin := adminLogin(t, server, "member@example.test", memberPassword)
+	projectRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID, nil)
+	addCookies(projectRequest, reenabledLogin.cookies)
+	projectResponse := mustTest(t, server, projectRequest)
+	if projectResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected re-enabled user to regain retained project membership, got %d: %s", projectResponse.StatusCode, readBody(t, projectResponse))
+	}
+}
+
+func TestProjectMemberLoginDisableGuardrails(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	adminLogin := seedAndLogin(t, server, db, "admin@example.test", "admin correct horse password")
+	memberLogin := seedAndLogin(t, server, db, "member@example.test", "member correct horse password")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"disable-guardrails","name":"Disable Guardrails"}`)
+	memberOwnedProject := createTestProject(t, server, memberLogin, `{"slug":"solo-owned","name":"Solo Owned"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'project_admin', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, adminLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, memberLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	adminDisable := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/members/"+memberLogin.userID+"/disable-login",
+		"",
+		adminLogin,
+	)
+	adminDisableResponse := mustTest(t, server, adminDisable)
+	if adminDisableResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected project admin disable-login denial, got %d: %s", adminDisableResponse.StatusCode, readBody(t, adminDisableResponse))
+	}
+
+	selfDisable := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/members/"+ownerLogin.userID+"/disable-login",
+		"",
+		ownerLogin,
+	)
+	selfDisableResponse := mustTest(t, server, selfDisable)
+	if selfDisableResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected self-disable conflict, got %d: %s", selfDisableResponse.StatusCode, readBody(t, selfDisableResponse))
+	}
+
+	soloOwnerDisable := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/members/"+memberLogin.userID+"/disable-login",
+		"",
+		ownerLogin,
+	)
+	soloOwnerDisableResponse := mustTest(t, server, soloOwnerDisable)
+	if soloOwnerDisableResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected disable-login to protect solo-owned project %s, got %d: %s", memberOwnedProject.ID, soloOwnerDisableResponse.StatusCode, readBody(t, soloOwnerDisableResponse))
+	}
+}
+
 func TestMembershipAuthorizationAndCrossProjectScoping(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerALogin := seedAndLogin(t, server, db, "owner-a@example.test", "owner a correct password")
@@ -2483,6 +2635,147 @@ func TestScheduledPublishFlow(t *testing.T) {
 	}
 	if payload.Data.SEO.CanonicalURL != "https://example.test/blog/scheduled-post" {
 		t.Fatalf("unexpected canonical URL %q", payload.Data.SEO.CanonicalURL)
+	}
+}
+
+func TestDeleteArticleArchivesAndRemovesPublishedContent(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+
+	project := createTestProject(t, server, login, `{"slug":"article-delete","name":"Article Delete","primaryDomain":"example.test"}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"guides","name":"Guides"}`)
+	article := createTestArticle(t, server, login, project.ID, `{
+		"articleType":"guide",
+		"title":"Archived Guide",
+		"slug":"archived-guide",
+		"primaryCategoryId":"`+category.ID+`",
+		"excerpt":"A guide to archive",
+		"html":"<p>Archive me once the flow is complete.</p>"
+	}`)
+	revisionID := article.LatestRevision.ID
+	approveTestRevision(t, server, login, project.ID, revisionID)
+	publishTestArticle(t, server, login, project.ID, article.ID, revisionID, "archived-guide")
+
+	var generationBeforeArchive int64
+	var versionBeforeArchive int64
+	if err := db.QueryRow(`
+		SELECT project.content_generation, publication.publication_version
+		FROM projects project
+		JOIN project_publications publication ON publication.project_id = project.id
+		WHERE project.id = ? AND publication.content_id = ?
+	`, project.ID, article.ID).Scan(&generationBeforeArchive, &versionBeforeArchive); err != nil {
+		t.Fatal(err)
+	}
+
+	deleteRequest := newMemberMutationRequest(
+		http.MethodDelete,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID,
+		``,
+		login,
+	)
+	deleteResponse := mustTest(t, server, deleteRequest)
+	if deleteResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected delete article 204, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+
+	articleRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/articles/"+article.ID, nil)
+	addCookies(articleRequest, login.cookies)
+	articleResponse := mustTest(t, server, articleRequest)
+	if articleResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected archived article detail to return 404, got %d: %s", articleResponse.StatusCode, readBody(t, articleResponse))
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/articles", nil)
+	addCookies(listRequest, login.cookies)
+	listResponse := mustTest(t, server, listRequest)
+	if listResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected article list 200 after archive, got %d: %s", listResponse.StatusCode, readBody(t, listResponse))
+	}
+	var listPayload ListEnvelope[store.AdminArticle]
+	decodeJSONResponse(t, listResponse, &listPayload)
+	for _, listed := range listPayload.Data {
+		if listed.ID == article.ID {
+			t.Fatalf("archived article %s should not appear in admin list", article.ID)
+		}
+	}
+
+	publishedRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts/archived-guide?locale=en", nil)
+	publishedRequest.Header.Set("X-Dev-Project-ID", project.ID)
+	publishedResponse := mustTest(t, server, publishedRequest)
+	if publishedResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected archived article to disappear from content API, got %d: %s", publishedResponse.StatusCode, readBody(t, publishedResponse))
+	}
+
+	var archivedAt string
+	var retiredAt string
+	var publicationState string
+	var scheduledFor string
+	var generationAfterArchive int64
+	var versionAfterArchive int64
+	if err := db.QueryRow(`
+		SELECT COALESCE(item.archived_at, ''), publication.publication_state,
+		       COALESCE(publication.scheduled_for_utc, ''), COALESCE(publication.retired_at, ''),
+		       project.content_generation, publication.publication_version
+		FROM content_items item
+		JOIN projects project ON project.id = item.project_id
+		JOIN project_publications publication
+		  ON publication.project_id = item.project_id AND publication.content_id = item.id
+		WHERE item.project_id = ? AND item.id = ?
+	`, project.ID, article.ID).Scan(
+		&archivedAt,
+		&publicationState,
+		&scheduledFor,
+		&retiredAt,
+		&generationAfterArchive,
+		&versionAfterArchive,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if archivedAt == "" {
+		t.Fatal("expected content_items.archived_at to be set")
+	}
+	if publicationState != "archived" {
+		t.Fatalf("expected publication state archived, got %q", publicationState)
+	}
+	if scheduledFor != "" {
+		t.Fatalf("expected archived publication to clear schedule, got %q", scheduledFor)
+	}
+	if retiredAt == "" {
+		t.Fatal("expected archived publication retired_at to be set")
+	}
+	if generationAfterArchive <= generationBeforeArchive {
+		t.Fatalf("expected content generation to advance from %d, got %d", generationBeforeArchive, generationAfterArchive)
+	}
+	if versionAfterArchive <= versionBeforeArchive {
+		t.Fatalf("expected publication version to advance from %d, got %d", versionBeforeArchive, versionAfterArchive)
+	}
+
+	var archivedEvents int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM outbox_events
+		WHERE project_id = ?
+		  AND aggregate_id = ?
+		  AND event_type = 'content.archived'
+	`, project.ID, article.ID).Scan(&archivedEvents); err != nil {
+		t.Fatal(err)
+	}
+	if archivedEvents != 1 {
+		t.Fatalf("expected one content.archived outbox event, got %d", archivedEvents)
+	}
+
+	var archiveAudits int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ?
+		  AND target_id = ?
+		  AND action = 'content.archive'
+	`, project.ID, article.ID).Scan(&archiveAudits); err != nil {
+		t.Fatal(err)
+	}
+	if archiveAudits != 1 {
+		t.Fatalf("expected one content.archive audit event, got %d", archiveAudits)
 	}
 }
 

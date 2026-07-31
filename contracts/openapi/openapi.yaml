@@ -1429,6 +1429,25 @@ paths:
       tags:
         - Administration
   /api/v1/projects/{projectID}/articles/{articleID}:
+    delete:
+      description: Administrative API route.
+      operationId: delete_api_v1_projects_projectid_articles_articleid
+      responses:
+        "204":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: DELETE /api/v1/projects/{projectID}/articles/{articleID}
+      tags:
+        - Administration
     get:
       description: Administrative API route.
       operationId: get_api_v1_projects_projectid_articles_articleid
@@ -3005,6 +3024,46 @@ paths:
         "500":
           description: Internal server error
       summary: PATCH /api/v1/projects/{projectID}/members/{userID}
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/members/{userID}/disable-login:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_members_userid_disable_login
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: POST /api/v1/projects/{projectID}/members/{userID}/disable-login
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/members/{userID}/enable-login:
+    post:
+      description: Administrative API route.
+      operationId: post_api_v1_projects_projectid_members_userid_enable_login
+      responses:
+        "200":
+          description: Successful response
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: POST /api/v1/projects/{projectID}/members/{userID}/enable-login
       tags:
         - Administration
   /api/v1/projects/{projectID}/preview-tokens:

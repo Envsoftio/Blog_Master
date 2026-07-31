@@ -835,6 +835,85 @@ func (s *Store) UnpublishArticle(ctx context.Context, actorUserID, projectID, ar
 	return s.GetArticleForUser(ctx, actorUserID, projectID, articleID)
 }
 
+func (s *Store) ArchiveArticle(ctx context.Context, actorUserID, projectID, articleID string) error {
+	if err := s.requireContentPublish(ctx, actorUserID, projectID); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	project, err := loadWorkflowProject(ctx, tx, projectID)
+	if err != nil {
+		return err
+	}
+	if project.Status != "active" {
+		return fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	if _, err := loadArticleType(ctx, tx, projectID, articleID); err != nil {
+		return err
+	}
+	publication, publicationErr := loadPublication(ctx, tx, projectID, articleID)
+	if publicationErr != nil && !errors.Is(publicationErr, sql.ErrNoRows) {
+		return publicationErr
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE content_items
+		SET archived_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND id = ? AND archived_at IS NULL
+	`, projectID, articleID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE project_publications
+		SET publication_state = 'archived',
+		    scheduled_for_utc = NULL,
+		    unpublished_at = CASE
+		      WHEN publication_state = 'published' THEN COALESCE(unpublished_at, CURRENT_TIMESTAMP)
+		      ELSE unpublished_at
+		    END,
+		    retired_at = COALESCE(retired_at, CURRENT_TIMESTAMP),
+		    publication_version = publication_version + 1,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE project_id = ? AND content_id = ? AND publication_state <> 'archived'
+	`, projectID, articleID); err != nil {
+		return err
+	}
+	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+		return err
+	}
+	if publicationErr == nil && publication.PublicationState != "archived" {
+		if err := insertPublicationOutbox(
+			ctx,
+			tx,
+			projectID,
+			articleID,
+			publication.PublishedRevisionID,
+			"content.archived",
+			publication.CanonicalURL,
+			publication.PublicationVersion+1,
+		); err != nil {
+			return err
+		}
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "content.archive", "content", articleID, "success", nil); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) GetRevisionForUser(ctx context.Context, userID, projectID, revisionID string) (AdminRevision, error) {
 	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
 		return AdminRevision{}, err

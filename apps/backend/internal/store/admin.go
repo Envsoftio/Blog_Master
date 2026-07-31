@@ -84,16 +84,17 @@ type AdminProject struct {
 }
 
 type AdminProjectMember struct {
-	ProjectID string `json:"projectId"`
-	UserID    string `json:"userId"`
-	Email     string `json:"email"`
-	Role      string `json:"role"`
-	Status    string `json:"status"`
-	InvitedBy string `json:"invitedBy,omitempty"`
-	InvitedAt string `json:"invitedAt,omitempty"`
-	JoinedAt  string `json:"joinedAt,omitempty"`
-	UpdatedAt string `json:"updatedAt"`
-	RemovedAt string `json:"removedAt,omitempty"`
+	ProjectID  string `json:"projectId"`
+	UserID     string `json:"userId"`
+	Email      string `json:"email"`
+	Role       string `json:"role"`
+	Status     string `json:"status"`
+	UserStatus string `json:"userStatus"`
+	InvitedBy  string `json:"invitedBy,omitempty"`
+	InvitedAt  string `json:"invitedAt,omitempty"`
+	JoinedAt   string `json:"joinedAt,omitempty"`
+	UpdatedAt  string `json:"updatedAt"`
+	RemovedAt  string `json:"removedAt,omitempty"`
 }
 
 type ProjectMemberInvitation struct {
@@ -1636,6 +1637,177 @@ func (s *Store) RemoveProjectMember(ctx context.Context, actorUserID, projectID,
 	return tx.Commit()
 }
 
+func (s *Store) DisableProjectMemberLogin(ctx context.Context, actorUserID, projectID, targetUserID string) (AdminProjectMember, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	defer tx.Rollback()
+
+	actorRole, err := projectRoleTx(ctx, tx, actorUserID, projectID)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	if actorRole != "project_owner" {
+		return AdminProjectMember{}, ErrForbidden
+	}
+	if actorUserID == targetUserID {
+		return AdminProjectMember{}, fmt.Errorf("%w: you cannot disable your own account", ErrInvalidWorkflow)
+	}
+
+	var currentRole, currentStatus, targetEmail, targetUserStatus string
+	err = tx.QueryRowContext(ctx, `
+		SELECT membership.role, membership.status, user.email_normalized, user.status
+		FROM project_memberships membership
+		JOIN users user ON user.id = membership.user_id
+		WHERE membership.project_id = ?
+		  AND membership.user_id = ?
+		  AND membership.status IN ('active', 'invited')
+	`, projectID, targetUserID).Scan(&currentRole, &currentStatus, &targetEmail, &targetUserStatus)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	if currentStatus != "active" {
+		return AdminProjectMember{}, fmt.Errorf("%w: only active project members can have login disabled", ErrInvalidWorkflow)
+	}
+	if targetUserStatus == "disabled" {
+		return getProjectMemberTx(ctx, tx, projectID, targetUserID)
+	}
+	if targetUserStatus != "active" {
+		return AdminProjectMember{}, fmt.Errorf("%w: only active users can have login disabled", ErrInvalidWorkflow)
+	}
+	if err := ensureUserCanBeDisabled(ctx, tx, targetUserID); err != nil {
+		return AdminProjectMember{}, err
+	}
+
+	now := time.Now().UTC().Format(timeFormat)
+	result, err := tx.ExecContext(ctx, `
+		UPDATE users
+		SET status = 'disabled',
+		    updated_at = ?
+		WHERE id = ?
+		  AND status = 'active'
+	`, now, targetUserID)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	if changed != 1 {
+		return AdminProjectMember{}, sql.ErrNoRows
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sessions
+		SET revoked_at = ?
+		WHERE user_id = ?
+		  AND revoked_at IS NULL
+	`, now, targetUserID); err != nil {
+		return AdminProjectMember{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE invitations
+		SET revoked_at = ?
+		WHERE email_normalized = ?
+		  AND accepted_at IS NULL
+		  AND revoked_at IS NULL
+	`, now, targetEmail); err != nil {
+		return AdminProjectMember{}, err
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "user.disable_login", "user", targetUserID, "success", map[string]string{
+		"email":            targetEmail,
+		"fromStatus":       targetUserStatus,
+		"toStatus":         "disabled",
+		"membershipRole":   currentRole,
+		"membershipStatus": currentStatus,
+	}); err != nil {
+		return AdminProjectMember{}, err
+	}
+	member, err := getProjectMemberTx(ctx, tx, projectID, targetUserID)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminProjectMember{}, err
+	}
+	return member, nil
+}
+
+func (s *Store) EnableProjectMemberLogin(ctx context.Context, actorUserID, projectID, targetUserID string) (AdminProjectMember, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	defer tx.Rollback()
+
+	actorRole, err := projectRoleTx(ctx, tx, actorUserID, projectID)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	if actorRole != "project_owner" {
+		return AdminProjectMember{}, ErrForbidden
+	}
+
+	var currentRole, currentStatus, targetEmail, targetUserStatus string
+	err = tx.QueryRowContext(ctx, `
+		SELECT membership.role, membership.status, user.email_normalized, user.status
+		FROM project_memberships membership
+		JOIN users user ON user.id = membership.user_id
+		WHERE membership.project_id = ?
+		  AND membership.user_id = ?
+		  AND membership.status IN ('active', 'invited')
+	`, projectID, targetUserID).Scan(&currentRole, &currentStatus, &targetEmail, &targetUserStatus)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	if currentStatus != "active" {
+		return AdminProjectMember{}, fmt.Errorf("%w: only active project members can have login enabled", ErrInvalidWorkflow)
+	}
+	if targetUserStatus == "active" {
+		return getProjectMemberTx(ctx, tx, projectID, targetUserID)
+	}
+	if targetUserStatus != "disabled" {
+		return AdminProjectMember{}, fmt.Errorf("%w: only disabled users can have login enabled", ErrInvalidWorkflow)
+	}
+
+	now := time.Now().UTC().Format(timeFormat)
+	result, err := tx.ExecContext(ctx, `
+		UPDATE users
+		SET status = 'active',
+		    updated_at = ?
+		WHERE id = ?
+		  AND status = 'disabled'
+	`, now, targetUserID)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	if changed != 1 {
+		return AdminProjectMember{}, sql.ErrNoRows
+	}
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "user.enable_login", "user", targetUserID, "success", map[string]string{
+		"email":            targetEmail,
+		"fromStatus":       targetUserStatus,
+		"toStatus":         "active",
+		"membershipRole":   currentRole,
+		"membershipStatus": currentStatus,
+	}); err != nil {
+		return AdminProjectMember{}, err
+	}
+	member, err := getProjectMemberTx(ctx, tx, projectID, targetUserID)
+	if err != nil {
+		return AdminProjectMember{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return AdminProjectMember{}, err
+	}
+	return member, nil
+}
+
 func (s *Store) ListProjectAPIKeys(ctx context.Context, actorUserID, projectID, cursor string, limit int) ([]AdminAPIKey, error) {
 	if err := s.requireProjectManagement(ctx, actorUserID, projectID); err != nil {
 		return nil, err
@@ -1978,7 +2150,7 @@ func scanAdminAPIKey(row rowScanner) (AdminAPIKey, error) {
 }
 
 const adminProjectMemberColumns = `
-	membership.project_id, user.id, user.email_normalized, membership.role, membership.status,
+	membership.project_id, user.id, user.email_normalized, membership.role, membership.status, user.status,
 	COALESCE(membership.invited_by, ''), COALESCE(membership.invited_at, ''),
 	COALESCE(membership.joined_at, ''), membership.updated_at, COALESCE(membership.removed_at, '')
 `
@@ -1991,6 +2163,7 @@ func scanProjectMember(row rowScanner) (AdminProjectMember, error) {
 		&member.Email,
 		&member.Role,
 		&member.Status,
+		&member.UserStatus,
 		&member.InvitedBy,
 		&member.InvitedAt,
 		&member.JoinedAt,
@@ -2545,11 +2718,13 @@ func ensureAnotherActiveOwner(ctx context.Context, tx *sql.Tx, projectID, exclud
 	var ownerCount int
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(1)
-		FROM project_memberships
-		WHERE project_id = ?
-		  AND user_id <> ?
-		  AND role = 'project_owner'
-		  AND status = 'active'
+		FROM project_memberships membership
+		JOIN users user ON user.id = membership.user_id
+		WHERE membership.project_id = ?
+		  AND membership.user_id <> ?
+		  AND membership.role = 'project_owner'
+		  AND membership.status = 'active'
+		  AND user.status = 'active'
 	`, projectID, excludedUserID).Scan(&ownerCount); err != nil {
 		return err
 	}
@@ -2557,6 +2732,35 @@ func ensureAnotherActiveOwner(ctx context.Context, tx *sql.Tx, projectID, exclud
 		return fmt.Errorf("%w: every active project must retain at least one active owner", ErrInvalidWorkflow)
 	}
 	return nil
+}
+
+func ensureUserCanBeDisabled(ctx context.Context, tx *sql.Tx, targetUserID string) error {
+	var projectID string
+	err := tx.QueryRowContext(ctx, `
+		SELECT membership.project_id
+		FROM project_memberships membership
+		WHERE membership.user_id = ?
+		  AND membership.role = 'project_owner'
+		  AND membership.status = 'active'
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM project_memberships other
+		    JOIN users other_user ON other_user.id = other.user_id
+		    WHERE other.project_id = membership.project_id
+		      AND other.user_id <> membership.user_id
+		      AND other.role = 'project_owner'
+		      AND other.status = 'active'
+		      AND other_user.status = 'active'
+		  )
+		LIMIT 1
+	`, targetUserID).Scan(&projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: disabling this user would leave project %s without an active owner", ErrInvalidWorkflow, projectID)
 }
 
 func projectStatus(ctx context.Context, tx *sql.Tx, projectID string) (string, error) {

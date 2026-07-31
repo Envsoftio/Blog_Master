@@ -116,7 +116,10 @@
                     {{ roleLabel(member.role) }}
                   </span>
                   <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="statusClass(member.status)">
-                    {{ member.status }}
+                    member {{ member.status }}
+                  </span>
+                  <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="accountStatusClass(member.userStatus)">
+                    account {{ member.userStatus }}
                   </span>
                 </div>
               </div>
@@ -145,7 +148,7 @@
                 </div>
               </dl>
 
-              <div class="mt-5 grid gap-3 sm:grid-cols-[minmax(160px,240px)_auto_auto]">
+              <div class="mt-5 grid gap-3 sm:grid-cols-[minmax(160px,240px)_auto_auto_auto]">
                 <select
                   v-model="roleDrafts[member.userId]"
                   class="h-10 rounded-md border border-[#bfcac3] px-3 py-2 text-sm dark:border-[#4b5650] dark:bg-[#171b18]"
@@ -172,6 +175,21 @@
                   <LoaderCircle v-if="actionPending[member.userId] === 'remove'" class="h-4 w-4 animate-spin" />
                   <Trash2 v-else class="h-4 w-4" />
                   Remove
+                </button>
+                <button
+                  v-if="canShowLoginAction(member)"
+                  class="inline-flex h-10 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium disabled:opacity-60"
+                  :class="member.userStatus === 'disabled'
+                    ? 'border border-[#b9dcc9] text-[#165a4a] hover:bg-[#edf9f1] dark:border-[#2d644a] dark:text-[#aee4d0] dark:hover:bg-[#13261e]'
+                    : 'border border-[#d9b7aa] text-[#9b2d23] hover:bg-[#fff4f2] dark:border-[#6d352f] dark:text-[#ffc4bd] dark:hover:bg-[#2a1c1a]'"
+                  type="button"
+                  :disabled="Boolean(actionPending[member.userId])"
+                  @click="toggleMemberLogin(member)"
+                >
+                  <LoaderCircle v-if="actionPending[member.userId] === 'login'" class="h-4 w-4 animate-spin" />
+                  <UserCheck v-else-if="member.userStatus === 'disabled'" class="h-4 w-4" />
+                  <UserX v-else class="h-4 w-4" />
+                  {{ member.userStatus === 'disabled' ? 'Enable login' : 'Disable login' }}
                 </button>
               </div>
             </article>
@@ -276,7 +294,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, CalendarClock, Check, Clock3, Copy, LoaderCircle, LockKeyhole, LogOut, Mail, RefreshCw, ShieldCheck, Trash2, UserPlus, X } from 'lucide-vue-next'
+import { ArrowLeft, CalendarClock, Check, Clock3, Copy, LoaderCircle, LockKeyhole, LogOut, Mail, RefreshCw, ShieldCheck, Trash2, UserCheck, UserPlus, UserX, X } from 'lucide-vue-next'
 
 type APIEnvelope<T> = {
   data: T
@@ -298,12 +316,19 @@ type AdminProject = {
   role: string
 }
 
+type AdminUser = {
+  id: string
+  email: string
+  status: string
+}
+
 type AdminProjectMember = {
   projectId: string
   userId: string
   email: string
   role: string
   status: string
+  userStatus: string
   invitedBy?: string
   invitedAt?: string
   joinedAt?: string
@@ -337,6 +362,7 @@ const roleOptions = [
 ]
 
 const project = ref<AdminProject | null>(null)
+const currentUserID = ref('')
 const members = ref<AdminProjectMember[]>([])
 const pending = ref(true)
 const loadingMore = ref(false)
@@ -376,11 +402,13 @@ async function refresh() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, memberResponse] = await Promise.all([
+    const [projectResponse, memberResponse, currentUserResponse] = await Promise.all([
       $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
-      $fetch<APIListEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID.value}/members`, { credentials: 'include' })
+      $fetch<APIListEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID.value}/members`, { credentials: 'include' }),
+      $fetch<APIEnvelope<AdminUser>>('/api/v1/auth/me', { credentials: 'include' })
     ])
     project.value = projectResponse.data
+    currentUserID.value = currentUserResponse.data.id
     members.value = sortMembers(apiListData(memberResponse))
     nextCursor.value = memberResponse.meta?.nextCursor || ''
     syncRoleDrafts()
@@ -500,6 +528,45 @@ async function performRemoveMember(member: AdminProjectMember) {
   } catch (error) {
     if (queueReauthentication(error, `remove owner ${member.email}`, () => performRemoveMember(member))) return
     errorMessage.value = normalizeAPIError(error, 'Could not remove member.')
+  } finally {
+    delete actionPending[member.userId]
+  }
+}
+
+function canShowLoginAction(member: AdminProjectMember) {
+  return canManageOwnership.value &&
+    member.status === 'active' &&
+    member.userId !== currentUserID.value &&
+    (member.userStatus === 'active' || member.userStatus === 'disabled')
+}
+
+async function toggleMemberLogin(member: AdminProjectMember) {
+  if (member.userStatus === 'disabled') {
+    await performMemberLoginAction(member, 'enable')
+    return
+  }
+  if (!window.confirm(`Disable login for ${member.email}? Active sessions will be revoked immediately, but project membership and history will remain.`)) return
+  await performMemberLoginAction(member, 'disable')
+}
+
+async function performMemberLoginAction(member: AdminProjectMember, action: 'disable' | 'enable') {
+  actionPending[member.userId] = 'login'
+  clearMessages()
+  const pathAction = action === 'disable' ? 'disable-login' : 'enable-login'
+  try {
+    const csrfToken = await getCSRFToken()
+    const response = await $fetch<APIEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID.value}/members/${member.userId}/${pathAction}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-CSRF-Token': csrfToken }
+    })
+    upsertMember(response.data)
+    successMessage.value = action === 'disable'
+      ? 'Member login disabled and active sessions revoked.'
+      : 'Member login enabled.'
+  } catch (error) {
+    if (queueReauthentication(error, `${action} login for ${member.email}`, () => performMemberLoginAction(member, action))) return
+    errorMessage.value = normalizeAPIError(error, action === 'disable' ? 'Could not disable member login.' : 'Could not enable member login.')
   } finally {
     delete actionPending[member.userId]
   }
@@ -662,6 +729,19 @@ function statusClass(status: string) {
     case 'invited':
       return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
     case 'removed':
+      return 'bg-[#fbe4e1] text-[#8f3028] dark:bg-[#46231f] dark:text-[#ffc4bd]'
+    default:
+      return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'
+  }
+}
+
+function accountStatusClass(status: string) {
+  switch (status) {
+    case 'active':
+      return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
+    case 'invited':
+      return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
+    case 'disabled':
       return 'bg-[#fbe4e1] text-[#8f3028] dark:bg-[#46231f] dark:text-[#ffc4bd]'
     default:
       return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'

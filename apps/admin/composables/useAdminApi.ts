@@ -90,6 +90,7 @@ export type AdminProjectMember = {
   email: string
   role: string
   status: string
+  userStatus: string
   invitedBy?: string
   invitedAt?: string
   joinedAt?: string
@@ -658,6 +659,14 @@ export function useAdminApi() {
     return await request(`/api/v1/projects/${projectID}/members/${userID}`, await withCSRF({ method: 'DELETE' }))
   }
 
+  async function memberLoginAction(projectID: string, userID: string, action: 'disable' | 'enable') {
+    const pathAction = action === 'disable' ? 'disable-login' : 'enable-login'
+    return await request<APIEnvelope<AdminProjectMember>>(
+      `/api/v1/projects/${projectID}/members/${userID}/${pathAction}`,
+      await withCSRF({ method: 'POST' })
+    )
+  }
+
   async function listAPIKeys(projectID: string) {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminAPIKey>>(`/api/v1/projects/${projectID}/api-keys`))
   }
@@ -742,6 +751,12 @@ export function useAdminApi() {
 
   async function getArticle(projectID: string, articleID: string) {
     return await request<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID}/articles/${articleID}`)
+  }
+
+  async function deleteArticle(projectID: string, articleID: string) {
+    return await request<void>(`/api/v1/projects/${projectID}/articles/${articleID}`, await withCSRF({
+      method: 'DELETE'
+    }))
   }
 
   async function listRevisions(projectID: string, articleID: string, limit = 100) {
@@ -970,6 +985,7 @@ export function useAdminApi() {
     inviteMember,
     updateMember,
     removeMember,
+    memberLoginAction,
     listAPIKeys,
     createAPIKey,
     mutateAPIKey,
@@ -986,6 +1002,7 @@ export function useAdminApi() {
     listArticles,
     createArticle,
     getArticle,
+    deleteArticle,
     listRevisions,
     articleAction,
     revisionAction,
