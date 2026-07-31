@@ -1,168 +1,248 @@
 <template>
-  <section class="min-h-screen">
-    <header class="border-b border-[#d7ded8] bg-white px-6 py-4 dark:border-[#343a38] dark:bg-[#202422]">
-      <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
-        <div class="flex min-w-0 items-center gap-3">
-          <NuxtLink class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] bg-white text-[#28342d] hover:bg-[#eef5f1] dark:border-[#414a45] dark:bg-[#252b28] dark:text-[#eef4ef]" to="/projects" title="Back to projects" aria-label="Back to projects">
-            <ArrowLeft class="h-4 w-4" />
-          </NuxtLink>
-          <div class="min-w-0">
-            <p class="truncate text-sm text-[#5d6a61] dark:text-[#aeb8b0]">{{ project?.name || 'Project' }}</p>
-            <h1 class="truncate text-lg font-semibold tracking-normal">Members</h1>
-          </div>
-        </div>
-        <div class="flex items-center gap-2">
-          <button class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] bg-white text-[#28342d] hover:bg-[#eef5f1] disabled:opacity-50 dark:border-[#414a45] dark:bg-[#252b28] dark:text-[#eef4ef]" type="button" title="Refresh members" aria-label="Refresh members" :disabled="pending" @click="refresh">
-            <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': pending }" />
-          </button>
-          <button class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] bg-white text-[#28342d] hover:bg-[#fff4df] dark:border-[#414a45] dark:bg-[#252b28] dark:text-[#eef4ef]" type="button" title="Log out" aria-label="Log out" @click="logout">
-            <LogOut class="h-4 w-4" />
-          </button>
-        </div>
+  <div class="page-stack">
+    <div class="page-heading">
+      <div>
+        <p>Control project access, editorial roles, invitations, and account availability.</p>
       </div>
-    </header>
+      <div class="member-heading-actions">
+        <span class="status-pill member-current-role">Your role: {{ roleLabel(project?.role || '') }}</span>
+        <button class="button button--compact" type="button" :disabled="pending" @click="refresh">
+          <RefreshCw :class="{ spin: pending }" :size="16" />
+          Refresh
+        </button>
+      </div>
+    </div>
 
-    <div class="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-6 py-6 lg:grid-cols-[220px_1fr]">
-      <ProjectNav :project-id="projectID" :project="project" active="members" />
+    <div class="metric-grid">
+      <article class="metric-card surface">
+        <div class="metric-card__top"><span>Active members</span><Users :size="17" /></div>
+        <p class="metric-card__value">{{ memberStats.active }}</p>
+      </article>
+      <article class="metric-card surface">
+        <div class="metric-card__top"><span>Pending invites</span><Mail :size="17" /></div>
+        <p class="metric-card__value metric-card__value--warning">{{ memberStats.invited }}</p>
+      </article>
+      <article class="metric-card surface">
+        <div class="metric-card__top"><span>Project owners</span><ShieldCheck :size="17" /></div>
+        <p class="metric-card__value metric-card__value--blue">{{ memberStats.owners }}</p>
+      </article>
+      <article class="metric-card surface">
+        <div class="metric-card__top"><span>Login disabled</span><UserX :size="17" /></div>
+        <p class="metric-card__value metric-card__value--danger">{{ memberStats.disabled }}</p>
+      </article>
+    </div>
 
-      <main class="min-w-0 space-y-5">
-        <p v-if="errorMessage" class="rounded-md border border-[#edc6c2] bg-[#fff4f2] px-4 py-3 text-sm text-[#9b2d23] dark:border-[#6d352f] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]" role="alert">{{ errorMessage }}</p>
-        <p v-if="successMessage" class="rounded-md border border-[#b9dcc9] bg-[#edf9f1] px-4 py-3 text-sm text-[#165a4a] dark:border-[#2d644a] dark:bg-[#13261e] dark:text-[#aee4d0]" role="status">{{ successMessage }}</p>
+    <p v-if="errorMessage" class="ui-alert ui-alert--danger" role="alert">{{ errorMessage }}</p>
+    <p v-if="successMessage" class="ui-alert ui-alert--success" role="status">{{ successMessage }}</p>
 
-        <section v-if="invitationToken" class="rounded-lg border border-[#b9dcc9] bg-white p-5 shadow-sm dark:border-[#2d644a] dark:bg-[#202522]" aria-labelledby="invitation-token-title">
-          <div class="flex flex-wrap items-start justify-between gap-4">
-            <div class="min-w-0">
-              <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Shown once</p>
-              <h2 id="invitation-token-title" class="mt-1 truncate text-lg font-semibold">Invitation for {{ invitationToken.email }}</h2>
-              <p class="mt-2 text-sm text-[#5f6a63] dark:text-[#b8c2bb]">Copy this private link now. The server stores only a verifier and cannot show it again.</p>
-            </div>
-            <button class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]" type="button" title="Dismiss invitation link" aria-label="Dismiss invitation link" @click="invitationToken = null"><X class="h-4 w-4" /></button>
-          </div>
-          <div class="mt-4 flex flex-wrap items-center gap-3">
-            <code class="min-w-0 flex-1 overflow-x-auto rounded-md bg-[#17201b] px-3 py-3 text-sm text-[#dff7ea]">{{ invitationURL }}</code>
-            <button class="inline-flex h-10 items-center gap-2 rounded-md bg-[#165a4a] px-4 text-sm font-medium text-white hover:bg-[#10463a]" type="button" @click="copyInvitationToken"><Copy class="h-4 w-4" />Copy link</button>
-          </div>
-          <p class="mt-3 flex items-center gap-2 text-xs text-[#5d6a61] dark:text-[#aeb8b0]"><Clock3 class="h-4 w-4" />Expires {{ formatDate(invitationToken.expiresAt) }}</p>
-        </section>
+    <section v-if="invitationToken" class="invitation-result surface" aria-labelledby="invitation-token-title">
+      <span class="invitation-result__icon"><Copy :size="18" /></span>
+      <div class="invitation-result__main">
+        <span>One-time invitation link</span>
+        <h2 id="invitation-token-title">Invitation for {{ invitationToken.email }}</h2>
+        <p>Copy this private link now. The server cannot display it again.</p>
+        <div class="invitation-result__link">
+          <code>{{ invitationURL }}</code>
+          <button class="button button--primary button--compact" type="button" @click="copyInvitationToken">
+            <Copy :size="15" />Copy link
+          </button>
+        </div>
+        <small><Clock3 :size="13" />Expires {{ formatDate(invitationToken.expiresAt) }}</small>
+      </div>
+      <button class="icon-button invitation-result__close" type="button" title="Dismiss invitation link" aria-label="Dismiss invitation link" @click="invitationToken = null">
+        <X :size="16" />
+      </button>
+    </section>
 
-        <section class="flex flex-wrap items-end justify-between gap-4">
+    <p v-if="nextCursor" class="member-page-note">Summary cards reflect loaded members. Load all pages for complete totals.</p>
+
+    <div class="members-layout">
+      <section class="members-directory">
+        <div class="member-toolbar surface surface--subtle">
+          <label class="member-search">
+            <Search :size="16" />
+            <input v-model.trim="search" type="search" placeholder="Search members" aria-label="Search loaded members">
+          </label>
+          <label class="member-filter">
+            <span>Membership status</span>
+            <select v-model="statusFilter" aria-label="Membership status">
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="invited">Invited</option>
+              <option value="removed">Removed</option>
+            </select>
+          </label>
+          <label class="member-filter">
+            <span>Project role</span>
+            <select v-model="roleFilter" aria-label="Project role">
+              <option value="all">All roles</option>
+              <option v-for="role in roleOptions" :key="role.value" :value="role.value">{{ role.label }}</option>
+            </select>
+          </label>
+          <span class="member-toolbar__count">{{ filteredMembers.length }} shown</span>
+        </div>
+
+        <div v-if="pending" class="loading-surface surface" aria-live="polite">
+          <LoaderCircle class="spin" :size="18" />Loading members
+        </div>
+        <div v-else-if="members.length === 0" class="empty-state">
           <div>
-            <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Project access</p>
-            <h2 class="mt-1 text-2xl font-semibold tracking-tight">Membership and account access</h2>
-            <p class="mt-2 max-w-2xl text-sm text-[#5f6a63] dark:text-[#b8c2bb]">Membership controls access to this project. Disabling login is owner-only and revokes all sessions while preserving project history.</p>
+            <span class="empty-state__icon"><Users :size="20" /></span>
+            <h3>No members found</h3>
+            <p>Invite a teammate to start collaborating on this project.</p>
           </div>
-          <span class="rounded-full bg-[#eef2ef] px-3 py-1.5 text-sm font-medium text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]">Your role: {{ roleLabel(project?.role || '') }}</span>
-        </section>
+        </div>
+        <div v-else-if="filteredMembers.length === 0" class="empty-state">
+          <div>
+            <span class="empty-state__icon"><Search :size="20" /></span>
+            <h3>No members match</h3>
+            <p>Try another search, role, or membership status.</p>
+          </div>
+        </div>
 
-        <dl class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div class="rounded-lg border border-[#cfd8d1] bg-white p-4 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]"><dt class="text-xs uppercase tracking-wide text-[#667169] dark:text-[#aeb8b0]">Active members</dt><dd class="mt-2 text-2xl font-semibold text-[#165a4a] dark:text-[#aee4d0]">{{ memberStats.active }}</dd></div>
-          <div class="rounded-lg border border-[#cfd8d1] bg-white p-4 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]"><dt class="text-xs uppercase tracking-wide text-[#667169] dark:text-[#aeb8b0]">Pending invites</dt><dd class="mt-2 text-2xl font-semibold text-[#7a4f00] dark:text-[#ffd98a]">{{ memberStats.invited }}</dd></div>
-          <div class="rounded-lg border border-[#cfd8d1] bg-white p-4 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]"><dt class="text-xs uppercase tracking-wide text-[#667169] dark:text-[#aeb8b0]">Owners</dt><dd class="mt-2 text-2xl font-semibold text-[#245b99] dark:text-[#b8d5ff]">{{ memberStats.owners }}</dd></div>
-          <div class="rounded-lg border border-[#cfd8d1] bg-white p-4 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]"><dt class="text-xs uppercase tracking-wide text-[#667169] dark:text-[#aeb8b0]">Login disabled</dt><dd class="mt-2 text-2xl font-semibold text-[#9b2d23] dark:text-[#ffc4bd]">{{ memberStats.disabled }}</dd></div>
-        </dl>
-        <p v-if="nextCursor" class="text-xs text-[#667169] dark:text-[#aeb8b0]">Summary counts currently reflect loaded members. Load the remaining pages for a complete project count.</p>
+        <div v-else class="member-list surface">
+          <article v-for="member in filteredMembers" :key="member.userId" class="member-row">
+            <span class="member-avatar" :class="{ 'member-avatar--inactive': member.status === 'removed' }">{{ initials(member.email) }}</span>
 
-        <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <section class="min-w-0 space-y-4">
-            <div class="grid gap-3 rounded-lg border border-[#cfd8d1] bg-white p-3 shadow-sm dark:border-[#3f4843] dark:bg-[#202522] sm:grid-cols-[minmax(220px,1fr)_170px_170px]">
-              <label class="relative block">
-                <span class="sr-only">Search loaded members</span>
-                <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#667169] dark:text-[#aeb8b0]" />
-                <input v-model.trim="search" class="h-10 w-full rounded-md border border-[#bfcac3] bg-white pl-10 pr-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" type="search" placeholder="Search loaded members" />
-              </label>
-              <label><span class="sr-only">Membership status</span><select v-model="statusFilter" class="h-10 w-full rounded-md border border-[#bfcac3] bg-white px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]"><option value="all">All statuses</option><option value="active">Active</option><option value="invited">Invited</option><option value="removed">Removed</option></select></label>
-              <label><span class="sr-only">Project role</span><select v-model="roleFilter" class="h-10 w-full rounded-md border border-[#bfcac3] bg-white px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]"><option value="all">All roles</option><option v-for="role in roleOptions" :key="role.value" :value="role.value">{{ role.label }}</option></select></label>
-            </div>
-
-            <div v-if="pending" class="flex items-center gap-3 rounded-lg border border-[#cfd8d1] bg-white p-5 text-sm text-[#58625c] dark:border-[#3f4843] dark:bg-[#202522] dark:text-[#bec7c1]" aria-live="polite"><LoaderCircle class="h-4 w-4 animate-spin" />Loading members</div>
-            <div v-else-if="members.length === 0" class="rounded-lg border border-dashed border-[#bfcac3] bg-white p-8 text-center dark:border-[#4b5650] dark:bg-[#202522]"><Users class="mx-auto h-8 w-8 text-[#667169]" /><h2 class="mt-3 text-lg font-semibold">No members found</h2></div>
-            <div v-else-if="filteredMembers.length === 0" class="rounded-lg border border-dashed border-[#bfcac3] bg-white p-8 text-center dark:border-[#4b5650] dark:bg-[#202522]"><Search class="mx-auto h-8 w-8 text-[#667169]" /><h2 class="mt-3 text-lg font-semibold">No matching loaded members</h2><p class="mt-2 text-sm text-[#5f6a63] dark:text-[#b8c2bb]">Clear the filters or load the next page.</p></div>
-
-            <article v-for="member in filteredMembers" :key="member.userId" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex flex-wrap items-start justify-between gap-4">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-2">
-                    <h3 class="truncate text-lg font-semibold">{{ member.email }}</h3>
-                    <span v-if="member.userId === currentUserID" class="rounded-full bg-[#eef2ef] px-2 py-0.5 text-xs text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]">You</span>
-                  </div>
-                  <p class="mt-1 truncate font-mono text-xs text-[#5f6a63] dark:text-[#b8c2bb]">{{ member.userId }}</p>
-                </div>
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="roleClass(member.role)">{{ roleLabel(member.role) }}</span>
-                  <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="statusClass(member.status)">{{ member.status }}</span>
-                  <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="accountStatusClass(member.userStatus)">login {{ member.userStatus }}</span>
-                </div>
+            <div class="member-row__main">
+              <div class="member-row__title">
+                <h3>{{ member.email }}</h3>
+                <span v-if="member.userId === currentUserID" class="member-you">You</span>
               </div>
 
-              <dl class="mt-5 grid gap-3 text-sm sm:grid-cols-3">
-                <div class="flex items-center gap-2"><Mail class="h-4 w-4 text-[#3162a3]" /><div class="min-w-0"><dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Invited</dt><dd class="truncate">{{ formatDate(member.invitedAt) }}</dd></div></div>
-                <div class="flex items-center gap-2"><ShieldCheck class="h-4 w-4 text-[#165a4a]" /><div class="min-w-0"><dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Joined</dt><dd class="truncate">{{ formatDate(member.joinedAt) }}</dd></div></div>
-                <div class="flex items-center gap-2"><CalendarClock class="h-4 w-4 text-[#8a5b00]" /><div class="min-w-0"><dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Updated</dt><dd class="truncate">{{ formatDate(member.updatedAt) }}</dd></div></div>
-              </dl>
+              <div class="member-row__pills">
+                <span class="status-pill" :class="roleClass(member.role)">{{ roleLabel(member.role) }}</span>
+                <span class="status-pill" :class="statusClass(member.status)">{{ member.status }}</span>
+                <span class="status-pill" :class="accountStatusClass(member.userStatus)">Login {{ member.userStatus }}</span>
+              </div>
 
-              <p v-if="member.status === 'removed'" class="mt-4 rounded-md bg-[#f5f7f5] px-3 py-2 text-sm text-[#5f6a63] dark:bg-[#171b18] dark:text-[#b8c2bb]">Removed {{ formatDate(member.removedAt) }}. Historical authorship and audit records remain intact.</p>
+              <div class="member-row__meta">
+                <span><Mail :size="13" />Invited {{ formatDate(member.invitedAt) }}</span>
+                <span><ShieldCheck :size="13" />Joined {{ formatDate(member.joinedAt) }}</span>
+                <span><CalendarClock :size="13" />Updated {{ formatDate(member.updatedAt) }}</span>
+              </div>
 
-              <div v-else-if="canManageMembers" class="mt-5 grid gap-3 sm:grid-cols-[minmax(170px,240px)_auto_auto]">
-                <select v-model="roleDrafts[member.userId]" class="h-10 rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" :aria-label="`Role for ${member.email}`" :disabled="!canEditMember(member) || Boolean(actionPending[member.userId])">
+              <p v-if="member.status === 'removed'" class="member-removed-note">
+                Removed {{ formatDate(member.removedAt) }}. Historical authorship and audit records remain intact.
+              </p>
+
+              <div v-else-if="canManageMembers" class="member-row__actions">
+                <select v-model="roleDrafts[member.userId]" :aria-label="`Role for ${member.email}`" :disabled="!canEditMember(member) || Boolean(actionPending[member.userId])">
                   <option v-for="role in roleOptions" :key="role.value" :value="role.value" :disabled="role.value === 'project_owner' && !canManageOwnership">{{ role.label }}</option>
                 </select>
-                <button class="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#c9d4cc] px-3 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]" type="button" :disabled="!canEditMember(member) || Boolean(actionPending[member.userId]) || roleDrafts[member.userId] === member.role" @click="saveRole(member)">
-                  <LoaderCircle v-if="actionPending[member.userId] === 'role'" class="h-4 w-4 animate-spin" /><Save v-else class="h-4 w-4" />Save role
+                <button class="button button--compact" type="button" :disabled="!canEditMember(member) || Boolean(actionPending[member.userId]) || roleDrafts[member.userId] === member.role" @click="saveRole(member)">
+                  <LoaderCircle v-if="actionPending[member.userId] === 'role'" class="spin" :size="15" />
+                  <Save v-else :size="15" />Save role
                 </button>
-                <button class="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#d9b7aa] px-3 text-sm font-medium text-[#9b2d23] hover:bg-[#fff4f2] disabled:opacity-60 dark:border-[#6d352f] dark:text-[#ffc4bd]" type="button" :disabled="!canEditMember(member) || Boolean(actionPending[member.userId])" @click="removeMember(member)">
-                  <LoaderCircle v-if="actionPending[member.userId] === 'remove'" class="h-4 w-4 animate-spin" /><UserMinus v-else class="h-4 w-4" />Remove
+                <button class="button button--compact member-action--danger" type="button" :disabled="!canEditMember(member) || Boolean(actionPending[member.userId])" @click="removeMember(member)">
+                  <LoaderCircle v-if="actionPending[member.userId] === 'remove'" class="spin" :size="15" />
+                  <UserMinus v-else :size="15" />Remove
                 </button>
-                <button v-if="canShowLoginAction(member)" class="inline-flex h-10 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium disabled:opacity-60 sm:col-span-3" :class="member.userStatus === 'disabled' ? 'border border-[#b9dcc9] text-[#165a4a] hover:bg-[#edf9f1] dark:border-[#2d644a] dark:text-[#aee4d0]' : 'border border-[#d9b7aa] text-[#9b2d23] hover:bg-[#fff4f2] dark:border-[#6d352f] dark:text-[#ffc4bd]'" type="button" :disabled="Boolean(actionPending[member.userId])" @click="toggleMemberLogin(member)">
-                  <LoaderCircle v-if="actionPending[member.userId] === 'login'" class="h-4 w-4 animate-spin" /><UserCheck v-else-if="member.userStatus === 'disabled'" class="h-4 w-4" /><UserX v-else class="h-4 w-4" />{{ member.userStatus === 'disabled' ? 'Enable account login' : 'Disable account login and revoke sessions' }}
+                <button v-if="canShowLoginAction(member)" class="button button--compact member-login-action" :class="member.userStatus === 'disabled' ? 'member-action--success' : 'member-action--danger'" type="button" :disabled="Boolean(actionPending[member.userId])" @click="toggleMemberLogin(member)">
+                  <LoaderCircle v-if="actionPending[member.userId] === 'login'" class="spin" :size="15" />
+                  <UserCheck v-else-if="member.userStatus === 'disabled'" :size="15" />
+                  <UserX v-else :size="15" />
+                  {{ member.userStatus === 'disabled' ? 'Enable login' : 'Disable login' }}
                 </button>
               </div>
-            </article>
-
-            <button v-if="nextCursor" class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] bg-white px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:bg-[#202522] dark:hover:bg-[#2a302d]" type="button" :disabled="loadingMore" @click="loadMoreMembers"><LoaderCircle v-if="loadingMore" class="h-4 w-4 animate-spin" /><ChevronDown v-else class="h-4 w-4" />Load more members</button>
-          </section>
-
-          <aside class="space-y-5">
-            <form v-if="canManageMembers" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="inviteMember">
-              <div class="flex items-start gap-3"><UserPlus class="mt-1 h-4 w-4 text-[#3162a3]" /><div><p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Invite</p><h2 class="mt-1 text-lg font-semibold">Project member</h2></div></div>
-              <label class="block space-y-2"><span class="text-sm font-medium">Email</span><input v-model.trim="form.email" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]" type="email" autocomplete="email" required /></label>
-              <label class="block space-y-2"><span class="text-sm font-medium">Role</span><select v-model="form.role" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]"><option v-for="role in roleOptions" :key="role.value" :value="role.value" :disabled="role.value === 'project_owner' && !canManageOwnership">{{ role.label }}</option></select><span class="block text-xs text-[#667169] dark:text-[#aeb8b0]">{{ roleDescription(form.role) }}</span></label>
-              <label class="block space-y-2"><span class="text-sm font-medium">Expires at</span><input v-model="form.expiresAt" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]" type="datetime-local" :min="minimumExpiry" /><span class="block text-xs text-[#667169] dark:text-[#aeb8b0]">Leave blank to use the server default.</span></label>
-              <button class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60" type="submit" :disabled="creating || !canInvite"><LoaderCircle v-if="creating" class="h-4 w-4 animate-spin" /><UserPlus v-else class="h-4 w-4" />Create invitation</button>
-            </form>
-
-            <section v-else class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]"><ShieldCheck class="h-5 w-5 text-[#3162a3]" /><h2 class="mt-3 font-semibold">Read-only membership</h2><p class="mt-2 text-sm text-[#5f6a63] dark:text-[#b8c2bb]">Only project owners and administrators can invite, change, or remove members.</p></section>
-
-            <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex items-start gap-3"><KeyRound class="mt-1 h-4 w-4 text-[#6b5797]" /><div><p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Role guide</p><h2 class="mt-1 text-lg font-semibold">Least privilege</h2></div></div>
-              <dl class="mt-4 space-y-3 text-sm"><div v-for="role in roleOptions" :key="role.value" class="rounded-md bg-[#f5f7f5] p-3 dark:bg-[#171b18]"><dt class="font-medium">{{ role.label }}</dt><dd class="mt-1 text-[#5f6a63] dark:text-[#b8c2bb]">{{ roleDescription(role.value) }}</dd></div></dl>
-            </section>
-          </aside>
+            </div>
+          </article>
         </div>
-      </main>
+
+        <button v-if="nextCursor" class="button member-load-more" type="button" :disabled="loadingMore" @click="loadMoreMembers">
+          <LoaderCircle v-if="loadingMore" class="spin" :size="16" />
+          <RefreshCw v-else :size="16" />
+          Load more members
+        </button>
+      </section>
+
+      <aside class="member-sidebar">
+        <form v-if="canManageMembers" class="member-panel surface" @submit.prevent="inviteMember">
+          <div class="member-panel__header">
+            <span class="member-panel__icon"><UserPlus :size="18" /></span>
+            <div><span>Project access</span><h2>Invite a member</h2></div>
+          </div>
+          <div class="member-panel__body">
+            <label class="field">
+              <span>Email</span>
+              <input v-model.trim="form.email" type="email" autocomplete="email" placeholder="name@company.com" required>
+            </label>
+            <label class="field">
+              <span>Role</span>
+              <select v-model="form.role">
+                <option v-for="role in roleOptions" :key="role.value" :value="role.value" :disabled="role.value === 'project_owner' && !canManageOwnership">{{ role.label }}</option>
+              </select>
+              <small>{{ roleDescription(form.role) }}</small>
+            </label>
+            <label class="field">
+              <span>Expires at <em>Optional</em></span>
+              <input v-model="form.expiresAt" type="datetime-local" :min="minimumExpiry">
+              <small>Leave blank to use the server default.</small>
+            </label>
+            <button class="button button--primary member-invite-button" type="submit" :disabled="creating || !canInvite">
+              <LoaderCircle v-if="creating" class="spin" :size="16" />
+              <UserPlus v-else :size="16" />Create invitation
+            </button>
+          </div>
+        </form>
+
+        <section v-else class="member-panel surface">
+          <div class="member-panel__header">
+            <span class="member-panel__icon"><ShieldCheck :size="18" /></span>
+            <div><span>Project access</span><h2>Read-only membership</h2></div>
+          </div>
+          <p class="member-panel__copy">Only project owners and administrators can invite, change, or remove members.</p>
+        </section>
+
+        <section class="member-panel surface">
+          <div class="member-panel__header">
+            <span class="member-panel__icon member-panel__icon--blue"><KeyRound :size="18" /></span>
+            <div><span>Permissions</span><h2>Role guide</h2></div>
+          </div>
+          <dl class="role-guide">
+            <div v-for="role in roleOptions" :key="role.value">
+              <dt>{{ role.label }}</dt>
+              <dd>{{ roleDescription(role.value) }}</dd>
+            </div>
+          </dl>
+        </section>
+      </aside>
     </div>
 
-    <div v-if="reauthenticationOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4" @click.self="cancelReauthentication">
-      <form class="w-full max-w-md rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-xl dark:border-[#3f4843] dark:bg-[#202522]" role="dialog" aria-modal="true" aria-labelledby="member-reauthentication-title" @submit.prevent="confirmReauthentication">
-        <div class="flex items-start gap-3"><LockKeyhole class="mt-1 h-5 w-5 text-[#3162a3]" /><div><h2 id="member-reauthentication-title" class="text-lg font-semibold">Confirm your identity</h2><p class="mt-1 text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Enter your current password to {{ pendingProtectedAction?.label || 'continue' }}.</p></div></div>
-        <p v-if="reauthenticationError" class="mt-4 rounded-md border border-[#edc6c2] bg-[#fff4f2] px-3 py-2 text-sm text-[#9b2d23] dark:border-[#6d352f] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]" role="alert">{{ reauthenticationError }}</p>
-        <label class="mt-5 block space-y-2"><span class="text-sm font-medium">Current password</span><input ref="reauthenticationInput" v-model="reauthenticationPassword" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]" type="password" autocomplete="current-password" required /></label>
-        <div class="mt-5 flex justify-end gap-2"><button class="h-10 rounded-md border border-[#c9d4cc] px-3 text-sm font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]" type="button" :disabled="reauthenticating" @click="cancelReauthentication">Cancel</button><button class="inline-flex h-10 items-center gap-2 rounded-md bg-[#165a4a] px-4 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60" type="submit" :disabled="reauthenticating || !reauthenticationPassword"><LoaderCircle v-if="reauthenticating" class="h-4 w-4 animate-spin" />Confirm</button></div>
+    <div v-if="reauthenticationOpen" class="member-dialog-backdrop" @click.self="cancelReauthentication">
+      <form class="member-dialog surface" role="dialog" aria-modal="true" aria-labelledby="member-reauthentication-title" @submit.prevent="confirmReauthentication">
+        <div class="member-panel__header">
+          <span class="member-panel__icon member-panel__icon--blue"><LockKeyhole :size="18" /></span>
+          <div>
+            <span>Protected action</span>
+            <h2 id="member-reauthentication-title">Confirm your identity</h2>
+          </div>
+        </div>
+        <p>Enter your current password to {{ pendingProtectedAction?.label || 'continue' }}.</p>
+        <p v-if="reauthenticationError" class="ui-alert ui-alert--danger" role="alert">{{ reauthenticationError }}</p>
+        <label class="field">
+          <span>Current password</span>
+          <input ref="reauthenticationInput" v-model="reauthenticationPassword" type="password" autocomplete="current-password" required>
+        </label>
+        <div class="member-dialog__actions">
+          <button class="button" type="button" :disabled="reauthenticating" @click="cancelReauthentication">Cancel</button>
+          <button class="button button--primary" type="submit" :disabled="reauthenticating || !reauthenticationPassword">
+            <LoaderCircle v-if="reauthenticating" class="spin" :size="16" />Confirm
+          </button>
+        </div>
       </form>
     </div>
-  </section>
+  </div>
 </template>
 
 <script setup lang="ts">
 import {
-  ArrowLeft,
   CalendarClock,
-  ChevronDown,
   Clock3,
   Copy,
   KeyRound,
   LoaderCircle,
   LockKeyhole,
-  LogOut,
   Mail,
   RefreshCw,
   Save,
@@ -429,10 +509,6 @@ async function copyInvitationToken() {
   }
 }
 
-async function logout() {
-  try { await api.logout() } finally { await navigateTo('/') }
-}
-
 function upsertMember(member: AdminProjectMember) {
   const index = members.value.findIndex(item => item.userId === member.userId)
   if (index >= 0) members.value.splice(index, 1, member)
@@ -465,7 +541,7 @@ function formatLocalDateTimeInput(date: Date) {
   const pad = (value: number) => String(value).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
-function roleLabel(role: string) { return role ? role.replaceAll('_', ' ') : 'unknown' }
+function roleLabel(role: string) { return roleOptions.find(option => option.value === role)?.label || 'Unknown' }
 function roleDescription(role: string) {
   const descriptions: Record<string, string> = {
     project_owner: 'Full project control, ownership transfer, account login controls, and publishing.',
@@ -477,22 +553,27 @@ function roleDescription(role: string) {
   return descriptions[role] || 'Project-scoped access.'
 }
 function roleClass(role: string) {
-  if (role === 'project_owner') return 'bg-[#e8f0ff] text-[#245b99] dark:bg-[#152944] dark:text-[#b8d5ff]'
-  if (role === 'project_admin') return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
-  if (role === 'editor') return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
-  return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'
+  if (role === 'project_owner') return 'member-pill--blue'
+  if (role === 'project_admin') return 'status-pill--success'
+  if (role === 'editor') return 'status-pill--warning'
+  return ''
 }
 function statusClass(status: string) {
-  if (status === 'active') return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
-  if (status === 'invited') return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
-  if (status === 'removed') return 'bg-[#fbe4e1] text-[#8f3028] dark:bg-[#46231f] dark:text-[#ffc4bd]'
-  return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'
+  if (status === 'active') return 'status-pill--success'
+  if (status === 'invited') return 'status-pill--warning'
+  if (status === 'removed') return 'status-pill--danger'
+  return ''
 }
 function accountStatusClass(status: string) {
-  if (status === 'active') return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
-  if (status === 'disabled') return 'bg-[#fbe4e1] text-[#8f3028] dark:bg-[#46231f] dark:text-[#ffc4bd]'
-  if (status === 'invited') return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
-  return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'
+  if (status === 'active') return 'status-pill--success'
+  if (status === 'disabled') return 'status-pill--danger'
+  if (status === 'invited') return 'status-pill--warning'
+  return ''
+}
+function initials(email: string) {
+  const localPart = email.split('@')[0] || email
+  const parts = localPart.split(/[._\-\s]+/).filter(Boolean)
+  return (parts.length > 1 ? `${parts[0]?.[0] || ''}${parts[1]?.[0] || ''}` : localPart.slice(0, 2)).toUpperCase()
 }
 function clearMessages() { errorMessage.value = ''; successMessage.value = '' }
 function apiProblem(error: unknown) {
@@ -500,3 +581,117 @@ function apiProblem(error: unknown) {
   return (error as { data?: { title?: string, detail?: string } }).data || null
 }
 </script>
+
+<style scoped>
+.member-heading-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.member-current-role { min-height: 36px; padding-inline: 11px; }
+.metric-card__value--warning { color: var(--amber); }
+.metric-card__value--blue { color: var(--blue); }
+.metric-card__value--danger { color: var(--danger); }
+.member-page-note { margin: -10px 0 0; color: var(--text-faint); font-size: 10px; }
+.invitation-result { display: grid; grid-template-columns: 40px minmax(0, 1fr) 34px; gap: 12px; padding: 15px; border-color: color-mix(in srgb, var(--primary) 38%, var(--border)); background: color-mix(in srgb, var(--primary-soft) 48%, var(--surface)); }
+.invitation-result__icon { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 7px; background: var(--primary-soft); color: var(--primary); }
+.invitation-result__main { min-width: 0; }
+.invitation-result__main > span { color: var(--primary); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.invitation-result h2 { overflow: hidden; margin: 1px 0 0; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.invitation-result p { margin: 4px 0 0; color: var(--text-soft); font-size: 11px; }
+.invitation-result__link { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 11px; }
+.invitation-result code { display: block; min-width: 0; overflow-x: auto; padding: 9px 11px; border-radius: 6px; background: var(--sidebar); color: #e8fff8; font-size: 10px; white-space: nowrap; }
+.invitation-result small { display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; color: var(--text-faint); font-size: 10px; }
+.invitation-result__close { border-color: var(--border); color: var(--text-soft); }
+.members-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; align-items: start; gap: 16px; }
+.members-directory { display: grid; min-width: 0; gap: 14px; }
+.member-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) 160px 160px auto; align-items: end; gap: 8px; padding: 8px; }
+.member-search { display: flex; min-height: 36px; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); }
+.member-search input { width: 100%; min-width: 0; min-height: 34px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 11px; }
+.member-search:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 14%, transparent); }
+.member-filter { display: grid; gap: 3px; }
+.member-filter > span { padding-left: 2px; color: var(--text-faint); font-size: 9px; font-weight: 650; }
+.member-filter select,
+.member-row__actions select { min-height: 36px; padding: 7px 28px 7px 10px; border: 1px solid var(--border); border-radius: 6px; outline: 0; background: var(--surface); color: var(--text); font-size: 11px; }
+.member-filter select:focus,
+.member-row__actions select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 14%, transparent); }
+.member-toolbar__count { align-self: center; padding: 12px 4px 0; color: var(--text-faint); font-size: 10px; white-space: nowrap; }
+.member-list { overflow: hidden; }
+.member-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 14px; padding: 16px; border-bottom: 1px solid var(--border); }
+.member-row:last-child { border-bottom: 0; }
+.member-row:hover { background: var(--surface-subtle); }
+.member-avatar { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 7px; background: var(--blue-soft); color: var(--blue); font-size: 12px; font-weight: 750; }
+.member-avatar--inactive { background: var(--surface-subtle); color: var(--text-faint); }
+.member-row__main { min-width: 0; }
+.member-row__title { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 7px; }
+.member-row__title h3 { min-width: 0; overflow: hidden; margin: 0; font-size: 14px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.member-you { padding: 2px 6px; border-radius: 999px; background: var(--surface-subtle); color: var(--text-soft); font-size: 9px; font-weight: 700; }
+.member-row__pills { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.member-pill--blue { border-color: color-mix(in srgb, var(--blue) 35%, var(--border)); background: var(--blue-soft); color: var(--blue); }
+.member-row__meta { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 9px; color: var(--text-faint); font-size: 10px; }
+.member-row__meta span { display: inline-flex; align-items: center; gap: 4px; }
+.member-removed-note { margin: 10px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--surface-subtle); color: var(--text-soft); font-size: 10px; }
+.member-row__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.member-row__actions select { min-width: 170px; }
+.member-row__actions .button { min-height: 36px; font-size: 11px; }
+.member-login-action { margin-left: auto; }
+.member-action--danger { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); color: var(--danger); }
+.member-action--danger:hover { border-color: var(--danger); background: var(--danger-soft); }
+.member-action--success { border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); color: var(--primary); }
+.member-action--success:hover { border-color: var(--primary); background: var(--primary-soft); }
+.member-load-more { width: 100%; }
+.member-sidebar { position: sticky; top: 96px; display: grid; gap: 14px; }
+.member-panel { overflow: hidden; }
+.member-panel__header { display: flex; align-items: flex-start; gap: 10px; padding: 14px; border-bottom: 1px solid var(--border); }
+.member-panel__icon { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border-radius: 7px; background: var(--primary-soft); color: var(--primary); }
+.member-panel__icon--blue { background: var(--blue-soft); color: var(--blue); }
+.member-panel__header div > span { color: var(--text-soft); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.member-panel__header h2 { margin: 1px 0 0; font-size: 15px; }
+.member-panel__body { display: grid; gap: 13px; padding: 14px; }
+.member-panel .field small { color: var(--text-faint); font-size: 9px; line-height: 1.45; }
+.member-panel .field em { margin-left: 4px; color: var(--text-faint); font-size: 9px; font-style: normal; font-weight: 500; }
+.member-invite-button { width: 100%; }
+.member-panel__copy { margin: 0; padding: 14px; color: var(--text-soft); font-size: 11px; }
+.role-guide { margin: 0; padding: 4px 14px 10px; }
+.role-guide div { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.role-guide div:last-child { border-bottom: 0; }
+.role-guide dt { font-size: 11px; font-weight: 680; }
+.role-guide dd { margin: 3px 0 0; color: var(--text-soft); font-size: 9px; line-height: 1.45; }
+.loading-surface { display: flex; min-height: 130px; align-items: center; justify-content: center; gap: 9px; color: var(--text-soft); }
+.member-dialog-backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 20px; background: rgb(15 23 42 / 0.48); }
+.member-dialog { width: min(440px, 100%); padding-bottom: 14px; box-shadow: var(--shadow-md); }
+.member-dialog > p { margin: 14px 14px 0; color: var(--text-soft); font-size: 11px; }
+.member-dialog > .ui-alert { color: var(--danger); }
+.member-dialog > .field { margin: 14px 14px 0; }
+.member-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin: 16px 14px 0; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 1180px) {
+  .members-layout { grid-template-columns: minmax(0, 1fr) 300px; }
+  .member-toolbar { grid-template-columns: minmax(180px, 1fr) 145px 145px; }
+  .member-toolbar__count { display: none; }
+}
+@media (max-width: 980px) {
+  .members-layout { grid-template-columns: 1fr; }
+  .member-sidebar { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .member-sidebar > :only-child { grid-column: 1 / -1; }
+}
+@media (max-width: 720px) {
+  .member-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .member-search { grid-column: 1 / -1; }
+  .invitation-result { grid-template-columns: 36px minmax(0, 1fr) 34px; }
+  .invitation-result__icon { width: 36px; height: 36px; }
+  .invitation-result__link { grid-template-columns: 1fr; }
+  .member-login-action { margin-left: 0; }
+}
+@media (max-width: 560px) {
+  .member-heading-actions,
+  .member-heading-actions .button { width: 100%; }
+  .member-current-role { flex: 1; }
+  .member-sidebar { grid-template-columns: 1fr; }
+  .member-row { grid-template-columns: 38px minmax(0, 1fr); gap: 10px; padding: 13px; }
+  .member-avatar { width: 38px; height: 38px; }
+  .member-row__actions select,
+  .member-row__actions .button { width: 100%; }
+  .invitation-result { grid-template-columns: minmax(0, 1fr) 34px; }
+  .invitation-result__icon { display: none; }
+  .member-dialog-backdrop { align-items: stretch; padding: 10px; }
+  .member-dialog { align-self: center; max-height: calc(100vh - 20px); overflow-y: auto; }
+}
+</style>
