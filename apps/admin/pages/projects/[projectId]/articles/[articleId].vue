@@ -471,7 +471,7 @@
                 <span class="rounded-md bg-[#eef5f1] px-3 py-2 text-sm text-[#36594a] dark:bg-[#18261f] dark:text-[#b6d7c8]">{{ openCommentCount }} open</span>
               </div>
 
-              <form class="mt-5 space-y-3" @submit.prevent="createComment">
+              <form v-if="canComment" class="mt-5 space-y-3" @submit.prevent="createComment">
                 <div class="grid gap-3 sm:grid-cols-2">
                   <label class="block space-y-2">
                     <span class="text-sm font-medium">Revision ID</span>
@@ -523,7 +523,7 @@
                     <dd>{{ formatDate(comment.resolvedAt) }}</dd>
                   </div>
                 </dl>
-                <div class="mt-4 flex flex-wrap gap-2">
+                <div v-if="canComment" class="mt-4 flex flex-wrap gap-2">
                   <button
                     v-if="comment.status !== 'resolved'"
                     class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
@@ -665,7 +665,7 @@
             </form>
 
             <form
-              v-if="copyDestinations.length"
+              v-if="projectIsActive && copyDestinations.length"
               class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]"
               @submit.prevent="copyArticle"
             >
@@ -1169,6 +1169,7 @@ const projectIsActive = computed(() => project.value?.status === 'active')
 const canWriteArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'writer'].includes(project.value?.role || ''))
 const canReviewArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'reviewer'].includes(project.value?.role || ''))
 const canPublishArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
+const canComment = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'reviewer', 'writer'].includes(project.value?.role || ''))
 const canCreateRevision = computed(() => canWriteArticles.value && Boolean(revisionForm.title.trim()))
 const copyDestinations = computed(() => projects.value.filter(candidate =>
   candidate.id !== projectID.value
@@ -1176,7 +1177,8 @@ const copyDestinations = computed(() => projects.value.filter(candidate =>
   && ['project_owner', 'project_admin', 'editor', 'writer'].includes(candidate.role)
 ))
 const canCopyArticle = computed(() => Boolean(
-  copyForm.destinationProjectId
+  projectIsActive.value
+  && copyForm.destinationProjectId
   && copyForm.sourceRevisionId
   && copyForm.primaryCategoryId
   && copyForm.slug.trim()
@@ -1194,10 +1196,11 @@ const assignmentEligibleMembers = computed(() => members.value.filter(member =>
   member.status === 'active'
   && assignmentTypeAllowedForRole(assignmentForm.assignmentType, member.role)
 ))
-const canManageAssignments = computed(() => ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
+const canManageAssignments = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
 const canArchiveArticle = computed(() => canPublishArticles.value)
 const canCreateAssignment = computed(() => Boolean(
-  assignmentForm.assignedTo
+  canManageAssignments.value
+  && assignmentForm.assignedTo
   && assignmentEligibleMembers.value.some(member => member.userId === assignmentForm.assignedTo)
 ))
 const canRollback = computed(() => {
@@ -1682,6 +1685,7 @@ async function createAssignment() {
 }
 
 async function setAssignmentStatus(assignment: ReviewAssignment, action: 'complete' | 'cancel') {
+  if (action === 'complete' ? !canCompleteAssignment(assignment) : !canManageAssignments.value) return
   assignmentPending[assignment.id] = action
   clearMessages()
   try {
@@ -1705,6 +1709,7 @@ async function setAssignmentStatus(assignment: ReviewAssignment, action: 'comple
 }
 
 async function createComment() {
+  if (!canComment.value || !commentForm.body.trim()) return
   creatingComment.value = true
   clearMessages()
   try {
@@ -1731,6 +1736,7 @@ async function createComment() {
 }
 
 async function setCommentStatus(comment: ReviewComment, transition: 'resolve' | 'reopen') {
+  if (!canComment.value) return
   commentPending[comment.id] = transition
   clearMessages()
   try {
@@ -2138,7 +2144,7 @@ function assignmentTypeAllowedForRole(assignmentType: string, role: string) {
 }
 
 function canCompleteAssignment(assignment: ReviewAssignment) {
-  return canManageAssignments.value || assignment.assignedTo === currentUser.value?.id
+  return projectIsActive.value && (canManageAssignments.value || assignment.assignedTo === currentUser.value?.id)
 }
 
 function invalidateComparison() {

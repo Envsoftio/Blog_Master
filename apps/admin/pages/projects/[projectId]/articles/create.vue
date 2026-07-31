@@ -56,7 +56,7 @@
         </div>
 
         <div v-else class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <form class="space-y-5" @submit.prevent="createArticle">
+          <form v-if="canWriteArticles" class="space-y-5" @submit.prevent="createArticle">
             <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -212,6 +212,18 @@
               </button>
             </div>
           </form>
+
+          <section v-else class="rounded-lg border border-[#cfd8d1] bg-white p-8 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <FileText class="h-6 w-6 text-[#3162a3]" />
+            <h2 class="mt-4 text-xl font-semibold">Article creation is read-only</h2>
+            <p class="mt-2 max-w-xl text-sm text-[#5f6a63] dark:text-[#b8c2bb]">
+              This project is not active or your current project role cannot create article drafts.
+            </p>
+            <NuxtLink class="mt-5 inline-flex h-10 items-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]" :to="`/projects/${projectID}/articles`">
+              <ArrowLeft class="h-4 w-4" />
+              Back to articles
+            </NuxtLink>
+          </section>
 
           <aside class="space-y-5">
             <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
