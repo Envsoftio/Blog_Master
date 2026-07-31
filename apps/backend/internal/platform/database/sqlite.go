@@ -67,6 +67,9 @@ var mediaLifecycleMigration string
 //go:embed migrations/0019_media_expected_checksum.sql
 var mediaExpectedChecksumMigration string
 
+//go:embed migrations/0020_ai_execution.sql
+var aiExecutionMigration string
+
 type migration struct {
 	version    string
 	statements string
@@ -122,6 +125,7 @@ func Migrate(db *sql.DB) error {
 		{version: "0017_author_login_link", statements: authorLoginLinkMigration},
 		{version: "0018_media_lifecycle", statements: mediaLifecycleMigration},
 		{version: "0019_media_expected_checksum", statements: mediaExpectedChecksumMigration},
+		{version: "0020_ai_execution", statements: aiExecutionMigration},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {

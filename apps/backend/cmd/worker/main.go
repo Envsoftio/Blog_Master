@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
+	"seoblog/apps/backend/internal/aijobs"
 	"seoblog/apps/backend/internal/config"
 	"seoblog/apps/backend/internal/mailer"
 	"seoblog/apps/backend/internal/mediajobs"
@@ -83,8 +85,40 @@ func main() {
 		Storage: mediaStorage,
 		Logger:  logger,
 	}
+	var aiProcessor *aijobs.Processor
+	if cfg.AIEnabled() {
+		generator, err := aijobs.NewOpenAICompatibleClient(aijobs.ClientConfig{
+			BaseURL:         cfg.AIBaseURL,
+			APIKey:          cfg.AIAPIKey,
+			Model:           cfg.AIModel,
+			MaxOutputTokens: cfg.AIMaxOutputTokens,
+			Timeout:         cfg.AITimeout,
+		})
+		if err != nil {
+			logger.Error("AI execution disabled", "error", err)
+		} else {
+			aiProcessor = &aijobs.Processor{
+				Store:         workerStore,
+				Generator:     generator,
+				Logger:        logger,
+				WorkerID:      workerID,
+				Provider:      cfg.AIProvider,
+				Model:         cfg.AIModel,
+				MaxInputBytes: cfg.AIMaxInputBytes,
+				LeaseDuration: cfg.AITimeout + 30*time.Second,
+			}
+		}
+	} else {
+		logger.Info("AI execution disabled; configure SEOBLOG_AI_BASE_URL, SEOBLOG_AI_API_KEY, and SEOBLOG_AI_MODEL to enable it")
+	}
 	stopContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	var background sync.WaitGroup
+	aiReports := make(chan aiCycleReport, 1)
+	if aiProcessor != nil {
+		background.Add(1)
+		go runAIProcessor(stopContext, &background, aiProcessor, cfg.AITimeout, aiReports)
+	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -92,8 +126,16 @@ func main() {
 	for {
 		select {
 		case <-stopContext.Done():
+			background.Wait()
 			logger.Info("worker stopped")
 			return
+		case report := <-aiReports:
+			if report.Err != nil {
+				logger.Error("AI processing cycle failed", "error", report.Err)
+			}
+			if report.Result.Claimed > 0 {
+				logger.Info("AI jobs processed", "claimed", report.Result.Claimed, "succeeded", report.Result.Succeeded, "retried", report.Result.Retried, "failed", report.Result.Failed)
+			}
 		case <-ticker.C:
 			cycleContext, cancel := context.WithTimeout(stopContext, 30*time.Second)
 			published, publishErr := workerStore.PublishDueSchedules(cycleContext, 50)
@@ -133,6 +175,32 @@ func main() {
 			}
 			if mediaProcessed > 0 {
 				logger.Info("media assets processed", "count", mediaProcessed)
+			}
+		}
+	}
+}
+
+type aiCycleReport struct {
+	Result aijobs.ProcessResult
+	Err    error
+}
+
+func runAIProcessor(ctx context.Context, waitGroup *sync.WaitGroup, processor *aijobs.Processor, timeout time.Duration, reports chan<- aiCycleReport) {
+	defer waitGroup.Done()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cycleContext, cancel := context.WithTimeout(ctx, 2*timeout+30*time.Second)
+			result, err := processor.Process(cycleContext, 2)
+			cancel()
+			select {
+			case reports <- aiCycleReport{Result: result, Err: err}:
+			case <-ctx.Done():
+				return
 			}
 		}
 	}

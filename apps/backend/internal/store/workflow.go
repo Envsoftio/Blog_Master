@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	htmlpkg "html"
 	"net/url"
 	"regexp"
 	"strings"
@@ -131,6 +130,7 @@ type ArticleInput struct {
 	ShortAnswer       string
 	BodyDocument      any
 	HTML              string
+	SEO               SEOInput
 }
 
 type RevisionInput struct {
@@ -142,6 +142,16 @@ type RevisionInput struct {
 	ShortAnswer       string
 	BodyDocument      any
 	HTML              string
+	SEO               SEOInput
+}
+
+type SEOInput struct {
+	Title            string
+	Description      string
+	Robots           string
+	OpenGraphTitle   string
+	OpenGraphSummary string
+	OpenGraphImage   string
 }
 
 type PublicationInput struct {
@@ -309,7 +319,7 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 	if err != nil {
 		return AdminArticle{}, err
 	}
-	bodyJSON, html, plainText, err := renderRevisionBody(input.BodyDocument, input.HTML, input.Title)
+	rendered, err := renderRevisionBody(input.BodyDocument, input.HTML, input.Title)
 	if err != nil {
 		return AdminArticle{}, err
 	}
@@ -317,11 +327,15 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 	if err != nil {
 		return AdminArticle{}, err
 	}
-	seoJSON, err := seoSnapshotJSON(input.Title, input.Excerpt, canonicalURL(project, input.Slug))
+	input.SEO = normalizeSEOInput(input.SEO, input.Title, input.Excerpt)
+	if err := validateSEOInput(input.SEO); err != nil {
+		return AdminArticle{}, err
+	}
+	seoJSON, err := seoSnapshotJSON(input.SEO, canonicalURL(project, input.Slug))
 	if err != nil {
 		return AdminArticle{}, err
 	}
-	contentHash, err := revisionContentHash(input.Title, html, bodyJSON, taxonomyJSON, seoJSON)
+	contentHash, err := revisionContentHash(input.Title, rendered.HTML, rendered.DocumentJSON, taxonomyJSON, seoJSON)
 	if err != nil {
 		return AdminArticle{}, err
 	}
@@ -341,12 +355,13 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 		INSERT INTO content_revisions(
 		  id, project_id, content_id, revision_number, created_by_type, created_by_user_id,
 		  title, deck, excerpt, short_answer, body_document_json, sanitized_html, plain_text,
-		  table_of_contents_json, word_count, reading_time_seconds, locale, taxonomy_snapshot_json,
+		  markdown_export, table_of_contents_json, word_count, reading_time_seconds, locale, taxonomy_snapshot_json,
 		  seo_snapshot_json, content_hash, editorial_state
-		) VALUES (?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, 'draft')
+		) VALUES (?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
 	`, revisionID, projectID, articleID, actorUserID, input.Title, nullIfEmpty(input.Deck),
-		nullIfEmpty(input.Excerpt), nullIfEmpty(input.ShortAnswer), bodyJSON, html, plainText,
-		wordCount(plainText), readingTimeSeconds(plainText), input.Locale, taxonomyJSON, seoJSON, contentHash); err != nil {
+		nullIfEmpty(input.Excerpt), nullIfEmpty(input.ShortAnswer), rendered.DocumentJSON, rendered.HTML, rendered.PlainText,
+		rendered.Markdown, rendered.TableOfContents, wordCount(rendered.PlainText), readingTimeSeconds(rendered.PlainText),
+		input.Locale, taxonomyJSON, seoJSON, contentHash); err != nil {
 		return AdminArticle{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -371,13 +386,13 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	}
 	input.BaseRevisionID = strings.TrimSpace(input.BaseRevisionID)
 	input.Title = strings.TrimSpace(input.Title)
+	seoProvided := hasSEOInput(input.SEO)
 	if input.BaseRevisionID == "" {
 		return AdminRevision{}, fmt.Errorf("%w: baseRevisionId is required", ErrValidation)
 	}
 	if input.Title == "" {
 		return AdminRevision{}, fmt.Errorf("%w: title is required", ErrValidation)
 	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AdminRevision{}, err
@@ -414,11 +429,26 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	if input.BaseRevisionID != baseRevisionID {
 		return AdminRevision{}, fmt.Errorf("%w: base revision is stale; refresh the article before saving", ErrInvalidWorkflow)
 	}
+	if !seoProvided {
+		var baseSEOJSON string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT seo_snapshot_json
+			FROM content_revisions
+			WHERE project_id = ? AND content_id = ? AND id = ?
+		`, projectID, articleID, baseRevisionID).Scan(&baseSEOJSON); err != nil {
+			return AdminRevision{}, err
+		}
+		input.SEO = seoInputFromSnapshot(baseSEOJSON, input.Title, input.Excerpt)
+	}
+	input.SEO = normalizeSEOInput(input.SEO, input.Title, input.Excerpt)
+	if err := validateSEOInput(input.SEO); err != nil {
+		return AdminRevision{}, err
+	}
 	revisionID, err := securityRandomID("rev")
 	if err != nil {
 		return AdminRevision{}, err
 	}
-	bodyJSON, html, plainText, err := renderRevisionBody(input.BodyDocument, input.HTML, input.Title)
+	rendered, err := renderRevisionBody(input.BodyDocument, input.HTML, input.Title)
 	if err != nil {
 		return AdminRevision{}, err
 	}
@@ -426,11 +456,11 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	if err != nil {
 		return AdminRevision{}, err
 	}
-	seoJSON, err := seoSnapshotJSON(input.Title, input.Excerpt, "")
+	seoJSON, err := seoSnapshotJSON(input.SEO, "")
 	if err != nil {
 		return AdminRevision{}, err
 	}
-	contentHash, err := revisionContentHash(input.Title, html, bodyJSON, taxonomyJSON, seoJSON)
+	contentHash, err := revisionContentHash(input.Title, rendered.HTML, rendered.DocumentJSON, taxonomyJSON, seoJSON)
 	if err != nil {
 		return AdminRevision{}, err
 	}
@@ -438,14 +468,15 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 		INSERT INTO content_revisions(
 		  id, project_id, content_id, revision_number, base_revision_id, created_by_type, created_by_user_id,
 		  title, deck, excerpt, short_answer, body_document_json, sanitized_html, plain_text,
-		  table_of_contents_json, word_count, reading_time_seconds, locale, taxonomy_snapshot_json,
+		  markdown_export, table_of_contents_json, word_count, reading_time_seconds, locale, taxonomy_snapshot_json,
 		  seo_snapshot_json, content_hash, editorial_state
-		) VALUES (?, ?, ?, ?, ?, 'human', ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, COALESCE((
+		) VALUES (?, ?, ?, ?, ?, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((
 		  SELECT locale FROM project_publications WHERE project_id = ? AND content_id = ? LIMIT 1
 		), 'en'), ?, ?, ?, 'draft')
 	`, revisionID, projectID, articleID, nextNumber, input.BaseRevisionID, actorUserID, input.Title, nullIfEmpty(input.Deck),
-		nullIfEmpty(input.Excerpt), nullIfEmpty(input.ShortAnswer), bodyJSON, html, plainText,
-		wordCount(plainText), readingTimeSeconds(plainText), projectID, articleID, taxonomyJSON, seoJSON, contentHash); err != nil {
+		nullIfEmpty(input.Excerpt), nullIfEmpty(input.ShortAnswer), rendered.DocumentJSON, rendered.HTML, rendered.PlainText,
+		rendered.Markdown, rendered.TableOfContents, wordCount(rendered.PlainText), readingTimeSeconds(rendered.PlainText),
+		projectID, articleID, taxonomyJSON, seoJSON, contentHash); err != nil {
 		return AdminRevision{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -534,7 +565,7 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 	if input.CanonicalDecision == "canonical_original" {
 		destinationCanonicalURL = source.CanonicalURL
 	}
-	seoJSON, err := seoSnapshotJSON(source.Title, source.Excerpt, destinationCanonicalURL)
+	seoJSON, err := copySEOSnapshotJSON(source.SEOSnapshotJSON, source.Title, source.Excerpt, destinationCanonicalURL)
 	if err != nil {
 		return AdminArticle{}, err
 	}
@@ -1697,6 +1728,7 @@ type copySourceRevision struct {
 	CanonicalURL            string
 	AIAssistanceLevel       string
 	AIProvenanceSummaryJSON string
+	SEOSnapshotJSON         string
 }
 
 func loadCopySourceRevision(
@@ -1721,7 +1753,7 @@ func loadCopySourceRevision(
 		           AND publication.locale = revision.locale
 		         LIMIT 1
 		       ), ''), revision.ai_assistance_level,
-		       revision.ai_provenance_summary_json
+		       revision.ai_provenance_summary_json, revision.seo_snapshot_json
 		FROM content_items item
 		JOIN content_revisions revision
 		  ON revision.project_id = item.project_id
@@ -1747,6 +1779,7 @@ func loadCopySourceRevision(
 		&revision.CanonicalURL,
 		&revision.AIAssistanceLevel,
 		&revision.AIProvenanceSummaryJSON,
+		&revision.SEOSnapshotJSON,
 	)
 	return revision, err
 }
@@ -1914,30 +1947,40 @@ func upsertPublication(ctx context.Context, tx *sql.Tx, projectID, articleID, re
 	if err != nil {
 		return "", err
 	}
+	robotsDirective := "index,follow"
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(NULLIF(json_extract(seo_snapshot_json, '$.robots'), ''), 'index,follow')
+		FROM content_revisions
+		WHERE project_id = ? AND content_id = ? AND id = ?
+	`, projectID, articleID, revisionID).Scan(&robotsDirective); err != nil {
+		return "", err
+	}
 	if state == "scheduled" {
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO project_publications(
 			  id, project_id, content_id, locale, slug, canonical_url,
-			  published_revision_id, publication_state, scheduled_for_utc
-			) VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', ?)
+			  robots_directive, published_revision_id, publication_state, scheduled_for_utc
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?)
 			ON CONFLICT(project_id, content_id, locale) DO UPDATE SET
 			  slug = excluded.slug,
 			  canonical_url = excluded.canonical_url,
+			  robots_directive = excluded.robots_directive,
 			  published_revision_id = excluded.published_revision_id,
 			  publication_state = 'scheduled',
 			  scheduled_for_utc = excluded.scheduled_for_utc,
 			  updated_at = CURRENT_TIMESTAMP
-		`, publicationID, projectID, articleID, locale, slug, canonicalURL, revisionID, scheduledForUTC)
+		`, publicationID, projectID, articleID, locale, slug, canonicalURL, robotsDirective, revisionID, scheduledForUTC)
 	} else {
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO project_publications(
 			  id, project_id, content_id, locale, slug, canonical_url,
-			  published_revision_id, publication_state, first_published_at,
+			  robots_directive, published_revision_id, publication_state, first_published_at,
 			  materially_modified_at, publication_version
-			) VALUES (?, ?, ?, ?, ?, ?, ?, 'published', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'published', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
 			ON CONFLICT(project_id, content_id, locale) DO UPDATE SET
 			  slug = excluded.slug,
 			  canonical_url = excluded.canonical_url,
+			  robots_directive = excluded.robots_directive,
 			  published_revision_id = excluded.published_revision_id,
 			  publication_state = 'published',
 			  scheduled_for_utc = NULL,
@@ -1945,7 +1988,7 @@ func upsertPublication(ctx context.Context, tx *sql.Tx, projectID, articleID, re
 			  materially_modified_at = CURRENT_TIMESTAMP,
 			  publication_version = project_publications.publication_version + 1,
 			  updated_at = CURRENT_TIMESTAMP
-		`, publicationID, projectID, articleID, locale, slug, canonicalURL, revisionID)
+		`, publicationID, projectID, articleID, locale, slug, canonicalURL, robotsDirective, revisionID)
 	}
 	if err != nil {
 		return "", err
@@ -2461,24 +2504,6 @@ func seriesConstraintError(err error) error {
 	return err
 }
 
-func renderRevisionBody(document any, html, title string) (string, string, string, error) {
-	if document == nil {
-		document = map[string]any{
-			"type":    "doc",
-			"content": []any{},
-		}
-	}
-	bodyJSONBytes, err := json.Marshal(document)
-	if err != nil {
-		return "", "", "", err
-	}
-	if strings.TrimSpace(html) == "" {
-		html = "<p>" + htmlpkg.EscapeString(title) + "</p>"
-	}
-	plainText := strings.TrimSpace(stripTags(html))
-	return string(bodyJSONBytes), html, plainText, nil
-}
-
 func taxonomySnapshotJSON(primary TaxonomyTerm) (string, error) {
 	raw, err := json.Marshal(PublishedTaxonomy{
 		PrimaryCategory: &primary,
@@ -2489,16 +2514,96 @@ func taxonomySnapshotJSON(primary TaxonomyTerm) (string, error) {
 	return string(raw), err
 }
 
-func seoSnapshotJSON(title, description, canonicalURL string) (string, error) {
+func normalizeSEOInput(input SEOInput, fallbackTitle, fallbackDescription string) SEOInput {
+	input.Title = strings.TrimSpace(input.Title)
+	if input.Title == "" {
+		input.Title = strings.TrimSpace(fallbackTitle)
+	}
+	input.Description = strings.TrimSpace(input.Description)
+	if input.Description == "" {
+		input.Description = strings.TrimSpace(fallbackDescription)
+	}
+	input.Robots = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(input.Robots), " ", ""))
+	if input.Robots == "" {
+		input.Robots = "index,follow"
+	}
+	input.OpenGraphTitle = strings.TrimSpace(input.OpenGraphTitle)
+	if input.OpenGraphTitle == "" {
+		input.OpenGraphTitle = input.Title
+	}
+	input.OpenGraphSummary = strings.TrimSpace(input.OpenGraphSummary)
+	if input.OpenGraphSummary == "" {
+		input.OpenGraphSummary = input.Description
+	}
+	input.OpenGraphImage = strings.TrimSpace(input.OpenGraphImage)
+	return input
+}
+
+func validateSEOInput(input SEOInput) error {
+	if len([]rune(input.Title)) > 300 || len([]rune(input.Description)) > 500 ||
+		len([]rune(input.OpenGraphTitle)) > 300 || len([]rune(input.OpenGraphSummary)) > 500 {
+		return fmt.Errorf("%w: SEO title or description exceeds its size limit", ErrValidation)
+	}
+	switch input.Robots {
+	case "index,follow", "index,nofollow", "noindex,follow", "noindex,nofollow":
+	default:
+		return fmt.Errorf("%w: unsupported robots directive", ErrValidation)
+	}
+	if input.OpenGraphImage != "" && !safeRevisionURL(input.OpenGraphImage, false) {
+		return fmt.Errorf("%w: Open Graph image must use HTTPS or a root-relative URL", ErrValidation)
+	}
+	return nil
+}
+
+func hasSEOInput(input SEOInput) bool {
+	return strings.TrimSpace(input.Title) != "" ||
+		strings.TrimSpace(input.Description) != "" ||
+		strings.TrimSpace(input.Robots) != "" ||
+		strings.TrimSpace(input.OpenGraphTitle) != "" ||
+		strings.TrimSpace(input.OpenGraphSummary) != "" ||
+		strings.TrimSpace(input.OpenGraphImage) != ""
+}
+
+func seoSnapshotJSON(input SEOInput, canonicalURL string) (string, error) {
 	raw, err := json.Marshal(map[string]any{
-		"title":          title,
-		"description":    description,
-		"canonicalUrl":   canonicalURL,
-		"openGraph":      map[string]any{},
+		"title":        input.Title,
+		"description":  input.Description,
+		"canonicalUrl": canonicalURL,
+		"robots":       input.Robots,
+		"openGraph": map[string]any{
+			"title":       input.OpenGraphTitle,
+			"description": input.OpenGraphSummary,
+			"image":       input.OpenGraphImage,
+		},
 		"structuredData": []any{},
 		"hreflang":       []any{},
 	})
 	return string(raw), err
+}
+
+func copySEOSnapshotJSON(raw, fallbackTitle, fallbackDescription, canonicalURL string) (string, error) {
+	input := seoInputFromSnapshot(raw, fallbackTitle, fallbackDescription)
+	if err := validateSEOInput(input); err != nil {
+		return "", err
+	}
+	return seoSnapshotJSON(input, canonicalURL)
+}
+
+func seoInputFromSnapshot(raw, fallbackTitle, fallbackDescription string) SEOInput {
+	seo := decodeJSONObject(raw)
+	return normalizeSEOInput(SEOInput{
+		Title:            stringFromMap(seo, "title", fallbackTitle),
+		Description:      stringFromMap(seo, "description", fallbackDescription),
+		Robots:           stringFromMap(seo, "robots", "index,follow"),
+		OpenGraphTitle:   stringFromMap(decodeMapValue(seo, "openGraph"), "title", ""),
+		OpenGraphSummary: stringFromMap(decodeMapValue(seo, "openGraph"), "description", ""),
+		OpenGraphImage:   stringFromMap(decodeMapValue(seo, "openGraph"), "image", ""),
+	}, fallbackTitle, fallbackDescription)
+}
+
+func decodeMapValue(parent map[string]any, key string) map[string]any {
+	value, _ := parent[key].(map[string]any)
+	return value
 }
 
 func revisionContentHash(title, html, bodyJSON, taxonomyJSON, seoJSON string) (string, error) {
@@ -2514,12 +2619,6 @@ func revisionContentHash(title, html, bodyJSON, taxonomyJSON, seoJSON string) (s
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
-}
-
-var tagPattern = regexp.MustCompile(`<[^>]+>`)
-
-func stripTags(value string) string {
-	return tagPattern.ReplaceAllString(value, " ")
 }
 
 func wordCount(value string) int {

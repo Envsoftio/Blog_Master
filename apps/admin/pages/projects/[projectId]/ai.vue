@@ -423,18 +423,25 @@
       </div>
       <div v-if="jobs.length" class="jobs-table">
         <div class="jobs-row jobs-row--header"><span>Job</span><span>Status</span><span>Model</span><span>Updated</span><span>ID</span></div>
-        <div v-for="job in jobs" :key="job.id" class="jobs-row">
-          <span>
-            <strong>{{ labelize(job.type) }}</strong>
-            <small v-if="job.voiceProfileVersion && job.evidencePacketVersion">
-              Voice v{{ job.voiceProfileVersion }} / Evidence v{{ job.evidencePacketVersion }}
-            </small>
-          </span>
-          <span><i class="job-status" :class="`job-status--${job.status}`" />{{ labelize(job.status) }}</span>
-          <span :title="modelForJob(job.id)">{{ modelForJob(job.id) }}</span>
-          <span>{{ relativeDate(job.updatedAt || job.createdAt) }}</span>
-          <span class="mono">{{ job.id }}</span>
-        </div>
+        <template v-for="job in jobs" :key="job.id">
+          <div class="jobs-row">
+            <span>
+              <strong>{{ labelize(job.type) }}</strong>
+              <small v-if="job.voiceProfileVersion && job.evidencePacketVersion">
+                Voice v{{ job.voiceProfileVersion }} / Evidence v{{ job.evidencePacketVersion }}
+              </small>
+            </span>
+            <span><i class="job-status" :class="`job-status--${job.status}`" />{{ labelize(job.status) }}</span>
+            <span :title="modelForJob(job.id)">{{ modelForJob(job.id) }}</span>
+            <span>{{ relativeDate(job.updatedAt || job.createdAt) }}</span>
+            <span class="mono">{{ job.id }}</span>
+          </div>
+          <details v-if="job.result && job.status === 'succeeded'" class="job-result">
+            <summary>Review generated proposal</summary>
+            <pre>{{ prettyJSON(job.result) }}</pre>
+          </details>
+          <p v-else-if="job.error" class="job-error">{{ labelize(job.error) }}</p>
+        </template>
       </div>
       <div v-else class="empty-state empty-state--embedded">
         <div><span class="empty-state__icon"><Bot :size="20" /></span><h3>No AI jobs</h3><p>Generation and quality jobs will appear here.</p></div>
@@ -936,6 +943,10 @@ function modelForJob(jobID: string) {
   return run ? `${run.provider} / ${run.modelIdentifier}` : 'Pending'
 }
 
+function prettyJSON(value: unknown) {
+  return JSON.stringify(value, null, 2)
+}
+
 function qualityIcon(checkType: string) {
   if (checkType.includes('source') || checkType.includes('claim')) return Link2
   if (checkType.includes('duplicate') || checkType.includes('similar')) return FileSearch
@@ -1032,6 +1043,10 @@ function relativeDate(value?: string) {
 .jobs-row:not(.jobs-row--header) > span:first-child { align-items: flex-start; flex-direction: column; gap: 2px; }
 .jobs-row:not(.jobs-row--header) > span:first-child small { color: var(--text-soft); font-size: 8px; }
 .jobs-row--header { background: var(--surface-subtle); color: var(--text-soft); font-size: 9px; font-weight: 650; text-transform: uppercase; }
+.job-result { padding: 10px 16px 14px; border-bottom: 1px solid var(--border); background: var(--surface-subtle); }
+.job-result summary { cursor: pointer; font-size: 10px; font-weight: 650; }
+.job-result pre { max-height: 360px; margin: 10px 0 0; padding: 12px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); font-size: 9px; line-height: 1.55; white-space: pre-wrap; }
+.job-error { margin: 0; padding: 8px 16px 12px; border-bottom: 1px solid var(--border); color: var(--danger); font-size: 9px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-soft); }
 .quality-section { display: grid; gap: 12px; }
 .quality-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

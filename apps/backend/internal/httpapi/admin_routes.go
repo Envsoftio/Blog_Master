@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"seoblog/apps/backend/internal/mailer"
 	"seoblog/apps/backend/internal/security"
@@ -233,27 +233,38 @@ type memberPatchRequest struct {
 }
 
 type articleRequest struct {
-	ArticleType       string `json:"articleType"`
-	Title             string `json:"title"`
-	Slug              string `json:"slug"`
-	Locale            string `json:"locale"`
-	PrimaryCategoryID string `json:"primaryCategoryId"`
-	Deck              string `json:"deck"`
-	Excerpt           string `json:"excerpt"`
-	ShortAnswer       string `json:"shortAnswer"`
-	BodyDocument      any    `json:"bodyDocument"`
-	HTML              string `json:"html"`
+	ArticleType       string     `json:"articleType"`
+	Title             string     `json:"title"`
+	Slug              string     `json:"slug"`
+	Locale            string     `json:"locale"`
+	PrimaryCategoryID string     `json:"primaryCategoryId"`
+	Deck              string     `json:"deck"`
+	Excerpt           string     `json:"excerpt"`
+	ShortAnswer       string     `json:"shortAnswer"`
+	BodyDocument      any        `json:"bodyDocument"`
+	HTML              string     `json:"html"`
+	SEO               seoRequest `json:"seo"`
 }
 
 type revisionRequest struct {
-	BaseRevisionID    string `json:"baseRevisionId"`
-	Title             string `json:"title"`
-	PrimaryCategoryID string `json:"primaryCategoryId"`
-	Deck              string `json:"deck"`
-	Excerpt           string `json:"excerpt"`
-	ShortAnswer       string `json:"shortAnswer"`
-	BodyDocument      any    `json:"bodyDocument"`
-	HTML              string `json:"html"`
+	BaseRevisionID    string     `json:"baseRevisionId"`
+	Title             string     `json:"title"`
+	PrimaryCategoryID string     `json:"primaryCategoryId"`
+	Deck              string     `json:"deck"`
+	Excerpt           string     `json:"excerpt"`
+	ShortAnswer       string     `json:"shortAnswer"`
+	BodyDocument      any        `json:"bodyDocument"`
+	HTML              string     `json:"html"`
+	SEO               seoRequest `json:"seo"`
+}
+
+type seoRequest struct {
+	Title            string `json:"title"`
+	Description      string `json:"description"`
+	Robots           string `json:"robots"`
+	OpenGraphTitle   string `json:"openGraphTitle"`
+	OpenGraphSummary string `json:"openGraphDescription"`
+	OpenGraphImage   string `json:"openGraphImage"`
 }
 
 type revisionDecisionRequest struct {
@@ -417,13 +428,13 @@ type previewTokenRequest struct {
 	TTLMinutes int    `json:"ttlMinutes"`
 }
 
-func (s *Server) login(c *fiber.Ctx) error {
+func (s *Server) login(c fiber.Ctx) error {
 	var input loginRequest
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
 
-	credential, err := s.store.FindUserCredentialByEmail(c.UserContext(), input.Email)
+	credential, err := s.store.FindUserCredentialByEmail(c.Context(), input.Email)
 	if err != nil {
 		s.logger.Warn("login failed", "email", strings.ToLower(strings.TrimSpace(input.Email)), "error", err)
 		return problem(c, fiber.StatusUnauthorized, "Invalid email or password", "")
@@ -447,7 +458,7 @@ func (s *Server) login(c *fiber.Ctx) error {
 	if err != nil {
 		return problem(c, fiber.StatusInternalServerError, "Could not create session", "")
 	}
-	if err := s.store.CreateSession(c.UserContext(), credential.User.ID, security.TokenHash(sessionToken), security.TokenHash(csrfToken), time.Now().UTC()); err != nil {
+	if err := s.store.CreateSession(c.Context(), credential.User.ID, security.TokenHash(sessionToken), security.TokenHash(csrfToken), time.Now().UTC()); err != nil {
 		s.logger.Error("create session", "user_id", credential.User.ID, "error", err)
 		return problem(c, fiber.StatusInternalServerError, "Could not create session", "")
 	}
@@ -459,7 +470,7 @@ func (s *Server) login(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) forgotPassword(c *fiber.Ctx) error {
+func (s *Server) forgotPassword(c fiber.Ctx) error {
 	var input forgotPasswordRequest
 	if err := decodeStrictRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
@@ -471,7 +482,7 @@ func (s *Server) forgotPassword(c *fiber.Ctx) error {
 		return problem(c, fiber.StatusInternalServerError, "Could not request password reset", "")
 	}
 	target, created, err := s.store.CreatePasswordReset(
-		c.UserContext(),
+		c.Context(),
 		input.Email,
 		security.TokenHash(token),
 		time.Now().UTC(),
@@ -518,7 +529,7 @@ func (s *Server) sendPasswordResetEmail(target store.PasswordResetTarget, resetU
 	}()
 }
 
-func (s *Server) resetPassword(c *fiber.Ctx) error {
+func (s *Server) resetPassword(c fiber.Ctx) error {
 	var input resetPasswordRequest
 	if err := decodeStrictRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
@@ -535,7 +546,7 @@ func (s *Server) resetPassword(c *fiber.Ctx) error {
 		return problem(c, fiber.StatusBadRequest, "Invalid password", "")
 	}
 	err = s.store.CompletePasswordReset(
-		c.UserContext(),
+		c.Context(),
 		security.TokenHash(input.Token),
 		passwordHash,
 		time.Now().UTC(),
@@ -568,7 +579,7 @@ func (s *Server) passwordResetURL(token string) (string, error) {
 	return base.String(), nil
 }
 
-func (s *Server) currentUser(c *fiber.Ctx) error {
+func (s *Server) currentUser(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -576,12 +587,12 @@ func (s *Server) currentUser(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminUser]{Data: user})
 }
 
-func (s *Server) acceptInvitation(c *fiber.Ctx) error {
+func (s *Server) acceptInvitation(c fiber.Ctx) error {
 	var input invitationAcceptanceRequest
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid invitation", "The invitation is invalid, expired, or already used")
 	}
-	acceptance, err := s.store.AcceptProjectInvitation(c.UserContext(), c.Params("token"), input.Password)
+	acceptance, err := s.store.AcceptProjectInvitation(c.Context(), c.Params("token"), input.Password)
 	if err != nil {
 		if errors.Is(err, store.ErrValidation) {
 			return problem(c, fiber.StatusBadRequest, "Invalid password", err.Error())
@@ -595,7 +606,7 @@ func (s *Server) acceptInvitation(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.ProjectInvitationAcceptance]{Data: acceptance})
 }
 
-func (s *Server) reauthenticate(c *fiber.Ctx) error {
+func (s *Server) reauthenticate(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -608,7 +619,7 @@ func (s *Server) reauthenticate(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil || strings.TrimSpace(input.Password) == "" {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "Current password is required")
 	}
-	credential, err := s.store.FindUserCredentialByID(c.UserContext(), user.ID)
+	credential, err := s.store.FindUserCredentialByID(c.Context(), user.ID)
 	if err != nil || credential.User.Status != "active" || credential.PasswordHash == "" {
 		return problem(c, fiber.StatusUnauthorized, "Reauthentication failed", "The current password is incorrect")
 	}
@@ -617,7 +628,7 @@ func (s *Server) reauthenticate(c *fiber.Ctx) error {
 		return problem(c, fiber.StatusUnauthorized, "Reauthentication failed", "The current password is incorrect")
 	}
 	now := time.Now().UTC()
-	if err := s.store.MarkSessionReauthenticated(c.UserContext(), sessionHash, now); err != nil {
+	if err := s.store.MarkSessionReauthenticated(c.Context(), sessionHash, now); err != nil {
 		return problem(c, fiber.StatusUnauthorized, "Session expired", "Sign in again to continue")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[reauthenticationResponse]{
@@ -625,7 +636,7 @@ func (s *Server) reauthenticate(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) csrfToken(c *fiber.Ctx) error {
+func (s *Server) csrfToken(c fiber.Ctx) error {
 	sessionHash, ok := c.Locals(sessionHashContextKey).(string)
 	if !ok || sessionHash == "" {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -634,16 +645,16 @@ func (s *Server) csrfToken(c *fiber.Ctx) error {
 	if err != nil {
 		return problem(c, fiber.StatusInternalServerError, "Could not create CSRF token", "")
 	}
-	if err := s.store.RotateSessionCSRF(c.UserContext(), sessionHash, security.TokenHash(csrfToken)); err != nil {
+	if err := s.store.RotateSessionCSRF(c.Context(), sessionHash, security.TokenHash(csrfToken)); err != nil {
 		return problem(c, fiber.StatusUnauthorized, "Session expired", "")
 	}
 	s.setCSRFCookie(c, csrfToken)
 	return writeJSON(c, fiber.StatusOK, Envelope[csrfResponse]{Data: csrfResponse{CSRFToken: csrfToken}})
 }
 
-func (s *Server) logout(c *fiber.Ctx) error {
+func (s *Server) logout(c fiber.Ctx) error {
 	if sessionHash, ok := c.Locals(sessionHashContextKey).(string); ok && sessionHash != "" {
-		if err := s.store.RevokeSession(c.UserContext(), sessionHash); err != nil {
+		if err := s.store.RevokeSession(c.Context(), sessionHash); err != nil {
 			s.logger.Warn("revoke session", "error", err)
 		}
 	}
@@ -651,7 +662,7 @@ func (s *Server) logout(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-func (s *Server) listProjects(c *fiber.Ctx) error {
+func (s *Server) listProjects(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -660,7 +671,7 @@ func (s *Server) listProjects(c *fiber.Ctx) error {
 	if limit == 0 {
 		limit = defaultProjectListLimit
 	}
-	projects, err := s.store.ListProjectsForUser(c.UserContext(), user.ID, c.Query("cursor"), limit+1)
+	projects, err := s.store.ListProjectsForUser(c.Context(), user.ID, c.Query("cursor"), limit+1)
 	if err != nil {
 		s.logger.Error("list admin projects", "user_id", user.ID, "error", err)
 		return problem(c, fiber.StatusInternalServerError, "Could not list projects", "")
@@ -676,7 +687,7 @@ func (s *Server) listProjects(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createProject(c *fiber.Ctx) error {
+func (s *Server) createProject(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -685,26 +696,26 @@ func (s *Server) createProject(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	project, err := s.store.CreateProject(c.UserContext(), user.ID, input.toStoreInput())
+	project, err := s.store.CreateProject(c.Context(), user.ID, input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create project")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.AdminProject]{Data: project})
 }
 
-func (s *Server) getProject(c *fiber.Ctx) error {
+func (s *Server) getProject(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	project, err := s.store.GetProjectForUser(c.UserContext(), user.ID, c.Params("projectID"))
+	project, err := s.store.GetProjectForUser(c.Context(), user.ID, c.Params("projectID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not load project")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminProject]{Data: project})
 }
 
-func (s *Server) updateProject(c *fiber.Ctx) error {
+func (s *Server) updateProject(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -713,63 +724,63 @@ func (s *Server) updateProject(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	project, err := s.store.UpdateProject(c.UserContext(), user.ID, c.Params("projectID"), input.toStorePatch())
+	project, err := s.store.UpdateProject(c.Context(), user.ID, c.Params("projectID"), input.toStorePatch())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not update project")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminProject]{Data: project})
 }
 
-func (s *Server) suspendProject(c *fiber.Ctx) error {
+func (s *Server) suspendProject(c fiber.Ctx) error {
 	return s.setProjectStatus(c, "suspended")
 }
 
-func (s *Server) archiveProject(c *fiber.Ctx) error {
+func (s *Server) archiveProject(c fiber.Ctx) error {
 	return s.setProjectStatus(c, "archived")
 }
 
-func (s *Server) setProjectStatus(c *fiber.Ctx, status string) error {
+func (s *Server) setProjectStatus(c fiber.Ctx, status string) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	project, err := s.store.SetProjectStatus(c.UserContext(), user.ID, c.Params("projectID"), status)
+	project, err := s.store.SetProjectStatus(c.Context(), user.ID, c.Params("projectID"), status)
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not update project status")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminProject]{Data: project})
 }
 
-func (s *Server) deletionImpact(c *fiber.Ctx) error {
+func (s *Server) deletionImpact(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	impact, err := s.store.ProjectDeletionImpact(c.UserContext(), user.ID, c.Params("projectID"))
+	impact, err := s.store.ProjectDeletionImpact(c.Context(), user.ID, c.Params("projectID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not load project deletion impact")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.ProjectDeletionImpact]{Data: impact})
 }
 
-func (s *Server) deleteProject(c *fiber.Ctx) error {
+func (s *Server) deleteProject(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	if err := s.store.DeleteProject(c.UserContext(), user.ID, c.Params("projectID")); err != nil {
+	if err := s.store.DeleteProject(c.Context(), user.ID, c.Params("projectID")); err != nil {
 		return s.adminMutationError(c, err, "Could not delete project")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-func (s *Server) listProjectMembers(c *fiber.Ctx) error {
+func (s *Server) listProjectMembers(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
-	members, err := s.store.ListProjectMembers(c.UserContext(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
+	members, err := s.store.ListProjectMembers(c.Context(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list project members")
 	}
@@ -784,7 +795,7 @@ func (s *Server) listProjectMembers(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) inviteProjectMember(c *fiber.Ctx) error {
+func (s *Server) inviteProjectMember(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -794,7 +805,7 @@ func (s *Server) inviteProjectMember(c *fiber.Ctx) error {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
 	invitation, err := s.store.InviteProjectMember(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		input.toStoreInput(),
@@ -806,7 +817,7 @@ func (s *Server) inviteProjectMember(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.ProjectMemberInvitation]{Data: invitation})
 }
 
-func (s *Server) updateProjectMemberRole(c *fiber.Ctx) error {
+func (s *Server) updateProjectMemberRole(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -816,7 +827,7 @@ func (s *Server) updateProjectMemberRole(c *fiber.Ctx) error {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
 	member, err := s.store.UpdateProjectMemberRole(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Params("userID"),
@@ -829,13 +840,13 @@ func (s *Server) updateProjectMemberRole(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminProjectMember]{Data: member})
 }
 
-func (s *Server) removeProjectMember(c *fiber.Ctx) error {
+func (s *Server) removeProjectMember(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	if err := s.store.RemoveProjectMember(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Params("userID"),
@@ -846,13 +857,13 @@ func (s *Server) removeProjectMember(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-func (s *Server) disableProjectMemberLogin(c *fiber.Ctx) error {
+func (s *Server) disableProjectMemberLogin(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	member, err := s.store.DisableProjectMemberLogin(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Params("userID"),
@@ -863,13 +874,13 @@ func (s *Server) disableProjectMemberLogin(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminProjectMember]{Data: member})
 }
 
-func (s *Server) enableProjectMemberLogin(c *fiber.Ctx) error {
+func (s *Server) enableProjectMemberLogin(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	member, err := s.store.EnableProjectMemberLogin(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Params("userID"),
@@ -880,7 +891,7 @@ func (s *Server) enableProjectMemberLogin(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminProjectMember]{Data: member})
 }
 
-func (s *Server) listAuditEvents(c *fiber.Ctx) error {
+func (s *Server) listAuditEvents(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -890,7 +901,7 @@ func (s *Server) listAuditEvents(c *fiber.Ctx) error {
 	if err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
 	}
-	events, err := s.store.ListAuditEventsForUser(c.UserContext(), user.ID, c.Params("projectID"), cursor, limit+1)
+	events, err := s.store.ListAuditEventsForUser(c.Context(), user.ID, c.Params("projectID"), cursor, limit+1)
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list audit events")
 	}
@@ -906,13 +917,13 @@ func (s *Server) listAuditEvents(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) listProjectAPIKeys(c *fiber.Ctx) error {
+func (s *Server) listProjectAPIKeys(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
-	keys, err := s.store.ListProjectAPIKeys(c.UserContext(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
+	keys, err := s.store.ListProjectAPIKeys(c.Context(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list project API keys")
 	}
@@ -927,7 +938,7 @@ func (s *Server) listProjectAPIKeys(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createProjectAPIKey(c *fiber.Ctx) error {
+func (s *Server) createProjectAPIKey(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -936,44 +947,44 @@ func (s *Server) createProjectAPIKey(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	key, err := s.store.CreateProjectAPIKey(c.UserContext(), user.ID, c.Params("projectID"), input.toStoreInput())
+	key, err := s.store.CreateProjectAPIKey(c.Context(), user.ID, c.Params("projectID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create project API key")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.APIKeyWithSecret]{Data: key})
 }
 
-func (s *Server) rotateProjectAPIKey(c *fiber.Ctx) error {
+func (s *Server) rotateProjectAPIKey(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	key, err := s.store.RotateProjectAPIKey(c.UserContext(), user.ID, c.Params("projectID"), c.Params("keyID"))
+	key, err := s.store.RotateProjectAPIKey(c.Context(), user.ID, c.Params("projectID"), c.Params("keyID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not rotate project API key")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.APIKeyWithSecret]{Data: key})
 }
 
-func (s *Server) revokeProjectAPIKey(c *fiber.Ctx) error {
+func (s *Server) revokeProjectAPIKey(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	key, err := s.store.RevokeProjectAPIKey(c.UserContext(), user.ID, c.Params("projectID"), c.Params("keyID"))
+	key, err := s.store.RevokeProjectAPIKey(c.Context(), user.ID, c.Params("projectID"), c.Params("keyID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not revoke project API key")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminAPIKey]{Data: key})
 }
 
-func (s *Server) listArticles(c *fiber.Ctx) error {
+func (s *Server) listArticles(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
-	articles, err := s.store.ListArticlesForUser(c.UserContext(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
+	articles, err := s.store.ListArticlesForUser(c.Context(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list articles")
 	}
@@ -988,7 +999,7 @@ func (s *Server) listArticles(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createArticle(c *fiber.Ctx) error {
+func (s *Server) createArticle(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -997,37 +1008,37 @@ func (s *Server) createArticle(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	article, err := s.store.CreateArticle(c.UserContext(), user.ID, c.Params("projectID"), input.toStoreInput())
+	article, err := s.store.CreateArticle(c.Context(), user.ID, c.Params("projectID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create article")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.AdminArticle]{Data: article})
 }
 
-func (s *Server) getArticle(c *fiber.Ctx) error {
+func (s *Server) getArticle(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	article, err := s.store.GetArticleForUser(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"))
+	article, err := s.store.GetArticleForUser(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Article not found", "Could not load article")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
 }
 
-func (s *Server) archiveArticle(c *fiber.Ctx) error {
+func (s *Server) archiveArticle(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	if err := s.store.ArchiveArticle(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID")); err != nil {
+	if err := s.store.ArchiveArticle(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID")); err != nil {
 		return s.adminMutationError(c, err, "Could not archive article")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-func (s *Server) listRevisionHistory(c *fiber.Ctx) error {
+func (s *Server) listRevisionHistory(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1038,7 +1049,7 @@ func (s *Server) listRevisionHistory(c *fiber.Ctx) error {
 	}
 	limit := boundedLimit(c.Query("limit", "25"), 100)
 	revisions, err := s.store.ListRevisionHistoryForUser(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Params("articleID"),
@@ -1066,13 +1077,13 @@ func (s *Server) listRevisionHistory(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) getRevisionDetail(c *fiber.Ctx) error {
+func (s *Server) getRevisionDetail(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	revision, err := s.store.GetRevisionDetailForUser(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Params("articleID"),
@@ -1084,7 +1095,7 @@ func (s *Server) getRevisionDetail(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminRevisionDetail]{Data: revision})
 }
 
-func (s *Server) createRevision(c *fiber.Ctx) error {
+func (s *Server) createRevision(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1093,38 +1104,38 @@ func (s *Server) createRevision(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	revision, err := s.store.CreateRevision(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
+	revision, err := s.store.CreateRevision(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create revision")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.AdminRevision]{Data: revision})
 }
 
-func (s *Server) submitRevision(c *fiber.Ctx) error {
+func (s *Server) submitRevision(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	revision, err := s.store.SubmitRevision(c.UserContext(), user.ID, c.Params("projectID"), c.Params("revisionID"))
+	revision, err := s.store.SubmitRevision(c.Context(), user.ID, c.Params("projectID"), c.Params("revisionID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not submit revision")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminRevision]{Data: revision})
 }
 
-func (s *Server) requestRevisionChanges(c *fiber.Ctx) error {
+func (s *Server) requestRevisionChanges(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	revision, err := s.store.RequestRevisionChanges(c.UserContext(), user.ID, c.Params("projectID"), c.Params("revisionID"))
+	revision, err := s.store.RequestRevisionChanges(c.Context(), user.ID, c.Params("projectID"), c.Params("revisionID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not request revision changes")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminRevision]{Data: revision})
 }
 
-func (s *Server) approveRevision(c *fiber.Ctx) error {
+func (s *Server) approveRevision(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1135,22 +1146,22 @@ func (s *Server) approveRevision(c *fiber.Ctx) error {
 			return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 		}
 	}
-	revision, err := s.store.ApproveRevision(c.UserContext(), user.ID, c.Params("projectID"), c.Params("revisionID"), input.Note)
+	revision, err := s.store.ApproveRevision(c.Context(), user.ID, c.Params("projectID"), c.Params("revisionID"), input.Note)
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not approve revision")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminRevision]{Data: revision})
 }
 
-func (s *Server) publishArticle(c *fiber.Ctx) error {
+func (s *Server) publishArticle(c fiber.Ctx) error {
 	return s.publicationAction(c, false)
 }
 
-func (s *Server) scheduleArticle(c *fiber.Ctx) error {
+func (s *Server) scheduleArticle(c fiber.Ctx) error {
 	return s.publicationAction(c, true)
 }
 
-func (s *Server) publicationAction(c *fiber.Ctx, scheduled bool) error {
+func (s *Server) publicationAction(c fiber.Ctx, scheduled bool) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1165,9 +1176,9 @@ func (s *Server) publicationAction(c *fiber.Ctx, scheduled bool) error {
 	}
 	var article store.AdminArticle
 	if scheduled {
-		article, err = s.store.ScheduleArticle(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), storeInput)
+		article, err = s.store.ScheduleArticle(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), storeInput)
 	} else {
-		article, err = s.store.PublishArticle(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), storeInput)
+		article, err = s.store.PublishArticle(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), storeInput)
 	}
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not update publication")
@@ -1175,19 +1186,19 @@ func (s *Server) publicationAction(c *fiber.Ctx, scheduled bool) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
 }
 
-func (s *Server) unpublishArticle(c *fiber.Ctx) error {
+func (s *Server) unpublishArticle(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	article, err := s.store.UnpublishArticle(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"))
+	article, err := s.store.UnpublishArticle(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not unpublish article")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
 }
 
-func (s *Server) rollbackArticle(c *fiber.Ctx) error {
+func (s *Server) rollbackArticle(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1197,7 +1208,7 @@ func (s *Server) rollbackArticle(c *fiber.Ctx) error {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
 	}
 	article, err := s.store.RollbackArticle(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Params("articleID"),
@@ -1209,7 +1220,7 @@ func (s *Server) rollbackArticle(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
 }
 
-func (s *Server) copyArticleToProject(c *fiber.Ctx) error {
+func (s *Server) copyArticleToProject(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1219,7 +1230,7 @@ func (s *Server) copyArticleToProject(c *fiber.Ctx) error {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
 	}
 	article, err := s.store.CopyArticleToProject(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Params("articleID"),
@@ -1231,20 +1242,20 @@ func (s *Server) copyArticleToProject(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.AdminArticle]{Data: article})
 }
 
-func (s *Server) listAdminCategories(c *fiber.Ctx) error {
+func (s *Server) listAdminCategories(c fiber.Ctx) error {
 	return s.listAdminTerms(c, "category")
 }
 
-func (s *Server) listAdminTags(c *fiber.Ctx) error {
+func (s *Server) listAdminTags(c fiber.Ctx) error {
 	return s.listAdminTerms(c, "tag")
 }
 
-func (s *Server) listAdminTerms(c *fiber.Ctx, termType string) error {
+func (s *Server) listAdminTerms(c fiber.Ctx, termType string) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	terms, err := s.store.ListAdminTerms(c.UserContext(), user.ID, c.Params("projectID"), termType)
+	terms, err := s.store.ListAdminTerms(c.Context(), user.ID, c.Params("projectID"), termType)
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list taxonomy")
 	}
@@ -1258,15 +1269,15 @@ func (s *Server) listAdminTerms(c *fiber.Ctx, termType string) error {
 	})
 }
 
-func (s *Server) createCategory(c *fiber.Ctx) error {
+func (s *Server) createCategory(c fiber.Ctx) error {
 	return s.createAdminTerm(c, "category")
 }
 
-func (s *Server) createTag(c *fiber.Ctx) error {
+func (s *Server) createTag(c fiber.Ctx) error {
 	return s.createAdminTerm(c, "tag")
 }
 
-func (s *Server) updateCategory(c *fiber.Ctx) error {
+func (s *Server) updateCategory(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1275,14 +1286,14 @@ func (s *Server) updateCategory(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	term, err := s.store.UpdateTerm(c.UserContext(), user.ID, c.Params("projectID"), c.Params("termID"), "category", input.toStorePatch())
+	term, err := s.store.UpdateTerm(c.Context(), user.ID, c.Params("projectID"), c.Params("termID"), "category", input.toStorePatch())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not update taxonomy term")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.TaxonomyTerm]{Data: term})
 }
 
-func (s *Server) createAdminTerm(c *fiber.Ctx, termType string) error {
+func (s *Server) createAdminTerm(c fiber.Ctx, termType string) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1291,19 +1302,19 @@ func (s *Server) createAdminTerm(c *fiber.Ctx, termType string) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	term, err := s.store.CreateTerm(c.UserContext(), user.ID, c.Params("projectID"), termType, input.toStoreInput())
+	term, err := s.store.CreateTerm(c.Context(), user.ID, c.Params("projectID"), termType, input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create taxonomy term")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.TaxonomyTerm]{Data: term})
 }
 
-func (s *Server) listAdminSeries(c *fiber.Ctx) error {
+func (s *Server) listAdminSeries(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	items, err := s.store.ListAdminSeries(c.UserContext(), user.ID, c.Params("projectID"))
+	items, err := s.store.ListAdminSeries(c.Context(), user.ID, c.Params("projectID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list series")
 	}
@@ -1317,7 +1328,7 @@ func (s *Server) listAdminSeries(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createSeries(c *fiber.Ctx) error {
+func (s *Server) createSeries(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1326,19 +1337,19 @@ func (s *Server) createSeries(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	series, err := s.store.CreateSeries(c.UserContext(), user.ID, c.Params("projectID"), input.toStoreInput())
+	series, err := s.store.CreateSeries(c.Context(), user.ID, c.Params("projectID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create series")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.Series]{Data: series})
 }
 
-func (s *Server) listAdminAuthors(c *fiber.Ctx) error {
+func (s *Server) listAdminAuthors(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	authors, err := s.store.ListAuthorsForUser(c.UserContext(), user.ID, c.Params("projectID"))
+	authors, err := s.store.ListAuthorsForUser(c.Context(), user.ID, c.Params("projectID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list authors")
 	}
@@ -1352,7 +1363,7 @@ func (s *Server) listAdminAuthors(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createAuthor(c *fiber.Ctx) error {
+func (s *Server) createAuthor(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1361,26 +1372,26 @@ func (s *Server) createAuthor(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	author, err := s.store.CreateAuthor(c.UserContext(), user.ID, c.Params("projectID"), input.toStoreInput())
+	author, err := s.store.CreateAuthor(c.Context(), user.ID, c.Params("projectID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create author")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.Author]{Data: author})
 }
 
-func (s *Server) getAdminAuthor(c *fiber.Ctx) error {
+func (s *Server) getAdminAuthor(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	author, err := s.store.GetAuthorForUser(c.UserContext(), user.ID, c.Params("projectID"), c.Params("authorID"))
+	author, err := s.store.GetAuthorForUser(c.Context(), user.ID, c.Params("projectID"), c.Params("authorID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Author not found", "Could not load author")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.Author]{Data: author})
 }
 
-func (s *Server) updateAuthor(c *fiber.Ctx) error {
+func (s *Server) updateAuthor(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1389,32 +1400,32 @@ func (s *Server) updateAuthor(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	author, err := s.store.UpdateAuthor(c.UserContext(), user.ID, c.Params("projectID"), c.Params("authorID"), input.toStorePatch())
+	author, err := s.store.UpdateAuthor(c.Context(), user.ID, c.Params("projectID"), c.Params("authorID"), input.toStorePatch())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not update author")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.Author]{Data: author})
 }
 
-func (s *Server) deleteAuthor(c *fiber.Ctx) error {
+func (s *Server) deleteAuthor(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	author, err := s.store.DeleteAuthor(c.UserContext(), user.ID, c.Params("projectID"), c.Params("authorID"))
+	author, err := s.store.DeleteAuthor(c.Context(), user.ID, c.Params("projectID"), c.Params("authorID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not delete author")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.Author]{Data: author})
 }
 
-func (s *Server) listSources(c *fiber.Ctx) error {
+func (s *Server) listSources(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
-	sources, err := s.store.ListSources(c.UserContext(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
+	sources, err := s.store.ListSources(c.Context(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list sources")
 	}
@@ -1429,7 +1440,7 @@ func (s *Server) listSources(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createSource(c *fiber.Ctx) error {
+func (s *Server) createSource(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1438,14 +1449,14 @@ func (s *Server) createSource(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	source, err := s.store.CreateSource(c.UserContext(), user.ID, c.Params("projectID"), input.toStoreInput())
+	source, err := s.store.CreateSource(c.Context(), user.ID, c.Params("projectID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create source")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.Source]{Data: source})
 }
 
-func (s *Server) updateSource(c *fiber.Ctx) error {
+func (s *Server) updateSource(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1454,19 +1465,19 @@ func (s *Server) updateSource(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	source, err := s.store.UpdateSource(c.UserContext(), user.ID, c.Params("projectID"), c.Params("sourceID"), input.toStorePatch())
+	source, err := s.store.UpdateSource(c.Context(), user.ID, c.Params("projectID"), c.Params("sourceID"), input.toStorePatch())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not update source")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.Source]{Data: source})
 }
 
-func (s *Server) listRevisionClaims(c *fiber.Ctx) error {
+func (s *Server) listRevisionClaims(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	claims, err := s.store.ListRevisionClaims(c.UserContext(), user.ID, c.Params("projectID"), c.Params("revisionID"))
+	claims, err := s.store.ListRevisionClaims(c.Context(), user.ID, c.Params("projectID"), c.Params("revisionID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Revision not found", "Could not list revision claims")
 	}
@@ -1476,7 +1487,7 @@ func (s *Server) listRevisionClaims(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createRevisionClaim(c *fiber.Ctx) error {
+func (s *Server) createRevisionClaim(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1485,14 +1496,14 @@ func (s *Server) createRevisionClaim(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	claim, err := s.store.CreateRevisionClaim(c.UserContext(), user.ID, c.Params("projectID"), c.Params("revisionID"), input.toStoreInput())
+	claim, err := s.store.CreateRevisionClaim(c.Context(), user.ID, c.Params("projectID"), c.Params("revisionID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create claim")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.Claim]{Data: claim})
 }
 
-func (s *Server) verifyClaim(c *fiber.Ctx) error {
+func (s *Server) verifyClaim(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1501,19 +1512,19 @@ func (s *Server) verifyClaim(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	claim, err := s.store.VerifyClaim(c.UserContext(), user.ID, c.Params("projectID"), c.Params("claimID"), input.toStoreInput())
+	claim, err := s.store.VerifyClaim(c.Context(), user.ID, c.Params("projectID"), c.Params("claimID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not verify claim")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.Claim]{Data: claim})
 }
 
-func (s *Server) listDisclosures(c *fiber.Ctx) error {
+func (s *Server) listDisclosures(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	disclosures, err := s.store.ListDisclosures(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"))
+	disclosures, err := s.store.ListDisclosures(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Article not found", "Could not list disclosures")
 	}
@@ -1523,7 +1534,7 @@ func (s *Server) listDisclosures(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createDisclosure(c *fiber.Ctx) error {
+func (s *Server) createDisclosure(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1532,19 +1543,19 @@ func (s *Server) createDisclosure(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	disclosure, err := s.store.CreateDisclosure(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
+	disclosure, err := s.store.CreateDisclosure(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create disclosure")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.Disclosure]{Data: disclosure})
 }
 
-func (s *Server) listCorrections(c *fiber.Ctx) error {
+func (s *Server) listCorrections(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	corrections, err := s.store.ListCorrections(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"))
+	corrections, err := s.store.ListCorrections(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Article not found", "Could not list corrections")
 	}
@@ -1554,7 +1565,7 @@ func (s *Server) listCorrections(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createCorrection(c *fiber.Ctx) error {
+func (s *Server) createCorrection(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1563,14 +1574,14 @@ func (s *Server) createCorrection(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	correction, err := s.store.CreateCorrection(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
+	correction, err := s.store.CreateCorrection(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create correction")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.CorrectionNotice]{Data: correction})
 }
 
-func (s *Server) createPreviewToken(c *fiber.Ctx) error {
+func (s *Server) createPreviewToken(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1579,7 +1590,7 @@ func (s *Server) createPreviewToken(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	token, err := s.store.CreatePreviewToken(c.UserContext(), user.ID, c.Params("projectID"), store.PreviewTokenInput{
+	token, err := s.store.CreatePreviewToken(c.Context(), user.ID, c.Params("projectID"), store.PreviewTokenInput{
 		ArticleID:  input.ArticleID,
 		RevisionID: input.RevisionID,
 		TTLMinutes: input.TTLMinutes,
@@ -1590,25 +1601,25 @@ func (s *Server) createPreviewToken(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.PreviewTokenWithSecret]{Data: token})
 }
 
-func (s *Server) revokePreviewToken(c *fiber.Ctx) error {
+func (s *Server) revokePreviewToken(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	token, err := s.store.RevokePreviewToken(c.UserContext(), user.ID, c.Params("projectID"), c.Params("tokenID"))
+	token, err := s.store.RevokePreviewToken(c.Context(), user.ID, c.Params("projectID"), c.Params("tokenID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not revoke preview token")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.PreviewToken]{Data: token})
 }
 
-func (s *Server) listReviewComments(c *fiber.Ctx) error {
+func (s *Server) listReviewComments(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
-	comments, err := s.store.ListReviewComments(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), c.Query("cursor"), limit+1)
+	comments, err := s.store.ListReviewComments(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), c.Query("cursor"), limit+1)
 	if err != nil {
 		return s.adminReadError(c, err, "Article not found", "Could not list review comments")
 	}
@@ -1623,7 +1634,7 @@ func (s *Server) listReviewComments(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createReviewComment(c *fiber.Ctx) error {
+func (s *Server) createReviewComment(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1632,38 +1643,38 @@ func (s *Server) createReviewComment(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	comment, err := s.store.CreateReviewComment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
+	comment, err := s.store.CreateReviewComment(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create review comment")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.ReviewComment]{Data: comment})
 }
 
-func (s *Server) resolveReviewComment(c *fiber.Ctx) error {
+func (s *Server) resolveReviewComment(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	comment, err := s.store.ResolveReviewComment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("commentID"))
+	comment, err := s.store.ResolveReviewComment(c.Context(), user.ID, c.Params("projectID"), c.Params("commentID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not resolve review comment")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewComment]{Data: comment})
 }
 
-func (s *Server) reopenReviewComment(c *fiber.Ctx) error {
+func (s *Server) reopenReviewComment(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	comment, err := s.store.ReopenReviewComment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("commentID"))
+	comment, err := s.store.ReopenReviewComment(c.Context(), user.ID, c.Params("projectID"), c.Params("commentID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not reopen review comment")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewComment]{Data: comment})
 }
 
-func (s *Server) listReviewAssignments(c *fiber.Ctx) error {
+func (s *Server) listReviewAssignments(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1673,7 +1684,7 @@ func (s *Server) listReviewAssignments(c *fiber.Ctx) error {
 	if err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
 	}
-	assignments, openCount, err := s.store.ListReviewAssignments(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), cursor, limit+1)
+	assignments, openCount, err := s.store.ListReviewAssignments(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), cursor, limit+1)
 	if err != nil {
 		return s.adminReadError(c, err, "Article not found", "Could not list review assignments")
 	}
@@ -1689,13 +1700,13 @@ func (s *Server) listReviewAssignments(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) listReviewAssignees(c *fiber.Ctx) error {
+func (s *Server) listReviewAssignees(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
-	members, err := s.store.ListReviewAssignees(c.UserContext(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
+	members, err := s.store.ListReviewAssignees(c.Context(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list review assignees")
 	}
@@ -1710,7 +1721,7 @@ func (s *Server) listReviewAssignees(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createReviewAssignment(c *fiber.Ctx) error {
+func (s *Server) createReviewAssignment(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -1719,44 +1730,44 @@ func (s *Server) createReviewAssignment(c *fiber.Ctx) error {
 	if err := decodeRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
 	}
-	assignment, err := s.store.CreateReviewAssignment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
+	assignment, err := s.store.CreateReviewAssignment(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create review assignment")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.ReviewAssignment]{Data: assignment})
 }
 
-func (s *Server) completeReviewAssignment(c *fiber.Ctx) error {
+func (s *Server) completeReviewAssignment(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	assignment, err := s.store.CompleteReviewAssignment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("assignmentID"))
+	assignment, err := s.store.CompleteReviewAssignment(c.Context(), user.ID, c.Params("projectID"), c.Params("assignmentID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not complete review assignment")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewAssignment]{Data: assignment})
 }
 
-func (s *Server) cancelReviewAssignment(c *fiber.Ctx) error {
+func (s *Server) cancelReviewAssignment(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	assignment, err := s.store.CancelReviewAssignment(c.UserContext(), user.ID, c.Params("projectID"), c.Params("assignmentID"))
+	assignment, err := s.store.CancelReviewAssignment(c.Context(), user.ID, c.Params("projectID"), c.Params("assignmentID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not cancel review assignment")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewAssignment]{Data: assignment})
 }
 
-func (s *Server) requireAdminSession(c *fiber.Ctx) error {
+func (s *Server) requireAdminSession(c fiber.Ctx) error {
 	rawSession := c.Cookies(sessionCookieName)
 	if rawSession == "" {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "Sign in to access the admin API")
 	}
 	sessionHash := security.TokenHash(rawSession)
-	user, session, err := s.store.GetSessionUser(c.UserContext(), sessionHash)
+	user, session, err := s.store.GetSessionUser(c.Context(), sessionHash)
 	if err != nil {
 		return problem(c, fiber.StatusUnauthorized, "Session expired", "Sign in again to continue")
 	}
@@ -1766,7 +1777,7 @@ func (s *Server) requireAdminSession(c *fiber.Ctx) error {
 	return c.Next()
 }
 
-func (s *Server) requireAdminCSRF(c *fiber.Ctx) error {
+func (s *Server) requireAdminCSRF(c fiber.Ctx) error {
 	if !s.sameOrigin(c) {
 		return problem(c, fiber.StatusForbidden, "Invalid request origin", "")
 	}
@@ -1785,7 +1796,7 @@ func (s *Server) requireAdminCSRF(c *fiber.Ctx) error {
 	return c.Next()
 }
 
-func (s *Server) requireRecentReauthentication(c *fiber.Ctx) error {
+func (s *Server) requireRecentReauthentication(c fiber.Ctx) error {
 	if _, ok := c.Locals(adminSessionContextKey).(store.Session); !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
@@ -1800,7 +1811,7 @@ func (s *Server) requireRecentReauthentication(c *fiber.Ctx) error {
 	return c.Next()
 }
 
-func recentlyReauthenticated(c *fiber.Ctx) bool {
+func recentlyReauthenticated(c fiber.Ctx) bool {
 	session, ok := c.Locals(adminSessionContextKey).(store.Session)
 	if !ok {
 		return false
@@ -1813,7 +1824,7 @@ func recentlyReauthenticated(c *fiber.Ctx) bool {
 	return age >= 0 && age <= reauthenticationWindow
 }
 
-func (s *Server) adminReadError(c *fiber.Ctx, err error, notFoundTitle, internalTitle string) error {
+func (s *Server) adminReadError(c fiber.Ctx, err error, notFoundTitle, internalTitle string) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return problem(c, fiber.StatusNotFound, notFoundTitle, "")
 	}
@@ -1827,7 +1838,7 @@ func (s *Server) adminReadError(c *fiber.Ctx, err error, notFoundTitle, internal
 	return problem(c, fiber.StatusInternalServerError, internalTitle, "")
 }
 
-func (s *Server) adminMutationError(c *fiber.Ctx, err error, internalTitle string) error {
+func (s *Server) adminMutationError(c fiber.Ctx, err error, internalTitle string) error {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return problem(c, fiber.StatusNotFound, "Resource not found", "")
@@ -1851,7 +1862,7 @@ func (s *Server) adminMutationError(c *fiber.Ctx, err error, internalTitle strin
 	}
 }
 
-func (s *Server) setSessionCookie(c *fiber.Ctx, value string) {
+func (s *Server) setSessionCookie(c fiber.Ctx, value string) {
 	c.Cookie(&fiber.Cookie{
 		Name:     sessionCookieName,
 		Value:    value,
@@ -1863,7 +1874,7 @@ func (s *Server) setSessionCookie(c *fiber.Ctx, value string) {
 	})
 }
 
-func (s *Server) setCSRFCookie(c *fiber.Ctx, value string) {
+func (s *Server) setCSRFCookie(c fiber.Ctx, value string) {
 	c.Cookie(&fiber.Cookie{
 		Name:     csrfCookieName,
 		Value:    value,
@@ -1875,7 +1886,7 @@ func (s *Server) setCSRFCookie(c *fiber.Ctx, value string) {
 	})
 }
 
-func (s *Server) clearAuthCookies(c *fiber.Ctx) {
+func (s *Server) clearAuthCookies(c fiber.Ctx) {
 	expires := time.Unix(0, 0)
 	for _, name := range []string{sessionCookieName, csrfCookieName} {
 		c.Cookie(&fiber.Cookie{
@@ -1894,7 +1905,7 @@ func (s *Server) secureCookies() bool {
 	return s.cfg.Env != "development"
 }
 
-func (s *Server) sameOrigin(c *fiber.Ctx) bool {
+func (s *Server) sameOrigin(c fiber.Ctx) bool {
 	origin := c.Get("Origin")
 	if origin == "" {
 		referer := c.Get("Referer")
@@ -1926,7 +1937,7 @@ func isLocalNuxtDevHost(host string) bool {
 		strings.EqualFold(host, "[::1]:3000")
 }
 
-func adminUser(c *fiber.Ctx) (store.AdminUser, bool) {
+func adminUser(c fiber.Ctx) (store.AdminUser, bool) {
 	value := c.Locals(adminUserContextKey)
 	if value == nil {
 		return store.AdminUser{}, false
@@ -1935,11 +1946,11 @@ func adminUser(c *fiber.Ctx) (store.AdminUser, bool) {
 	return user, ok
 }
 
-func decodeRequestBody(c *fiber.Ctx, destination any) error {
+func decodeRequestBody(c fiber.Ctx, destination any) error {
 	return json.Unmarshal(c.Body(), destination)
 }
 
-func decodeStrictRequestBody(c *fiber.Ctx, destination any) error {
+func decodeStrictRequestBody(c fiber.Ctx, destination any) error {
 	decoder := json.NewDecoder(bytes.NewReader(c.Body()))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
@@ -2014,6 +2025,7 @@ func (input articleRequest) toStoreInput() store.ArticleInput {
 		ShortAnswer:       input.ShortAnswer,
 		BodyDocument:      input.BodyDocument,
 		HTML:              input.HTML,
+		SEO:               input.SEO.toStoreInput(),
 	}
 }
 
@@ -2027,6 +2039,18 @@ func (input revisionRequest) toStoreInput() store.RevisionInput {
 		ShortAnswer:       input.ShortAnswer,
 		BodyDocument:      input.BodyDocument,
 		HTML:              input.HTML,
+		SEO:               input.SEO.toStoreInput(),
+	}
+}
+
+func (input seoRequest) toStoreInput() store.SEOInput {
+	return store.SEOInput{
+		Title:            input.Title,
+		Description:      input.Description,
+		Robots:           input.Robots,
+		OpenGraphTitle:   input.OpenGraphTitle,
+		OpenGraphSummary: input.OpenGraphSummary,
+		OpenGraphImage:   input.OpenGraphImage,
 	}
 }
 

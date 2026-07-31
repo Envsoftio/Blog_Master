@@ -3,6 +3,7 @@ package config
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestStringListCleansTrustedProxyConfiguration(t *testing.T) {
@@ -68,5 +69,33 @@ func TestInvalidWebhookEncryptionKeyIsDisabled(t *testing.T) {
 	t.Setenv("SEOBLOG_WEBHOOK_ENCRYPTION_KEY", "not-base64")
 	if key := Load().WebhookEncryptionKey; key != nil {
 		t.Fatalf("expected invalid webhook key to be disabled, got %d bytes", len(key))
+	}
+}
+
+func TestLoadAIExecutionConfigRequiresCompleteProviderSettings(t *testing.T) {
+	t.Setenv("SEOBLOG_AI_PROVIDER", "compatible-test")
+	t.Setenv("SEOBLOG_AI_BASE_URL", "https://provider.example.test/v1/")
+	t.Setenv("SEOBLOG_AI_API_KEY", "secret")
+	t.Setenv("SEOBLOG_AI_MODEL", "model")
+	t.Setenv("SEOBLOG_AI_TIMEOUT", "45s")
+	t.Setenv("SEOBLOG_AI_MAX_INPUT_BYTES", "4096")
+	t.Setenv("SEOBLOG_AI_MAX_OUTPUT_TOKENS", "700")
+
+	cfg := Load()
+	if !cfg.AIEnabled() || cfg.AIBaseURL != "https://provider.example.test/v1" {
+		t.Fatalf("unexpected AI provider config: %#v", cfg)
+	}
+	if cfg.AIProvider != "compatible-test" || cfg.AIModel != "model" || cfg.AITimeout.String() != "45s" {
+		t.Fatalf("unexpected AI execution identity: %#v", cfg)
+	}
+	if cfg.AIMaxInputBytes != 4096 || cfg.AIMaxOutputTokens != 700 {
+		t.Fatalf("unexpected AI execution budgets: %#v", cfg)
+	}
+}
+
+func TestLoadBoundsAIExecutionTimeout(t *testing.T) {
+	t.Setenv("SEOBLOG_AI_TIMEOUT", "2h")
+	if got := Load().AITimeout; got != 90*time.Second {
+		t.Fatalf("expected unsafe AI timeout to fall back to 90s, got %s", got)
 	}
 }

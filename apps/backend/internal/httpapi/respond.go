@@ -1,14 +1,14 @@
 package httpapi
 
-import "github.com/gofiber/fiber/v2"
+import "github.com/gofiber/fiber/v3"
 
 const problemMediaType = "application/problem+json"
 
-func writeJSON(c *fiber.Ctx, status int, value any) error {
+func writeJSON(c fiber.Ctx, status int, value any) error {
 	return c.Status(status).JSON(value)
 }
 
-func problem(c *fiber.Ctx, status int, title string, detail string) error {
+func problem(c fiber.Ctx, status int, title string, detail string) error {
 	return c.Status(status).JSON(Problem{
 		Type:   "about:blank",
 		Title:  title,
@@ -17,6 +17,6 @@ func problem(c *fiber.Ctx, status int, title string, detail string) error {
 	}, problemMediaType)
 }
 
-func notImplemented(c *fiber.Ctx, area string) error {
+func notImplemented(c fiber.Ctx, area string) error {
 	return problem(c, fiber.StatusNotImplemented, "Not implemented", area+" is scaffolded and awaiting workflow implementation")
 }

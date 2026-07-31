@@ -62,6 +62,9 @@
                 <div>
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Brief</p>
                   <h2 class="mt-1 text-xl font-semibold tracking-normal">Article setup</h2>
+                  <p v-if="draftSavedAt" class="mt-1 text-xs text-[#667169] dark:text-[#aeb8b0]">
+                    {{ draftSaving ? 'Saving locally…' : `Recovered locally · ${formatSavedDate(draftSavedAt)}` }}
+                  </p>
                 </div>
                 <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="categoryReady ? 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]' : 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'">
                   {{ categoryReady ? 'Category ready' : 'Category required' }}
@@ -154,6 +157,38 @@
                   <span class="text-sm font-medium">Short answer</span>
                   <textarea v-model.trim="articleForm.shortAnswer" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]" />
                 </label>
+                <fieldset class="grid gap-4 rounded-md border border-[#d7ded8] p-4 dark:border-[#3f4843] md:grid-cols-2">
+                  <legend class="px-2 text-sm font-medium">SEO and social preview</legend>
+                  <label class="block space-y-2">
+                    <span class="text-sm font-medium">SEO title</span>
+                    <input v-model.trim="articleForm.seoTitle" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Defaults to article title" />
+                  </label>
+                  <label class="block space-y-2">
+                    <span class="text-sm font-medium">Robots</span>
+                    <select v-model="articleForm.robots" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]">
+                      <option value="index,follow">Index, follow</option>
+                      <option value="index,nofollow">Index, nofollow</option>
+                      <option value="noindex,follow">Noindex, follow</option>
+                      <option value="noindex,nofollow">Noindex, nofollow</option>
+                    </select>
+                  </label>
+                  <label class="block space-y-2 md:col-span-2">
+                    <span class="text-sm font-medium">Meta description</span>
+                    <textarea v-model.trim="articleForm.seoDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Defaults to excerpt" />
+                  </label>
+                  <label class="block space-y-2">
+                    <span class="text-sm font-medium">Open Graph title</span>
+                    <input v-model.trim="articleForm.openGraphTitle" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                  </label>
+                  <label class="block space-y-2">
+                    <span class="text-sm font-medium">Open Graph image URL</span>
+                    <input v-model.trim="articleForm.openGraphImage" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="https://…" />
+                  </label>
+                  <label class="block space-y-2 md:col-span-2">
+                    <span class="text-sm font-medium">Open Graph description</span>
+                    <textarea v-model.trim="articleForm.openGraphDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                  </label>
+                </fieldset>
                 <label class="block space-y-2">
                   <span class="text-sm font-medium">HTML</span>
                   <textarea v-model.trim="articleForm.html" class="min-h-52 w-full rounded-md border border-[#bfcac3] px-3 py-2 font-mono text-sm text-[#20231f] outline-none transition focus:border-[#165a4a] focus:ring-2 focus:ring-[#165a4a]/15 dark:border-[#4b5650] dark:bg-[#171b18] dark:text-[#f2f3ef]" />
@@ -283,7 +318,7 @@ import {
   RefreshCw,
   Save
 } from 'lucide-vue-next'
-import type { AdminArticle, AdminProject, TaxonomyTerm } from '~/composables/useAdminApi'
+import type { AdminArticle, AdminProject, SEOInputPayload, TaxonomyTerm } from '~/composables/useAdminApi'
 import {
   ARTICLE_TYPES,
   articleBodyDocumentFromHTML,
@@ -310,6 +345,11 @@ const creatingCategory = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
 const slugTouched = ref(false)
+const draftSavedAt = ref('')
+const draftSaving = ref(false)
+let draftPersistenceEnabled = false
+let draftDirty = false
+let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
 
 const articleTypes = ARTICLE_TYPES
 const articleForm = reactive({
@@ -321,6 +361,12 @@ const articleForm = reactive({
   deck: '',
   excerpt: '',
   shortAnswer: '',
+  seoTitle: '',
+  seoDescription: '',
+  robots: 'index,follow',
+  openGraphTitle: '',
+  openGraphDescription: '',
+  openGraphImage: '',
   html: ''
 })
 
@@ -360,7 +406,27 @@ watch(() => categoryForm.name, (value) => {
   }
 })
 
-onMounted(refresh)
+watch(
+  () => ({ ...articleForm, slugTouched: slugTouched.value }),
+  () => {
+    if (!draftPersistenceEnabled || !import.meta.client) return
+    draftDirty = true
+    draftSaving.value = true
+    if (draftSaveTimer) clearTimeout(draftSaveTimer)
+    draftSaveTimer = setTimeout(persistCreateDraft, 750)
+  },
+  { deep: true }
+)
+
+onMounted(async () => {
+  await refresh()
+  restoreCreateDraft()
+})
+
+onBeforeUnmount(() => {
+  if (draftSaveTimer) clearTimeout(draftSaveTimer)
+  if (draftDirty) persistCreateDraft()
+})
 
 async function refresh() {
   pending.value = true
@@ -426,8 +492,18 @@ async function createArticle() {
       excerpt: articleForm.excerpt,
       shortAnswer: articleForm.shortAnswer,
       bodyDocument: articleBodyDocumentFromHTML(htmlForSubmission.value, articleForm.title),
-      html: htmlForSubmission.value
+      html: htmlForSubmission.value,
+      seo: {
+        title: articleForm.seoTitle,
+        description: articleForm.seoDescription,
+        robots: articleForm.robots as SEOInputPayload['robots'],
+        openGraphTitle: articleForm.openGraphTitle,
+        openGraphDescription: articleForm.openGraphDescription,
+        openGraphImage: articleForm.openGraphImage
+      }
     })
+    removeCreateDraft()
+    draftDirty = false
     successMessage.value = 'Draft created.'
     await navigateTo(`/projects/${projectID.value}/articles/${response.data.id}`)
   } catch (error) {
@@ -448,6 +524,81 @@ async function logout() {
 function clearMessages() {
   errorMessage.value = ''
   successMessage.value = ''
+}
+
+function createDraftKey() {
+  return `seoblog:article-create-draft:${projectID.value}`
+}
+
+function persistCreateDraft() {
+  if (!import.meta.client || !draftPersistenceEnabled || !draftDirty) return
+  if (draftSaveTimer) {
+    clearTimeout(draftSaveTimer)
+    draftSaveTimer = undefined
+  }
+  const savedAt = new Date().toISOString()
+  try {
+    localStorage.setItem(createDraftKey(), JSON.stringify({
+      schemaVersion: 1,
+      projectId: projectID.value,
+      savedAt,
+      slugTouched: slugTouched.value,
+      fields: { ...articleForm }
+    }))
+    draftDirty = false
+    draftSaving.value = false
+    draftSavedAt.value = savedAt
+  } catch {
+    draftSaving.value = false
+    errorMessage.value = 'This browser could not save the article draft locally.'
+  }
+}
+
+function restoreCreateDraft() {
+  if (!import.meta.client) return
+  try {
+    const raw = localStorage.getItem(createDraftKey())
+    if (raw) {
+      const saved = JSON.parse(raw) as {
+        schemaVersion?: unknown
+        projectId?: unknown
+        savedAt?: unknown
+        slugTouched?: unknown
+        fields?: Record<string, unknown>
+      }
+      const keys = [
+        'articleType', 'title', 'slug', 'locale', 'primaryCategoryId', 'deck', 'excerpt', 'shortAnswer',
+        'seoTitle', 'seoDescription', 'robots', 'openGraphTitle', 'openGraphDescription', 'openGraphImage', 'html'
+      ]
+      if (
+        saved.schemaVersion === 1
+        && saved.projectId === projectID.value
+        && typeof saved.savedAt === 'string'
+        && saved.fields
+        && keys.every(key => typeof saved.fields?.[key] === 'string')
+      ) {
+        Object.assign(articleForm, Object.fromEntries(keys.map(key => [key, saved.fields?.[key]])))
+        slugTouched.value = saved.slugTouched === true
+        draftSavedAt.value = saved.savedAt
+      } else {
+        removeCreateDraft()
+      }
+    }
+  } catch {
+    removeCreateDraft()
+  }
+  nextTick(() => {
+    draftPersistenceEnabled = true
+  })
+}
+
+function removeCreateDraft() {
+  if (import.meta.client) localStorage.removeItem(createDraftKey())
+}
+
+function formatSavedDate(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
 function escapeHTML(value: string) {

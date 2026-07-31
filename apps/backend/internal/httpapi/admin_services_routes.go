@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"seoblog/apps/backend/internal/media"
 	"seoblog/apps/backend/internal/store"
@@ -48,12 +48,12 @@ type webhookRequest struct {
 	Events []string `json:"events"`
 }
 
-func (s *Server) listMediaAssets(c *fiber.Ctx) error {
+func (s *Server) listMediaAssets(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	assets, err := s.store.ListMediaAssets(c.UserContext(), user.ID, c.Params("projectID"))
+	assets, err := s.store.ListMediaAssets(c.Context(), user.ID, c.Params("projectID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list media")
 	}
@@ -66,7 +66,7 @@ func (s *Server) listMediaAssets(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createMediaAsset(c *fiber.Ctx) error {
+func (s *Server) createMediaAsset(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -84,7 +84,7 @@ func (s *Server) createMediaAsset(c *fiber.Ctx) error {
 		uploadBucket = s.mediaStorage.Bucket()
 		uploadExpiresAt = now.Add(mediaPresignTTL(s.cfg.B2MediaPresignTTL))
 	}
-	asset, err := s.store.CreateMediaAsset(c.UserContext(), user.ID, c.Params("projectID"), store.MediaUploadInput{
+	asset, err := s.store.CreateMediaAsset(c.Context(), user.ID, c.Params("projectID"), store.MediaUploadInput{
 		Filename:        input.Filename,
 		ContentType:     input.ContentType,
 		Bytes:           input.Bytes,
@@ -98,7 +98,7 @@ func (s *Server) createMediaAsset(c *fiber.Ctx) error {
 	if s.mediaStorage != nil {
 		signed, err := s.mediaStorage.PresignPut(asset.ObjectKey, asset.ContentType, asset.Bytes, now)
 		if err != nil {
-			_, _ = s.store.FailMediaAsset(c.UserContext(), user.ID, c.Params("projectID"), asset.ID, "could not sign B2 upload")
+			_, _ = s.store.FailMediaAsset(c.Context(), user.ID, c.Params("projectID"), asset.ID, "could not sign B2 upload")
 			return problem(c, fiber.StatusInternalServerError, "Could not sign media upload", "")
 		}
 		asset.Upload = &store.MediaUploadTarget{
@@ -114,12 +114,12 @@ func (s *Server) createMediaAsset(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.AdminMediaAsset]{Data: asset})
 }
 
-func (s *Server) getMediaAsset(c *fiber.Ctx) error {
+func (s *Server) getMediaAsset(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	asset, err := s.store.GetMediaAsset(c.UserContext(), user.ID, c.Params("projectID"), c.Params("assetID"))
+	asset, err := s.store.GetMediaAsset(c.Context(), user.ID, c.Params("projectID"), c.Params("assetID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Media asset not found", "Could not load media")
 	}
@@ -127,7 +127,7 @@ func (s *Server) getMediaAsset(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminMediaAsset]{Data: asset})
 }
 
-func (s *Server) completeMediaUpload(c *fiber.Ctx) error {
+func (s *Server) completeMediaUpload(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -146,14 +146,14 @@ func (s *Server) completeMediaUpload(c *fiber.Ctx) error {
 	}
 	projectID := c.Params("projectID")
 	assetID := c.Params("assetID")
-	asset, err := s.store.MarkMediaAssetProcessing(c.UserContext(), user.ID, projectID, assetID, input.SHA256)
+	asset, err := s.store.MarkMediaAssetProcessing(c.Context(), user.ID, projectID, assetID, input.SHA256)
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not process media")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminMediaAsset]{Data: asset})
 }
 
-func (s *Server) updateMediaAsset(c *fiber.Ctx) error {
+func (s *Server) updateMediaAsset(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -162,7 +162,7 @@ func (s *Server) updateMediaAsset(c *fiber.Ctx) error {
 	if err := decodeStrictRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
 	}
-	asset, err := s.store.UpdateMediaAsset(c.UserContext(), user.ID, c.Params("projectID"), c.Params("assetID"), store.MediaPatch{
+	asset, err := s.store.UpdateMediaAsset(c.Context(), user.ID, c.Params("projectID"), c.Params("assetID"), store.MediaPatch{
 		AltText:    input.AltText,
 		Decorative: input.Decorative,
 		Caption:    input.Caption,
@@ -176,31 +176,31 @@ func (s *Server) updateMediaAsset(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminMediaAsset]{Data: asset})
 }
 
-func (s *Server) deleteMediaAsset(c *fiber.Ctx) error {
+func (s *Server) deleteMediaAsset(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	projectID := c.Params("projectID")
 	assetID := c.Params("assetID")
-	asset, err := s.store.GetMediaAsset(c.UserContext(), user.ID, projectID, assetID)
+	asset, err := s.store.GetMediaAsset(c.Context(), user.ID, projectID, assetID)
 	if err != nil {
 		return s.adminReadError(c, err, "Media asset not found", "Could not delete media")
 	}
-	if err := s.store.AssertMediaAssetDeletable(c.UserContext(), user.ID, projectID, assetID); err != nil {
+	if err := s.store.AssertMediaAssetDeletable(c.Context(), user.ID, projectID, assetID); err != nil {
 		return s.adminMutationError(c, err, "Could not delete media")
 	}
-	if err := s.deleteMediaObjects(c.UserContext(), asset); err != nil {
+	if err := s.deleteMediaObjects(c.Context(), asset); err != nil {
 		s.logger.Error("media object deletion failed", "asset_id", asset.ID, "error", err)
 		return problem(c, fiber.StatusBadGateway, "Could not delete media objects", "")
 	}
-	if err := s.store.DeleteMediaAsset(c.UserContext(), user.ID, projectID, assetID); err != nil {
+	if err := s.store.DeleteMediaAsset(c.Context(), user.ID, projectID, assetID); err != nil {
 		return s.adminMutationError(c, err, "Could not delete media")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-func (s *Server) serveMediaAssetFile(c *fiber.Ctx) error {
+func (s *Server) serveMediaAssetFile(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -210,7 +210,7 @@ func (s *Server) serveMediaAssetFile(c *fiber.Ctx) error {
 	}
 	projectID := c.Params("projectID")
 	assetID := c.Params("assetID")
-	asset, err := s.store.GetMediaAsset(c.UserContext(), user.ID, projectID, assetID)
+	asset, err := s.store.GetMediaAsset(c.Context(), user.ID, projectID, assetID)
 	if err != nil {
 		return s.adminReadError(c, err, "Media asset not found", "Could not load media")
 	}
@@ -224,7 +224,7 @@ func (s *Server) serveMediaAssetFile(c *fiber.Ctx) error {
 	if !media.DeletableObjectKeyForAsset(asset.ProjectID, asset.ID, objectKey) {
 		return problem(c, fiber.StatusBadGateway, "Invalid media object key", "")
 	}
-	body, detectedContentType, err := s.mediaStorage.GetObject(c.UserContext(), objectKey, maxBytes)
+	body, detectedContentType, err := s.mediaStorage.GetObject(c.Context(), objectKey, maxBytes)
 	if err != nil {
 		s.logger.Error("media object load failed", "asset_id", asset.ID, "object_key", objectKey, "error", err)
 		return problem(c, fiber.StatusBadGateway, "Could not load media object", "")
@@ -356,12 +356,12 @@ func validOptionalSHA256(value string) bool {
 	return true
 }
 
-func (s *Server) listAIJobs(c *fiber.Ctx) error {
+func (s *Server) listAIJobs(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	jobs, err := s.store.ListAIJobs(c.UserContext(), user.ID, c.Params("projectID"))
+	jobs, err := s.store.ListAIJobs(c.Context(), user.ID, c.Params("projectID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list AI jobs")
 	}
@@ -372,7 +372,7 @@ func (s *Server) listAIJobs(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createAIJob(c *fiber.Ctx) error {
+func (s *Server) createAIJob(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -381,7 +381,7 @@ func (s *Server) createAIJob(c *fiber.Ctx) error {
 	if err := decodeStrictRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
 	}
-	job, err := s.store.CreateAIJob(c.UserContext(), user.ID, c.Params("projectID"), store.AIJobInput{
+	job, err := s.store.CreateAIJob(c.Context(), user.ID, c.Params("projectID"), store.AIJobInput{
 		Type:                input.Type,
 		ContentID:           strings.TrimSpace(input.ContentID),
 		ArticleType:         input.ArticleType,
@@ -395,12 +395,12 @@ func (s *Server) createAIJob(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusAccepted, Envelope[store.AdminAIJob]{Data: job})
 }
 
-func (s *Server) getAIJob(c *fiber.Ctx) error {
+func (s *Server) getAIJob(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	job, err := s.store.GetAIJob(c.UserContext(), user.ID, c.Params("projectID"), c.Params("jobID"))
+	job, err := s.store.GetAIJob(c.Context(), user.ID, c.Params("projectID"), c.Params("jobID"))
 	if err != nil {
 		return s.adminReadError(c, err, "AI job not found", "Could not load AI job")
 	}
@@ -408,19 +408,19 @@ func (s *Server) getAIJob(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminAIJob]{Data: job})
 }
 
-func (s *Server) cancelAIJob(c *fiber.Ctx) error {
+func (s *Server) cancelAIJob(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	job, err := s.store.CancelAIJob(c.UserContext(), user.ID, c.Params("projectID"), c.Params("jobID"))
+	job, err := s.store.CancelAIJob(c.Context(), user.ID, c.Params("projectID"), c.Params("jobID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not cancel AI job")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminAIJob]{Data: job})
 }
 
-func (s *Server) listAIJobEvents(c *fiber.Ctx) error {
+func (s *Server) listAIJobEvents(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -431,7 +431,7 @@ func (s *Server) listAIJobEvents(c *fiber.Ctx) error {
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
 	events, err := s.store.ListAIJobEvents(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Params("jobID"),
@@ -453,14 +453,14 @@ func (s *Server) listAIJobEvents(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) listAIRuns(c *fiber.Ctx) error {
+func (s *Server) listAIRuns(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
 	runs, err := s.store.ListAIRuns(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Query("cursor"),
@@ -487,14 +487,14 @@ func (s *Server) listAIRuns(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) listQualityCheckResults(c *fiber.Ctx) error {
+func (s *Server) listQualityCheckResults(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
 	results, err := s.store.ListQualityCheckResults(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Query("cursor"),
@@ -521,12 +521,12 @@ func (s *Server) listQualityCheckResults(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) listWebhooks(c *fiber.Ctx) error {
+func (s *Server) listWebhooks(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	endpoints, err := s.store.ListWebhooks(c.UserContext(), user.ID, c.Params("projectID"))
+	endpoints, err := s.store.ListWebhooks(c.Context(), user.ID, c.Params("projectID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list webhooks")
 	}
@@ -536,7 +536,7 @@ func (s *Server) listWebhooks(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createWebhook(c *fiber.Ctx) error {
+func (s *Server) createWebhook(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -545,7 +545,7 @@ func (s *Server) createWebhook(c *fiber.Ctx) error {
 	if err := decodeStrictRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
 	}
-	endpoint, err := s.store.CreateWebhook(c.UserContext(), user.ID, c.Params("projectID"), store.WebhookInput{
+	endpoint, err := s.store.CreateWebhook(c.Context(), user.ID, c.Params("projectID"), store.WebhookInput{
 		Name:   input.Name,
 		URL:    input.URL,
 		Events: input.Events,
@@ -556,25 +556,25 @@ func (s *Server) createWebhook(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.WebhookWithSecret]{Data: endpoint})
 }
 
-func (s *Server) revokeWebhook(c *fiber.Ctx) error {
+func (s *Server) revokeWebhook(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	endpoint, err := s.store.RevokeWebhook(c.UserContext(), user.ID, c.Params("projectID"), c.Params("endpointID"))
+	endpoint, err := s.store.RevokeWebhook(c.Context(), user.ID, c.Params("projectID"), c.Params("endpointID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not revoke webhook")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.WebhookEndpoint]{Data: endpoint})
 }
 
-func (s *Server) listWebhookAttempts(c *fiber.Ctx) error {
+func (s *Server) listWebhookAttempts(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
-	attempts, err := s.store.ListWebhookAttempts(c.UserContext(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
+	attempts, err := s.store.ListWebhookAttempts(c.Context(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not list webhook attempts")
 	}
@@ -589,24 +589,24 @@ func (s *Server) listWebhookAttempts(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) replayWebhookAttempt(c *fiber.Ctx) error {
+func (s *Server) replayWebhookAttempt(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	attempt, err := s.store.ReplayWebhookAttempt(c.UserContext(), user.ID, c.Params("projectID"), c.Params("attemptID"))
+	attempt, err := s.store.ReplayWebhookAttempt(c.Context(), user.ID, c.Params("projectID"), c.Params("attemptID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not replay webhook attempt")
 	}
 	return writeJSON(c, fiber.StatusAccepted, Envelope[store.WebhookAttempt]{Data: attempt})
 }
 
-func (s *Server) deliveryStatus(c *fiber.Ctx) error {
+func (s *Server) deliveryStatus(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	status, err := s.store.DeliveryStatus(c.UserContext(), user.ID, c.Params("projectID"))
+	status, err := s.store.DeliveryStatus(c.Context(), user.ID, c.Params("projectID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Project not found", "Could not load delivery status")
 	}

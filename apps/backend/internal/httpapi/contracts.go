@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"seoblog/apps/backend/internal/store"
 )
@@ -216,6 +216,31 @@ func documentFiberRoutes(api huma.API, app *fiber.App) {
 				Tags:        []string{routeTag(path)},
 				Responses:   responses,
 			})
+			// Fiber v3 automatically serves HEAD for GET routes without adding a
+			// synthetic HEAD entry to App.Stack. Keep the generated contract in
+			// sync with that runtime behavior.
+			if method == http.MethodGet {
+				pathItem := api.OpenAPI().Paths[path]
+				if pathItem != nil && operationForMethod(pathItem, http.MethodHead) == nil {
+					headResponses := map[string]*huma.Response{
+						"200": {Description: "Successful response without a body"},
+						"400": {Description: "Invalid request"},
+						"401": {Description: "Authentication required"},
+						"403": {Description: "Insufficient permission"},
+						"404": {Description: "Resource not found"},
+						"500": {Description: "Internal server error"},
+					}
+					api.OpenAPI().AddOperation(&huma.Operation{
+						Method:      http.MethodHead,
+						Path:        path,
+						OperationID: strings.Trim(operationIDPart.ReplaceAllString(strings.ToLower(http.MethodHead+"_"+path), "_"), "_"),
+						Summary:     http.MethodHead + " " + path,
+						Description: description,
+						Tags:        []string{routeTag(path)},
+						Responses:   headResponses,
+					})
+				}
+			}
 		}
 	}
 }

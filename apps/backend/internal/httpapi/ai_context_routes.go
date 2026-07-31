@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"seoblog/apps/backend/internal/store"
 )
@@ -15,12 +15,12 @@ type evidencePacketRequest struct {
 	Packet    store.EvidencePacketDocument `json:"packet"`
 }
 
-func (s *Server) getVoiceProfile(c *fiber.Ctx) error {
+func (s *Server) getVoiceProfile(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	profile, err := s.store.GetLatestVoiceProfile(c.UserContext(), user.ID, c.Params("projectID"))
+	profile, err := s.store.GetLatestVoiceProfile(c.Context(), user.ID, c.Params("projectID"))
 	if err != nil {
 		return s.adminReadError(c, err, "Voice profile not found", "Could not load voice profile")
 	}
@@ -28,7 +28,7 @@ func (s *Server) getVoiceProfile(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.VoiceProfile]{Data: profile})
 }
 
-func (s *Server) createVoiceProfile(c *fiber.Ctx) error {
+func (s *Server) createVoiceProfile(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -37,21 +37,21 @@ func (s *Server) createVoiceProfile(c *fiber.Ctx) error {
 	if err := decodeStrictRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
 	}
-	profile, err := s.store.CreateVoiceProfile(c.UserContext(), user.ID, c.Params("projectID"), input.Profile)
+	profile, err := s.store.CreateVoiceProfile(c.Context(), user.ID, c.Params("projectID"), input.Profile)
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not create voice profile")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.VoiceProfile]{Data: profile})
 }
 
-func (s *Server) listEvidencePackets(c *fiber.Ctx) error {
+func (s *Server) listEvidencePackets(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	limit := boundedLimit(c.Query("limit", "50"), 100)
 	packets, err := s.store.ListEvidencePackets(
-		c.UserContext(),
+		c.Context(),
 		user.ID,
 		c.Params("projectID"),
 		c.Query("cursor"),
@@ -76,7 +76,7 @@ func (s *Server) listEvidencePackets(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) createEvidencePacket(c *fiber.Ctx) error {
+func (s *Server) createEvidencePacket(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
@@ -85,7 +85,7 @@ func (s *Server) createEvidencePacket(c *fiber.Ctx) error {
 	if err := decodeStrictRequestBody(c, &input); err != nil {
 		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
 	}
-	packet, err := s.store.CreateEvidencePacket(c.UserContext(), user.ID, c.Params("projectID"), store.EvidencePacketInput{
+	packet, err := s.store.CreateEvidencePacket(c.Context(), user.ID, c.Params("projectID"), store.EvidencePacketInput{
 		ContentID: input.ContentID,
 		Packet:    input.Packet,
 	})
@@ -95,12 +95,12 @@ func (s *Server) createEvidencePacket(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.EvidencePacket]{Data: packet})
 }
 
-func (s *Server) approveEvidencePacket(c *fiber.Ctx) error {
+func (s *Server) approveEvidencePacket(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
-	packet, err := s.store.ApproveEvidencePacket(c.UserContext(), user.ID, c.Params("projectID"), c.Params("packetID"))
+	packet, err := s.store.ApproveEvidencePacket(c.Context(), user.ID, c.Params("projectID"), c.Params("packetID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not approve evidence packet")
 	}

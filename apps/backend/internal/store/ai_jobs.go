@@ -17,7 +17,8 @@ const adminAIJobSelectColumns = `
 	COALESCE(voice_profile_id, ''), COALESCE(voice_profile_version, 0),
 	COALESCE(evidence_packet_id, ''), COALESCE(evidence_packet_version, 0),
 	COALESCE(input_hash, ''), COALESCE(source_revision_hash, ''),
-	started_at, COALESCE(completed_at, started_at), COALESCE(error_category, '')`
+	started_at, COALESCE(completed_at, started_at), COALESCE(output_json, '{}'),
+	COALESCE(error_category, '')`
 
 type AIJobContentContext struct {
 	ID           string `json:"id"`
@@ -181,6 +182,7 @@ func (s *Store) recordAIJobReuse(ctx context.Context, projectID, userID string, 
 
 func scanAdminAIJob(row rowScanner) (AdminAIJob, error) {
 	var job AdminAIJob
+	var resultJSON string
 	if err := row.Scan(
 		&job.ID,
 		&job.ProjectID,
@@ -198,9 +200,11 @@ func scanAdminAIJob(row rowScanner) (AdminAIJob, error) {
 		&job.SourceRevisionHash,
 		&job.CreatedAt,
 		&job.UpdatedAt,
+		&resultJSON,
 		&job.Error,
 	); err != nil {
 		return AdminAIJob{}, err
 	}
+	job.Result = json.RawMessage(resultJSON)
 	return job, nil
 }

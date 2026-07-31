@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/limiter"
 )
 
 const (
@@ -16,7 +16,7 @@ const (
 	previewContextKey = "previewContext"
 )
 
-func (s *Server) requireContentKey(c *fiber.Ctx) error {
+func (s *Server) requireContentKey(c fiber.Ctx) error {
 	auth := c.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
 		if s.cfg.DevAuth && s.cfg.Env == "development" {
@@ -35,7 +35,7 @@ func (s *Server) requireContentKey(c *fiber.Ctx) error {
 	}
 
 	sum := sha256.Sum256([]byte(secret))
-	key, err := s.store.FindAPIKeyByHash(c.UserContext(), hex.EncodeToString(sum[:]))
+	key, err := s.store.FindAPIKeyByHash(c.Context(), hex.EncodeToString(sum[:]))
 	if err != nil {
 		s.logger.Warn("content api key rejected", "error", err)
 		return problem(c, fiber.StatusUnauthorized, "Invalid API key", "The project API key is invalid, expired or revoked")
@@ -46,7 +46,7 @@ func (s *Server) requireContentKey(c *fiber.Ctx) error {
 }
 
 func requireContentScope(scope string) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		project, ok := contentProject(c)
 		if !ok {
 			return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
@@ -60,7 +60,7 @@ func requireContentScope(scope string) fiber.Handler {
 	}
 }
 
-func contentProject(c *fiber.Ctx) (ProjectContext, bool) {
+func contentProject(c fiber.Ctx) (ProjectContext, bool) {
 	value := c.Locals(projectContextKey)
 	if value == nil {
 		return ProjectContext{}, false
@@ -70,44 +70,44 @@ func contentProject(c *fiber.Ctx) (ProjectContext, bool) {
 }
 
 func contentSourceRateLimiter() fiber.Handler {
-	return newContentRateLimiter(300, func(c *fiber.Ctx) string {
+	return newContentRateLimiter(300, func(c fiber.Ctx) string {
 		return "source:" + requestSource(c)
 	})
 }
 
 func contentKeyRateLimiter() fiber.Handler {
-	return newContentRateLimiter(1200, func(c *fiber.Ctx) string {
+	return newContentRateLimiter(1200, func(c fiber.Ctx) string {
 		project, _ := contentProject(c)
 		return "key:" + project.KeyID
 	})
 }
 
 func contentProjectRateLimiter() fiber.Handler {
-	return newContentRateLimiter(6000, func(c *fiber.Ctx) string {
+	return newContentRateLimiter(6000, func(c fiber.Ctx) string {
 		project, _ := contentProject(c)
 		return "project:" + project.ProjectID
 	})
 }
 
-func newContentRateLimiter(max int, keyGenerator func(*fiber.Ctx) string) fiber.Handler {
+func newContentRateLimiter(max int, keyGenerator func(fiber.Ctx) string) fiber.Handler {
 	return limiter.New(limiter.Config{
 		Max:          max,
 		Expiration:   time.Minute,
 		KeyGenerator: keyGenerator,
-		LimitReached: func(c *fiber.Ctx) error {
+		LimitReached: func(c fiber.Ctx) error {
 			return problem(c, fiber.StatusTooManyRequests, "Content API rate limit exceeded", "Retry after the current rate-limit window")
 		},
 	})
 }
 
 func invitationCreationSourceRateLimiter() fiber.Handler {
-	return newAdminRateLimiter(30, time.Minute, func(c *fiber.Ctx) string {
+	return newAdminRateLimiter(30, time.Minute, func(c fiber.Ctx) string {
 		return "invitation-create-source:" + requestSource(c)
 	})
 }
 
 func invitationRecipientRateLimiter() fiber.Handler {
-	return newAdminRateLimiter(5, time.Hour, func(c *fiber.Ctx) string {
+	return newAdminRateLimiter(5, time.Hour, func(c fiber.Ctx) string {
 		var input struct {
 			Email string `json:"email"`
 		}
@@ -121,25 +121,25 @@ func invitationRecipientRateLimiter() fiber.Handler {
 }
 
 func invitationAcceptanceSourceRateLimiter() fiber.Handler {
-	return newAdminRateLimiter(30, 15*time.Minute, func(c *fiber.Ctx) string {
+	return newAdminRateLimiter(30, 15*time.Minute, func(c fiber.Ctx) string {
 		return "invitation-accept-source:" + requestSource(c)
 	})
 }
 
 func invitationTokenRateLimiter() fiber.Handler {
-	return newAdminRateLimiter(10, 15*time.Minute, func(c *fiber.Ctx) string {
+	return newAdminRateLimiter(10, 15*time.Minute, func(c fiber.Ctx) string {
 		return "invitation-token:" + hashRateLimitIdentity(c.Params("token"))
 	})
 }
 
 func passwordResetRequestSourceRateLimiter() fiber.Handler {
-	return newAdminRateLimiter(10, time.Hour, func(c *fiber.Ctx) string {
+	return newAdminRateLimiter(10, time.Hour, func(c fiber.Ctx) string {
 		return "password-reset-request-source:" + requestSource(c)
 	})
 }
 
 func passwordResetEmailRateLimiter() fiber.Handler {
-	return newAdminRateLimiter(3, time.Hour, func(c *fiber.Ctx) string {
+	return newAdminRateLimiter(3, time.Hour, func(c fiber.Ctx) string {
 		var input struct {
 			Email string `json:"email"`
 		}
@@ -153,13 +153,13 @@ func passwordResetEmailRateLimiter() fiber.Handler {
 }
 
 func passwordResetCompletionSourceRateLimiter() fiber.Handler {
-	return newAdminRateLimiter(20, time.Hour, func(c *fiber.Ctx) string {
+	return newAdminRateLimiter(20, time.Hour, func(c fiber.Ctx) string {
 		return "password-reset-completion-source:" + requestSource(c)
 	})
 }
 
 func passwordResetTokenRateLimiter() fiber.Handler {
-	return newAdminRateLimiter(5, time.Hour, func(c *fiber.Ctx) string {
+	return newAdminRateLimiter(5, time.Hour, func(c fiber.Ctx) string {
 		var input struct {
 			Token string `json:"token"`
 		}
@@ -172,18 +172,18 @@ func passwordResetTokenRateLimiter() fiber.Handler {
 	})
 }
 
-func newAdminRateLimiter(max int, expiration time.Duration, keyGenerator func(*fiber.Ctx) string) fiber.Handler {
+func newAdminRateLimiter(max int, expiration time.Duration, keyGenerator func(fiber.Ctx) string) fiber.Handler {
 	return limiter.New(limiter.Config{
 		Max:          max,
 		Expiration:   expiration,
 		KeyGenerator: keyGenerator,
-		LimitReached: func(c *fiber.Ctx) error {
+		LimitReached: func(c fiber.Ctx) error {
 			return problem(c, fiber.StatusTooManyRequests, "Too many requests", "Retry after the current rate-limit window")
 		},
 	})
 }
 
-func requestSource(c *fiber.Ctx) string {
+func requestSource(c fiber.Ctx) string {
 	return c.IP()
 }
 

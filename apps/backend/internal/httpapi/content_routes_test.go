@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"seoblog/apps/backend/internal/store"
 )
 
 func TestPublishedValidatorsReturnNotModified(t *testing.T) {
 	app := fiber.New()
-	app.Get("/", func(c *fiber.Ctx) error {
+	app.Get("/", func(c fiber.Ctx) error {
 		post := store.PublishedPost{
 			ContentHash: "sha256-value",
 			ModifiedAt:  "2026-07-29 10:30:00",
@@ -55,10 +55,10 @@ func TestCursorRoundTrip(t *testing.T) {
 
 func TestScopeMiddlewareRejectsMissingScope(t *testing.T) {
 	app := fiber.New()
-	app.Get("/", func(c *fiber.Ctx) error {
+	app.Get("/", func(c fiber.Ctx) error {
 		c.Locals(projectContextKey, ProjectContext{ProjectID: "project", Scopes: []string{"redirects:read"}})
 		return c.Next()
-	}, requireContentScope("content:published:read"), func(c *fiber.Ctx) error {
+	}, requireContentScope("content:published:read"), func(c fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	})
 
@@ -75,18 +75,18 @@ func TestContentRateLimiterSeparatesAPIKeys(t *testing.T) {
 	app := fiber.New()
 	app.Get(
 		"/",
-		func(c *fiber.Ctx) error {
+		func(c fiber.Ctx) error {
 			c.Locals(projectContextKey, ProjectContext{
 				ProjectID: "project",
 				KeyID:     c.Get("X-Test-Key"),
 			})
 			return c.Next()
 		},
-		newContentRateLimiter(1, func(c *fiber.Ctx) string {
+		newContentRateLimiter(1, func(c fiber.Ctx) string {
 			project, _ := contentProject(c)
 			return project.KeyID
 		}),
-		func(c *fiber.Ctx) error {
+		func(c fiber.Ctx) error {
 			return c.SendStatus(fiber.StatusOK)
 		},
 	)

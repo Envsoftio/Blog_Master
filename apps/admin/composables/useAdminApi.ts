@@ -453,9 +453,61 @@ export type AdminSource = {
   publisher?: string
   author?: string
   url?: string
+  publicationDate?: string
+  accessedAt?: string
   sourceType: string
   isPrimary: boolean
+  archivedCopyReference?: string
+  notes?: string
   createdAt: string
+}
+
+export type AdminClaim = {
+  id: string
+  projectId: string
+  articleId: string
+  revisionId: string
+  claimText: string
+  blockId?: string
+  importance: string
+  verificationState: string
+  verifiedBy?: string
+  verifiedAt?: string
+  sourceIds: string[]
+}
+
+export type AdminDisclosure = {
+  id: string
+  projectId: string
+  articleId: string
+  revisionId?: string
+  disclosureType: string
+  publicText: string
+  createdBy: string
+  createdAt: string
+}
+
+export type AdminCorrection = {
+  id: string
+  projectId: string
+  articleId: string
+  affectedRevisionId?: string
+  publicNote: string
+  correctedBy: string
+  correctedAt: string
+  supersedesNoticeId?: string
+}
+
+export type PreviewToken = {
+  id: string
+  projectId: string
+  articleId: string
+  revisionId: string
+  expiresAt: string
+  lastUsedAt?: string
+  createdBy: string
+  createdAt: string
+  revokedAt?: string
 }
 
 export type ProjectCreatePayload = {
@@ -503,6 +555,16 @@ export type ArticleCreatePayload = {
   shortAnswer?: string
   bodyDocument?: unknown
   html?: string
+  seo?: SEOInputPayload
+}
+
+export type SEOInputPayload = {
+  title?: string
+  description?: string
+  robots?: 'index,follow' | 'index,nofollow' | 'noindex,follow' | 'noindex,nofollow'
+  openGraphTitle?: string
+  openGraphDescription?: string
+  openGraphImage?: string
 }
 
 export const ARTICLE_TYPES = [
@@ -966,6 +1028,98 @@ export function useAdminApi() {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminSource>>(`/api/v1/projects/${projectID}/sources?limit=100`))
   }
 
+  async function createSource(projectID: string, payload: {
+    title: string
+    publisher?: string
+    author?: string
+    url?: string
+    publicationDate?: string
+    accessedAt?: string
+    sourceType: string
+    isPrimary: boolean
+    archivedCopyReference?: string
+    notes?: string
+  }) {
+    return await request<APIEnvelope<AdminSource>>(`/api/v1/projects/${projectID}/sources`, await withCSRF({
+      method: 'POST',
+      body: payload
+    }))
+  }
+
+  async function updateSource(projectID: string, sourceID: string, payload: Partial<AdminSource>) {
+    return await request<APIEnvelope<AdminSource>>(`/api/v1/projects/${projectID}/sources/${sourceID}`, await withCSRF({
+      method: 'PATCH',
+      body: payload
+    }))
+  }
+
+  async function listClaims(projectID: string, revisionID: string) {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminClaim>>(`/api/v1/projects/${projectID}/revisions/${revisionID}/claims`))
+  }
+
+  async function createClaim(projectID: string, revisionID: string, payload: {
+    claimText: string
+    blockId?: string
+    importance: string
+    sourceIds: string[]
+  }) {
+    return await request<APIEnvelope<AdminClaim>>(`/api/v1/projects/${projectID}/revisions/${revisionID}/claims`, await withCSRF({
+      method: 'POST',
+      body: payload
+    }))
+  }
+
+  async function verifyClaim(projectID: string, claimID: string, verificationState: string, sourceIds?: string[]) {
+    return await request<APIEnvelope<AdminClaim>>(`/api/v1/projects/${projectID}/claims/${claimID}/verify`, await withCSRF({
+      method: 'POST',
+      body: { verificationState, ...(sourceIds ? { sourceIds } : {}) }
+    }))
+  }
+
+  async function listDisclosures(projectID: string, articleID: string) {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminDisclosure>>(`/api/v1/projects/${projectID}/articles/${articleID}/disclosures`))
+  }
+
+  async function createDisclosure(projectID: string, articleID: string, payload: {
+    revisionId?: string
+    disclosureType: string
+    publicText: string
+  }) {
+    return await request<APIEnvelope<AdminDisclosure>>(`/api/v1/projects/${projectID}/articles/${articleID}/disclosures`, await withCSRF({
+      method: 'POST',
+      body: payload
+    }))
+  }
+
+  async function listCorrections(projectID: string, articleID: string) {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminCorrection>>(`/api/v1/projects/${projectID}/articles/${articleID}/corrections`))
+  }
+
+  async function createCorrection(projectID: string, articleID: string, payload: {
+    affectedRevisionId?: string
+    publicNote: string
+    supersedesNoticeId?: string
+  }) {
+    return await request<APIEnvelope<AdminCorrection>>(`/api/v1/projects/${projectID}/articles/${articleID}/corrections`, await withCSRF({
+      method: 'POST',
+      body: payload
+    }))
+  }
+
+  async function createPreviewToken(projectID: string, articleID: string, revisionID: string, ttlMinutes = 30) {
+    return await request<APIEnvelope<{ token: PreviewToken, secret: string }>>(`/api/v1/projects/${projectID}/preview-tokens`, await withCSRF({
+      method: 'POST',
+      body: { articleId: articleID, revisionId: revisionID, ttlMinutes }
+    }))
+  }
+
+  async function revokePreviewToken(projectID: string, tokenID: string) {
+    return await request<APIEnvelope<PreviewToken>>(`/api/v1/projects/${projectID}/preview-tokens/${tokenID}/revoke`, await withCSRF({
+      method: 'POST',
+      body: {}
+    }))
+  }
+
   return {
     request,
     getCSRFToken,
@@ -1034,7 +1188,18 @@ export function useAdminApi() {
     listEvidencePackets,
     createEvidencePacket,
     approveEvidencePacket,
-    listSources
+    listSources,
+    createSource,
+    updateSource,
+    listClaims,
+    createClaim,
+    verifyClaim,
+    listDisclosures,
+    createDisclosure,
+    listCorrections,
+    createCorrection,
+    createPreviewToken,
+    revokePreviewToken
   }
 }
 
@@ -1090,9 +1255,17 @@ export function htmlToPlainText(value: string) {
 }
 
 export function articleBodyDocumentFromHTML(html: string, fallbackText: string) {
+  if (typeof DOMParser !== 'undefined') {
+    const parsed = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+    const content = structuredBlockNodes(parsed.body)
+    if (content.length > 0) {
+      return { type: 'doc', schemaVersion: 'tiptap-v1', content }
+    }
+  }
   const text = htmlToPlainText(html) || fallbackText.trim()
   return {
     type: 'doc',
+    schemaVersion: 'tiptap-v1',
     content: text
       ? [
           {
@@ -1102,4 +1275,147 @@ export function articleBodyDocumentFromHTML(html: string, fallbackText: string) 
         ]
       : []
   }
+}
+
+type StructuredNode = {
+  type: string
+  text?: string
+  attrs?: Record<string, unknown>
+  marks?: Array<{ type: string, attrs?: Record<string, unknown> }>
+  content?: StructuredNode[]
+}
+
+function structuredBlockNodes(parent: ParentNode): StructuredNode[] {
+  const nodes: StructuredNode[] = []
+  for (const child of parent.childNodes) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      const text = child.textContent?.trim()
+      if (text) nodes.push({ type: 'paragraph', content: [{ type: 'text', text }] })
+      continue
+    }
+    if (!(child instanceof HTMLElement)) continue
+    const tag = child.tagName.toLowerCase()
+    if (tag === 'script' || tag === 'style' || tag === 'template') continue
+    if (tag === 'p') {
+      nodes.push({ type: 'paragraph', content: structuredInlineNodes(child) })
+    } else if (/^h[2-4]$/.test(tag)) {
+      const text = child.textContent?.trim() || ''
+      nodes.push({
+        type: 'heading',
+        attrs: { level: Number(tag.slice(1)), id: child.id || structuredHeadingID(text) },
+        content: structuredInlineNodes(child)
+      })
+    } else if (tag === 'ul' || tag === 'ol') {
+      nodes.push(structuredListNode(child))
+    } else if (tag === 'blockquote') {
+      nodes.push({ type: 'blockquote', content: structuredBlockNodes(child) })
+    } else if (tag === 'pre') {
+      const code = child.querySelector('code')
+      const languageClass = [...(code?.classList || [])].find(value => value.startsWith('language-'))
+      nodes.push({
+        type: 'codeBlock',
+        attrs: languageClass ? { language: languageClass.slice('language-'.length) } : {},
+        content: [{ type: 'text', text: code?.textContent || child.textContent || '' }]
+      })
+    } else if (tag === 'hr') {
+      nodes.push({ type: 'horizontalRule' })
+    } else if (tag === 'img') {
+      nodes.push(structuredImageNode(child as HTMLImageElement))
+    } else if (tag === 'figure') {
+      nodes.push({ type: 'figure', content: structuredFigureNodes(child) })
+    } else if (tag === 'table') {
+      nodes.push({ type: 'table', content: structuredTableRows(child) })
+    } else {
+      nodes.push(...structuredBlockNodes(child))
+    }
+  }
+  return nodes.filter(node => node.type !== 'paragraph' || Boolean(node.content?.length))
+}
+
+function structuredInlineNodes(parent: ParentNode, marks: StructuredNode['marks'] = []): StructuredNode[] {
+  const nodes: StructuredNode[] = []
+  for (const child of parent.childNodes) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      if (child.textContent) nodes.push({ type: 'text', text: child.textContent, ...(marks.length ? { marks } : {}) })
+      continue
+    }
+    if (!(child instanceof HTMLElement)) continue
+    const tag = child.tagName.toLowerCase()
+    if (tag === 'br') {
+      nodes.push({ type: 'hardBreak' })
+      continue
+    }
+    if (tag === 'img') {
+      nodes.push(structuredImageNode(child as HTMLImageElement))
+      continue
+    }
+    const nextMarks = [...marks]
+    if (tag === 'strong' || tag === 'b') nextMarks.push({ type: 'bold' })
+    if (tag === 'em' || tag === 'i') nextMarks.push({ type: 'italic' })
+    if (tag === 's' || tag === 'del') nextMarks.push({ type: 'strike' })
+    if (tag === 'code') nextMarks.push({ type: 'code' })
+    if (tag === 'a') nextMarks.push({ type: 'link', attrs: { href: child.getAttribute('href') || '', title: child.getAttribute('title') || '' } })
+    nodes.push(...structuredInlineNodes(child, nextMarks))
+  }
+  return nodes
+}
+
+function structuredListItem(item: HTMLElement): StructuredNode[] {
+  const nestedLists = [...item.children].filter(child => ['ul', 'ol'].includes(child.tagName.toLowerCase()))
+  const inlineContainer = item.cloneNode(true) as HTMLElement
+  for (const nested of [...inlineContainer.querySelectorAll(':scope > ul, :scope > ol')]) nested.remove()
+  const content: StructuredNode[] = [{ type: 'paragraph', content: structuredInlineNodes(inlineContainer) }]
+  for (const list of nestedLists) content.push(structuredListNode(list as HTMLElement))
+  return content
+}
+
+function structuredListNode(list: HTMLElement): StructuredNode {
+  const tag = list.tagName.toLowerCase()
+  return {
+    type: tag === 'ul' ? 'bulletList' : 'orderedList',
+    content: [...list.children]
+      .filter(item => item.tagName.toLowerCase() === 'li')
+      .map(item => ({ type: 'listItem', content: structuredListItem(item as HTMLElement) }))
+  }
+}
+
+function structuredImageNode(image: HTMLImageElement): StructuredNode {
+  return {
+    type: 'image',
+    attrs: {
+      src: image.getAttribute('src') || '',
+      alt: image.getAttribute('alt') || '',
+      decorative: image.dataset.decorative === 'true',
+      ...(image.width ? { width: image.width } : {}),
+      ...(image.height ? { height: image.height } : {})
+    }
+  }
+}
+
+function structuredFigureNodes(figure: HTMLElement): StructuredNode[] {
+  const content: StructuredNode[] = []
+  const image = figure.querySelector(':scope > img')
+  if (image) content.push(structuredImageNode(image as HTMLImageElement))
+  const caption = figure.querySelector(':scope > figcaption')
+  if (caption) content.push({ type: 'figcaption', content: structuredInlineNodes(caption) })
+  return content
+}
+
+function structuredTableRows(table: HTMLElement): StructuredNode[] {
+  return [...table.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr, :scope > tr')].map(row => ({
+    type: 'tableRow',
+    content: [...row.children].filter(cell => ['th', 'td'].includes(cell.tagName.toLowerCase())).map(cell => ({
+      type: cell.tagName.toLowerCase() === 'th' ? 'tableHeader' : 'tableCell',
+      attrs: {
+        colspan: Number(cell.getAttribute('colspan') || 1),
+        rowspan: Number(cell.getAttribute('rowspan') || 1),
+        ...(cell.getAttribute('scope') ? { scope: cell.getAttribute('scope') } : {})
+      },
+      content: [{ type: 'paragraph', content: structuredInlineNodes(cell) }]
+    }))
+  }))
+}
+
+function structuredHeadingID(value: string) {
+  return value.toLowerCase().trim().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 96) || 'section'
 }

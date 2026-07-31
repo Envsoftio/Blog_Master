@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"seoblog/apps/backend/internal/store"
 )
@@ -50,7 +50,7 @@ func (s *Server) registerContentRoutes() {
 	content.Get("/changes", requireContentScope("discovery:read"), s.changes)
 }
 
-func (s *Server) requirePreviewToken(c *fiber.Ctx) error {
+func (s *Server) requirePreviewToken(c fiber.Ctx) error {
 	auth := c.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
 		return problem(c, fiber.StatusUnauthorized, "Missing preview token", "Use Authorization: Bearer <preview-token>")
@@ -59,7 +59,7 @@ func (s *Server) requirePreviewToken(c *fiber.Ctx) error {
 	if secret == "" {
 		return problem(c, fiber.StatusUnauthorized, "Missing preview token", "The bearer token is empty")
 	}
-	token, err := s.store.FindPreviewToken(c.UserContext(), secret, c.Params("revisionID"))
+	token, err := s.store.FindPreviewToken(c.Context(), secret, c.Params("revisionID"))
 	if err != nil {
 		s.logger.Warn("preview token rejected", "error", err)
 		return problem(c, fiber.StatusUnauthorized, "Invalid preview token", "The preview token is invalid, expired or revoked")
@@ -69,13 +69,13 @@ func (s *Server) requirePreviewToken(c *fiber.Ctx) error {
 }
 
 func previewTokenRateLimiter() fiber.Handler {
-	return newContentRateLimiter(300, func(c *fiber.Ctx) string {
+	return newContentRateLimiter(300, func(c fiber.Ctx) string {
 		preview, _ := previewContext(c)
 		return "preview-token:" + preview.ID
 	})
 }
 
-func previewContext(c *fiber.Ctx) (store.PreviewTokenContext, bool) {
+func previewContext(c fiber.Ctx) (store.PreviewTokenContext, bool) {
 	value := c.Locals(previewContextKey)
 	if value == nil {
 		return store.PreviewTokenContext{}, false
@@ -84,12 +84,12 @@ func previewContext(c *fiber.Ctx) (store.PreviewTokenContext, bool) {
 	return ctx, ok
 }
 
-func (s *Server) getPreviewRevision(c *fiber.Ctx) error {
+func (s *Server) getPreviewRevision(c fiber.Ctx) error {
 	preview, ok := previewContext(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing preview context", "")
 	}
-	post, err := s.store.GetPreviewPost(c.UserContext(), preview.ProjectID, preview.ArticleID, preview.RevisionID)
+	post, err := s.store.GetPreviewPost(c.Context(), preview.ProjectID, preview.ArticleID, preview.RevisionID)
 	if err != nil {
 		return s.publishedReadError(c, err, "Preview not found", "Could not load preview")
 	}
@@ -101,12 +101,12 @@ func (s *Server) getPreviewRevision(c *fiber.Ctx) error {
 	})
 }
 
-func (s *Server) listPublishedPosts(c *fiber.Ctx) error {
+func (s *Server) listPublishedPosts(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	locale := c.Query("locale")
 	category := c.Query("category")
@@ -161,12 +161,12 @@ func (s *Server) listPublishedPosts(c *fiber.Ctx) error {
 	return writePublishedJSON(c, response)
 }
 
-func (s *Server) getPublishedPostBySlug(c *fiber.Ctx) error {
+func (s *Server) getPublishedPostBySlug(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	slug := c.Params("slug")
 	locale := c.Query("locale", "en")
@@ -185,12 +185,12 @@ func (s *Server) getPublishedPostBySlug(c *fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, cached.Envelope)
 }
 
-func (s *Server) headPublishedPostBySlug(c *fiber.Ctx) error {
+func (s *Server) headPublishedPostBySlug(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	generation := s.projectGeneration(ctx, projectID)
 	cached, err := s.cachedPublishedPostBySlug(ctx, projectID, generation, c.Params("slug"), c.Query("locale", "en"))
@@ -207,12 +207,12 @@ func (s *Server) headPublishedPostBySlug(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusOK)
 }
 
-func (s *Server) getPublishedPostByID(c *fiber.Ctx) error {
+func (s *Server) getPublishedPostByID(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	contentID := c.Params("contentID")
 	locale := c.Query("locale", "en")
@@ -267,7 +267,7 @@ func (s *Server) cachedPublishedPostByID(ctx context.Context, projectID string, 
 	})
 }
 
-func (s *Server) publishedReadError(c *fiber.Ctx, err error, notFoundTitle, internalTitle string) error {
+func (s *Server) publishedReadError(c fiber.Ctx, err error, notFoundTitle, internalTitle string) error {
 	if err == sql.ErrNoRows {
 		return problem(c, fiber.StatusNotFound, notFoundTitle, "")
 	}
@@ -275,12 +275,12 @@ func (s *Server) publishedReadError(c *fiber.Ctx, err error, notFoundTitle, inte
 	return problem(c, fiber.StatusInternalServerError, internalTitle, "")
 }
 
-func (s *Server) getRelatedPosts(c *fiber.Ctx) error {
+func (s *Server) getRelatedPosts(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	slug := c.Params("slug")
 	locale := c.Query("locale", "en")
@@ -303,17 +303,17 @@ func (s *Server) getRelatedPosts(c *fiber.Ctx) error {
 	return writePublishedJSON(c, response)
 }
 
-func (s *Server) listCategories(c *fiber.Ctx) error { return s.listTerms(c, "category") }
-func (s *Server) getCategory(c *fiber.Ctx) error    { return s.getTerm(c, "category") }
-func (s *Server) listTags(c *fiber.Ctx) error       { return s.listTerms(c, "tag") }
-func (s *Server) getTag(c *fiber.Ctx) error         { return s.getTerm(c, "tag") }
+func (s *Server) listCategories(c fiber.Ctx) error { return s.listTerms(c, "category") }
+func (s *Server) getCategory(c fiber.Ctx) error    { return s.getTerm(c, "category") }
+func (s *Server) listTags(c fiber.Ctx) error       { return s.listTerms(c, "tag") }
+func (s *Server) getTag(c fiber.Ctx) error         { return s.getTerm(c, "tag") }
 
-func (s *Server) listTerms(c *fiber.Ctx, termType string) error {
+func (s *Server) listTerms(c fiber.Ctx, termType string) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	cursor := c.Query("cursor")
 	limit := boundedLimit(c.Query("limit", "50"), 100)
@@ -342,12 +342,12 @@ func (s *Server) listTerms(c *fiber.Ctx, termType string) error {
 	return writePublishedJSON(c, response)
 }
 
-func (s *Server) getTerm(c *fiber.Ctx, termType string) error {
+func (s *Server) getTerm(c fiber.Ctx, termType string) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	slug := c.Params("slug")
 	generation := s.projectGeneration(ctx, projectID)
@@ -368,7 +368,7 @@ func (s *Server) getTerm(c *fiber.Ctx, termType string) error {
 			if prefix != "" {
 				redirect, redirectErr := s.store.GetRedirect(ctx, projectID, prefix+slug)
 				if redirectErr == nil && strings.HasPrefix(redirect.TargetPath, prefix) {
-					return c.Redirect("/content/v1"+redirect.TargetPath, fiber.StatusMovedPermanently)
+					return c.Redirect().Status(fiber.StatusMovedPermanently).To("/content/v1" + redirect.TargetPath)
 				}
 				if redirectErr != nil && redirectErr != sql.ErrNoRows {
 					return problem(c, fiber.StatusInternalServerError, "Could not load taxonomy redirect", "")
@@ -392,12 +392,12 @@ func taxonomyRoutePrefix(termType string) string {
 	}
 }
 
-func (s *Server) listAuthors(c *fiber.Ctx) error {
+func (s *Server) listAuthors(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	cursor := c.Query("cursor")
 	limit := boundedLimit(c.Query("limit", "50"), 100)
@@ -426,12 +426,12 @@ func (s *Server) listAuthors(c *fiber.Ctx) error {
 	return writePublishedJSON(c, response)
 }
 
-func (s *Server) getAuthor(c *fiber.Ctx) error {
+func (s *Server) getAuthor(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	slug := c.Params("slug")
 	generation := s.projectGeneration(ctx, projectID)
@@ -455,12 +455,12 @@ func (s *Server) getAuthor(c *fiber.Ctx) error {
 	return writePublishedJSON(c, response)
 }
 
-func (s *Server) listSeries(c *fiber.Ctx) error {
+func (s *Server) listSeries(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	cursor := c.Query("cursor")
 	limit := boundedLimit(c.Query("limit", "50"), 100)
@@ -489,12 +489,12 @@ func (s *Server) listSeries(c *fiber.Ctx) error {
 	return writePublishedJSON(c, response)
 }
 
-func (s *Server) getSeries(c *fiber.Ctx) error {
+func (s *Server) getSeries(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	slug := c.Params("slug")
 	generation := s.projectGeneration(ctx, projectID)
@@ -518,17 +518,17 @@ func (s *Server) getSeries(c *fiber.Ctx) error {
 	return writePublishedJSON(c, response)
 }
 
-func (s *Server) feedData(c *fiber.Ctx) error {
+func (s *Server) feedData(c fiber.Ctx) error {
 	c.Request().URI().QueryArgs().Set("limit", c.Query("limit", "50"))
 	return s.listPublishedPosts(c)
 }
 
-func (s *Server) discoveryManifest(c *fiber.Ctx) error {
+func (s *Server) discoveryManifest(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	locale := c.Query("locale")
 	generation := s.projectGeneration(ctx, projectID)
@@ -549,12 +549,12 @@ func (s *Server) discoveryManifest(c *fiber.Ctx) error {
 	return writePublishedJSON(c, response)
 }
 
-func (s *Server) redirects(c *fiber.Ctx) error {
+func (s *Server) redirects(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
 	}
-	ctx := c.UserContext()
+	ctx := c.Context()
 	projectID := project.ProjectID
 	cursor := c.Query("cursor")
 	limit := boundedLimit(c.Query("limit", "100"), 250)
@@ -583,7 +583,7 @@ func (s *Server) redirects(c *fiber.Ctx) error {
 	return writePublishedJSON(c, response)
 }
 
-func (s *Server) changes(c *fiber.Ctx) error {
+func (s *Server) changes(c fiber.Ctx) error {
 	project, ok := contentProject(c)
 	if !ok {
 		return problem(c, fiber.StatusUnauthorized, "Missing project context", "")
@@ -593,7 +593,7 @@ func (s *Server) changes(c *fiber.Ctx) error {
 		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
 	}
 	limit := boundedLimit(c.Query("limit", "100"), 250)
-	items, err := s.store.ListChanges(c.UserContext(), project.ProjectID, cursor, limit+1)
+	items, err := s.store.ListChanges(c.Context(), project.ProjectID, cursor, limit+1)
 	if err != nil {
 		return problem(c, fiber.StatusInternalServerError, "Could not list changes", "")
 	}
@@ -620,7 +620,7 @@ func boundedLimit(raw string, max int) int {
 	return limit
 }
 
-func setPublishedValidators(c *fiber.Ctx, post store.PublishedPost) bool {
+func setPublishedValidators(c fiber.Ctx, post store.PublishedPost) bool {
 	etag := quotedETag(post.ContentHash)
 	if etag != "" {
 		c.Set(fiber.HeaderETag, etag)
@@ -645,7 +645,7 @@ func setPublishedValidators(c *fiber.Ctx, post store.PublishedPost) bool {
 	return false
 }
 
-func writePublishedJSON(c *fiber.Ctx, value any) error {
+func writePublishedJSON(c fiber.Ctx, value any) error {
 	c.Set(fiber.HeaderCacheControl, "private, max-age=60, stale-while-revalidate=300, stale-if-error=86400")
 	return writeJSON(c, fiber.StatusOK, value)
 }

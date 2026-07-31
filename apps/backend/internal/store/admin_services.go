@@ -133,24 +133,25 @@ var allowedMediaUploads = map[string]mediaUploadPolicy{
 }
 
 type AdminAIJob struct {
-	ID                    string `json:"id"`
-	ProjectID             string `json:"projectId"`
-	ContentID             string `json:"contentId,omitempty"`
-	RevisionID            string `json:"revisionId,omitempty"`
-	Type                  string `json:"type"`
-	ArticleType           string `json:"articleType,omitempty"`
-	Status                string `json:"status"`
-	PromptTemplateVersion string `json:"promptTemplateVersion,omitempty"`
-	VoiceProfileID        string `json:"voiceProfileId,omitempty"`
-	VoiceProfileVersion   int64  `json:"voiceProfileVersion,omitempty"`
-	EvidencePacketID      string `json:"evidencePacketId,omitempty"`
-	EvidencePacketVersion int64  `json:"evidencePacketVersion,omitempty"`
-	InputHash             string `json:"inputHash,omitempty"`
-	SourceRevisionHash    string `json:"sourceRevisionHash,omitempty"`
-	CreatedAt             string `json:"createdAt"`
-	UpdatedAt             string `json:"updatedAt"`
-	Error                 string `json:"error,omitempty"`
-	Reused                bool   `json:"reused,omitempty"`
+	ID                    string          `json:"id"`
+	ProjectID             string          `json:"projectId"`
+	ContentID             string          `json:"contentId,omitempty"`
+	RevisionID            string          `json:"revisionId,omitempty"`
+	Type                  string          `json:"type"`
+	ArticleType           string          `json:"articleType,omitempty"`
+	Status                string          `json:"status"`
+	PromptTemplateVersion string          `json:"promptTemplateVersion,omitempty"`
+	VoiceProfileID        string          `json:"voiceProfileId,omitempty"`
+	VoiceProfileVersion   int64           `json:"voiceProfileVersion,omitempty"`
+	EvidencePacketID      string          `json:"evidencePacketId,omitempty"`
+	EvidencePacketVersion int64           `json:"evidencePacketVersion,omitempty"`
+	InputHash             string          `json:"inputHash,omitempty"`
+	SourceRevisionHash    string          `json:"sourceRevisionHash,omitempty"`
+	CreatedAt             string          `json:"createdAt"`
+	UpdatedAt             string          `json:"updatedAt"`
+	Result                json.RawMessage `json:"result,omitempty"`
+	Error                 string          `json:"error,omitempty"`
+	Reused                bool            `json:"reused,omitempty"`
 }
 
 type AIJobBrief struct {

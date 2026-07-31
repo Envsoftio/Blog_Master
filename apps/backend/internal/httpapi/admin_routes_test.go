@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gofiber/fiber/v3"
+
 	"seoblog/apps/backend/internal/config"
 	"seoblog/apps/backend/internal/mailer"
 	"seoblog/apps/backend/internal/platform/database"
@@ -914,7 +916,7 @@ func TestConcurrentOwnerRemovalRetainsOneOwner(t *testing.T) {
 		wait.Add(1)
 		go func(request *http.Request) {
 			defer wait.Done()
-			response, err := server.app.Test(request, 15_000)
+			response, err := server.app.Test(request, fiber.TestConfig{Timeout: 15 * time.Second})
 			if err != nil {
 				statuses <- 0
 				return
@@ -3119,6 +3121,69 @@ func TestArticleRevisionHistoryAndDetailAreProjectScoped(t *testing.T) {
 	}
 }
 
+func TestArticleSEOInputIsRevisionedAndControlsPublishedRobots(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "seo-input-owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"seo-input","name":"SEO Input","primaryDomain":"seo.example.test"}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"guides","name":"Guides"}`)
+	article := createTestArticle(t, server, login, project.ID, `{
+		"articleType":"guide",
+		"title":"Editorial title",
+		"slug":"seo-fields",
+		"primaryCategoryId":"`+category.ID+`",
+		"excerpt":"Editorial excerpt",
+		"bodyDocument":{"type":"doc","content":[]},
+		"html":"<p>SEO body</p>",
+		"seo":{
+			"title":"Search title",
+			"description":"Search description",
+			"robots":"noindex,nofollow",
+			"openGraphTitle":"Social title",
+			"openGraphDescription":"Social description",
+			"openGraphImage":"https://cdn.example.test/social.png"
+		}
+	}`)
+	detail, err := server.store.GetRevisionDetailForUser(context.Background(), login.userID, project.ID, article.ID, article.LatestRevision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seo, ok := detail.SEOSnapshot.(map[string]any)
+	if !ok || seo["title"] != "Search title" || seo["robots"] != "noindex,nofollow" {
+		t.Fatalf("unexpected revision SEO snapshot: %#v", detail.SEOSnapshot)
+	}
+	openGraph, ok := seo["openGraph"].(map[string]any)
+	if !ok || openGraph["title"] != "Social title" || openGraph["image"] != "https://cdn.example.test/social.png" {
+		t.Fatalf("unexpected Open Graph snapshot: %#v", seo["openGraph"])
+	}
+	updated := createTestRevision(t, server, login, project.ID, article.ID, `{
+		"title":"Updated editorial title",
+		"bodyDocument":{"type":"doc","content":[]},
+		"html":"<p>Updated SEO body</p>"
+	}`)
+	updatedDetail, err := server.store.GetRevisionDetailForUser(context.Background(), login.userID, project.ID, article.ID, updated.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedSEO, ok := updatedDetail.SEOSnapshot.(map[string]any)
+	if !ok || updatedSEO["title"] != "Search title" || updatedSEO["robots"] != "noindex,nofollow" {
+		t.Fatalf("an omitted SEO object must preserve the base revision snapshot: %#v", updatedDetail.SEOSnapshot)
+	}
+
+	approveTestRevision(t, server, login, project.ID, updated.ID)
+	publishTestArticle(t, server, login, project.ID, article.ID, updated.ID, "seo-fields")
+	var robots string
+	if err := db.QueryRow(`
+		SELECT robots_directive
+		FROM project_publications
+		WHERE project_id = ? AND content_id = ?
+	`, project.ID, article.ID).Scan(&robots); err != nil {
+		t.Fatal(err)
+	}
+	if robots != "noindex,nofollow" {
+		t.Fatalf("expected published robots directive from the revision, got %q", robots)
+	}
+}
+
 func TestCreateRevisionRejectsMissingAndStaleBase(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
@@ -4796,7 +4861,7 @@ func adminLogin(t *testing.T, server *Server, email, password string) adminLogin
 
 func mustTest(t *testing.T, server *Server, request *http.Request) *http.Response {
 	t.Helper()
-	response, err := server.app.Test(request, 15_000)
+	response, err := server.app.Test(request, fiber.TestConfig{Timeout: 15 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

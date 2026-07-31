@@ -8,9 +8,9 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humafiber"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/gofiber/fiber/v2/middleware/requestid"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/recover"
+	"github.com/gofiber/fiber/v3/middleware/requestid"
 
 	"seoblog/apps/backend/internal/config"
 	"seoblog/apps/backend/internal/mailer"
@@ -51,24 +51,23 @@ type mediaStorage interface {
 
 func New(opts Options) *Server {
 	fiberConfig := fiber.Config{
-		AppName:               "seoblog-api",
-		BodyLimit:             2 * 1024 * 1024,
-		ReadTimeout:           10 * time.Second,
-		WriteTimeout:          30 * time.Second,
-		IdleTimeout:           60 * time.Second,
-		DisableStartupMessage: true,
+		AppName:      "seoblog-api",
+		BodyLimit:    2 * 1024 * 1024,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 	if len(opts.Config.TrustedProxies) > 0 {
 		fiberConfig.ProxyHeader = fiber.HeaderXForwardedFor
 		fiberConfig.EnableIPValidation = true
-		fiberConfig.EnableTrustedProxyCheck = true
-		fiberConfig.TrustedProxies = opts.Config.TrustedProxies
+		fiberConfig.TrustProxy = true
+		fiberConfig.TrustProxyConfig = fiber.TrustProxyConfig{Proxies: opts.Config.TrustedProxies}
 	}
 	app := fiber.New(fiberConfig)
 	app.Use(requestid.New())
-	app.Use(func(c *fiber.Ctx) error {
-		requestID, _ := c.Locals("requestid").(string)
-		c.SetUserContext(store.WithRequestID(c.UserContext(), requestID))
+	app.Use(func(c fiber.Ctx) error {
+		requestID := requestid.FromContext(c)
+		c.SetContext(store.WithRequestID(c.Context(), requestID))
 		return c.Next()
 	})
 	app.Use(recover.New(recover.Config{EnableStackTrace: false}))
@@ -117,7 +116,7 @@ func New(opts Options) *Server {
 }
 
 func (s *Server) Listen(addr string) error {
-	return s.app.Listen(addr)
+	return s.app.Listen(addr, fiber.ListenConfig{DisableStartupMessage: true})
 }
 
 type healthOutput struct {
@@ -142,8 +141,8 @@ func (s *Server) registerRoutes() {
 		}}, nil
 	})
 
-	s.app.Get("/readyz", func(c *fiber.Ctx) error {
-		if err := s.store.Ping(c.UserContext()); err != nil {
+	s.app.Get("/readyz", func(c fiber.Ctx) error {
+		if err := s.store.Ping(c.Context()); err != nil {
 			return problem(c, fiber.StatusServiceUnavailable, "Database unavailable", "SQLite did not respond")
 		}
 		return writeJSON(c, fiber.StatusOK, HealthResponse{Status: "ok", Service: "seoblog-api", Version: "0.1.0"})

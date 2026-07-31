@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -70,5 +71,43 @@ func TestCanonicalURLsEqual(t *testing.T) {
 		if canonicalURLsEqual(candidate, "https://source.example.test/") {
 			t.Fatalf("expected canonical URL %q to be rejected or differ", candidate)
 		}
+	}
+}
+
+func TestSEOSnapshotNormalizationValidationAndCopy(t *testing.T) {
+	input := normalizeSEOInput(SEOInput{
+		Robots:           " NoIndex, NoFollow ",
+		OpenGraphImage:   "/media/social-card.png",
+		OpenGraphSummary: "Social summary",
+	}, "Fallback title", "Fallback description")
+	if err := validateSEOInput(input); err != nil {
+		t.Fatal(err)
+	}
+	if input.Title != "Fallback title" || input.Description != "Fallback description" {
+		t.Fatalf("expected editorial fallbacks, got %#v", input)
+	}
+	if input.Robots != "noindex,nofollow" || input.OpenGraphTitle != "Fallback title" {
+		t.Fatalf("unexpected normalized SEO input: %#v", input)
+	}
+
+	raw, err := seoSnapshotJSON(input, "https://source.example.test/blog/post")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied, err := copySEOSnapshotJSON(raw, "Other title", "Other description", "https://destination.example.test/blog/post")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot map[string]any
+	if err := json.Unmarshal([]byte(copied), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot["canonicalUrl"] != "https://destination.example.test/blog/post" || snapshot["robots"] != "noindex,nofollow" {
+		t.Fatalf("copy did not preserve SEO while replacing canonical URL: %#v", snapshot)
+	}
+
+	input.OpenGraphImage = "javascript:alert(1)"
+	if !errors.Is(validateSEOInput(input), ErrValidation) {
+		t.Fatal("expected an unsafe Open Graph image URL to be rejected")
 	}
 }

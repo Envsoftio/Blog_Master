@@ -86,7 +86,14 @@ module.exports = {
         SEOBLOG_SMTP_FROM: process.env.SEOBLOG_SMTP_FROM || '',
         SEOBLOG_SMTP_FROM_NAME: process.env.SEOBLOG_SMTP_FROM_NAME || '',
         SEOBLOG_WEBHOOK_ENCRYPTION_KEY: process.env.SEOBLOG_WEBHOOK_ENCRYPTION_KEY || '',
-        SEOBLOG_WEBHOOK_ALLOWED_HOSTS: process.env.SEOBLOG_WEBHOOK_ALLOWED_HOSTS || ''
+        SEOBLOG_WEBHOOK_ALLOWED_HOSTS: process.env.SEOBLOG_WEBHOOK_ALLOWED_HOSTS || '',
+        SEOBLOG_AI_PROVIDER: process.env.SEOBLOG_AI_PROVIDER || 'openai-compatible',
+        SEOBLOG_AI_BASE_URL: process.env.SEOBLOG_AI_BASE_URL || '',
+        SEOBLOG_AI_API_KEY: process.env.SEOBLOG_AI_API_KEY || '',
+        SEOBLOG_AI_MODEL: process.env.SEOBLOG_AI_MODEL || '',
+        SEOBLOG_AI_TIMEOUT: process.env.SEOBLOG_AI_TIMEOUT || '90s',
+        SEOBLOG_AI_MAX_INPUT_BYTES: process.env.SEOBLOG_AI_MAX_INPUT_BYTES || '262144',
+        SEOBLOG_AI_MAX_OUTPUT_TOKENS: process.env.SEOBLOG_AI_MAX_OUTPUT_TOKENS || '4096'
       }
     }
   ]

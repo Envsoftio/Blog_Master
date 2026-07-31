@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -33,6 +34,13 @@ type Config struct {
 	B2MediaPublicBaseURL  string
 	B2MediaPresignTTL     time.Duration
 	B2MediaSSE            string
+	AIProvider            string
+	AIBaseURL             string
+	AIAPIKey              string
+	AIModel               string
+	AITimeout             time.Duration
+	AIMaxInputBytes       int
+	AIMaxOutputTokens     int
 }
 
 func Load() Config {
@@ -63,6 +71,13 @@ func Load() Config {
 		B2MediaPublicBaseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("SEOBLOG_B2_MEDIA_PUBLIC_BASE_URL")), "/"),
 		B2MediaPresignTTL:     envDuration("SEOBLOG_B2_MEDIA_PRESIGN_TTL", 15*time.Minute),
 		B2MediaSSE:            strings.TrimSpace(os.Getenv("SEOBLOG_B2_MEDIA_SSE")),
+		AIProvider:            env("SEOBLOG_AI_PROVIDER", "openai-compatible"),
+		AIBaseURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("SEOBLOG_AI_BASE_URL")), "/"),
+		AIAPIKey:              os.Getenv("SEOBLOG_AI_API_KEY"),
+		AIModel:               strings.TrimSpace(os.Getenv("SEOBLOG_AI_MODEL")),
+		AITimeout:             envBoundedDuration("SEOBLOG_AI_TIMEOUT", 90*time.Second, 10*time.Second, 10*time.Minute),
+		AIMaxInputBytes:       envPositiveInt("SEOBLOG_AI_MAX_INPUT_BYTES", 256*1024),
+		AIMaxOutputTokens:     envPositiveInt("SEOBLOG_AI_MAX_OUTPUT_TOKENS", 4096),
 	}
 }
 
@@ -71,6 +86,10 @@ func (c Config) B2MediaEnabled() bool {
 		c.B2MediaBucket != "" &&
 		c.B2MediaKeyID != "" &&
 		c.B2MediaApplicationKey != ""
+}
+
+func (c Config) AIEnabled() bool {
+	return c.AIBaseURL != "" && c.AIAPIKey != "" && c.AIModel != ""
 }
 
 func env(key, fallback string) string {
@@ -105,6 +124,26 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return duration
+}
+
+func envBoundedDuration(key string, fallback, minimum, maximum time.Duration) time.Duration {
+	duration := envDuration(key, fallback)
+	if duration < minimum || duration > maximum {
+		return fallback
+	}
+	return duration
+}
+
+func envPositiveInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 func webhookEncryptionKey(raw string) []byte {

@@ -167,6 +167,14 @@
               </div>
             </article>
 
+            <ArticleTrustPanel
+              v-if="article.latestRevision"
+              :project-id="projectID"
+              :article-id="articleID"
+              :revision-id="article.latestRevision.id"
+              :role="project?.role || ''"
+            />
+
             <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -557,11 +565,33 @@
             <form class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="createRevision">
               <div class="flex items-start gap-3">
                 <FilePenLine class="mt-1 h-4 w-4 text-[#3162a3]" />
-                <div>
+                <div class="min-w-0 flex-1">
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Draft</p>
                   <h2 class="mt-1 text-lg font-semibold tracking-normal">New revision</h2>
+                  <p v-if="draftSavedAt" class="mt-1 text-xs text-[#667169] dark:text-[#aeb8b0]">
+                    {{ draftSaveState === 'saving' ? 'Saving locally…' : `Saved locally ${formatDate(draftSavedAt)}` }}
+                  </p>
                 </div>
               </div>
+
+              <div
+                v-if="staleDraft"
+                class="rounded-md border border-[#e1bd70] bg-[#fff8e7] p-3 text-sm text-[#6b4905] dark:border-[#665223] dark:bg-[#2b2415] dark:text-[#f5d992]"
+              >
+                <p class="font-medium">A local draft was saved against an older revision.</p>
+                <p class="mt-1 text-xs">The server has changed since {{ formatDate(staleDraft.savedAt) }}. Restore it for manual reconciliation, or discard it.</p>
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <button class="rounded-md border border-current px-3 py-1.5 text-xs font-medium" type="button" @click="restoreStaleDraft">Restore local draft</button>
+                  <button class="rounded-md px-3 py-1.5 text-xs font-medium underline" type="button" @click="discardLocalDraft">Discard</button>
+                </div>
+              </div>
+
+              <p
+                v-else-if="draftSaveState === 'restored'"
+                class="rounded-md border border-[#b9d5c8] bg-[#eef8f3] px-3 py-2 text-xs text-[#165a4a] dark:border-[#315648] dark:bg-[#14251f] dark:text-[#aee4d0]"
+              >
+                Your locally saved draft was restored after the latest server revision was checked.
+              </p>
 
               <label class="block space-y-2">
                 <span class="text-sm font-medium">Title</span>
@@ -586,6 +616,38 @@
                 <span class="text-sm font-medium">Short answer</span>
                 <textarea v-model.trim="revisionForm.shortAnswer" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
               </label>
+              <fieldset class="grid gap-3 rounded-md border border-[#d7ded8] p-3 dark:border-[#3f4843] sm:grid-cols-2">
+                <legend class="px-2 text-sm font-medium">SEO and social preview</legend>
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">SEO title</span>
+                  <input v-model.trim="revisionForm.seoTitle" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Defaults to revision title" />
+                </label>
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">Robots</span>
+                  <select v-model="revisionForm.robots" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]">
+                    <option value="index,follow">Index, follow</option>
+                    <option value="index,nofollow">Index, nofollow</option>
+                    <option value="noindex,follow">Noindex, follow</option>
+                    <option value="noindex,nofollow">Noindex, nofollow</option>
+                  </select>
+                </label>
+                <label class="block space-y-2 sm:col-span-2">
+                  <span class="text-sm font-medium">Meta description</span>
+                  <textarea v-model.trim="revisionForm.seoDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Defaults to excerpt" />
+                </label>
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">Open Graph title</span>
+                  <input v-model.trim="revisionForm.openGraphTitle" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                </label>
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">Open Graph image URL</span>
+                  <input v-model.trim="revisionForm.openGraphImage" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="https://…" />
+                </label>
+                <label class="block space-y-2 sm:col-span-2">
+                  <span class="text-sm font-medium">Open Graph description</span>
+                  <textarea v-model.trim="revisionForm.openGraphDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                </label>
+              </fieldset>
               <label class="block space-y-2">
                 <span class="text-sm font-medium">HTML</span>
                 <textarea v-model.trim="revisionForm.html" class="min-h-40 w-full rounded-md border border-[#bfcac3] px-3 py-2 font-mono text-sm dark:border-[#4b5650] dark:bg-[#171b18]" />
@@ -906,6 +968,30 @@ type ComparisonDiffLine = {
   text: string
 }
 
+type ArticleDraftFields = {
+  title: string
+  primaryCategoryId: string
+  deck: string
+  excerpt: string
+  shortAnswer: string
+  seoTitle: string
+  seoDescription: string
+  robots: string
+  openGraphTitle: string
+  openGraphDescription: string
+  openGraphImage: string
+  html: string
+}
+
+type ArticleDraftSnapshot = {
+  schemaVersion: 1
+  projectId: string
+  articleId: string
+  baseRevisionId: string
+  savedAt: string
+  fields: ArticleDraftFields
+}
+
 type AdminArticle = {
   id: string
   projectId: string
@@ -1013,10 +1099,19 @@ const nextRevisionCursor = ref('')
 const actionPending = ref('')
 const errorMessage = ref('')
 const successMessage = ref('')
+const draftSaveState = ref<'idle' | 'saving' | 'saved' | 'restored'>('idle')
+const draftSavedAt = ref('')
+const staleDraft = ref<ArticleDraftSnapshot | null>(null)
+const baseDraftHTML = ref('')
+const baseDraftDocument = ref<unknown>({ type: 'doc', content: [] })
+const baseDraftRevisionID = ref('')
 const commentPending = reactive<Record<string, string>>({})
 const assignmentPending = reactive<Record<string, string>>({})
 let comparisonRequestVersion = 0
 let copyCategoryRequestVersion = 0
+let draftPersistenceEnabled = false
+let draftDirty = false
+let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
 
 const revisionForm = reactive({
   title: '',
@@ -1024,6 +1119,12 @@ const revisionForm = reactive({
   deck: '',
   excerpt: '',
   shortAnswer: '',
+  seoTitle: '',
+  seoDescription: '',
+  robots: 'index,follow',
+  openGraphTitle: '',
+  openGraphDescription: '',
+  openGraphImage: '',
   html: ''
 })
 
@@ -1166,7 +1267,27 @@ watch(
   }
 )
 
-onMounted(refresh)
+watch(
+  () => ({ ...revisionForm }),
+  () => {
+    if (!draftPersistenceEnabled || !import.meta.client) return
+    draftDirty = true
+    draftSaveState.value = 'saving'
+    if (draftSaveTimer) clearTimeout(draftSaveTimer)
+    draftSaveTimer = setTimeout(persistLocalDraft, 750)
+  },
+  { deep: true }
+)
+
+onMounted(async () => {
+  await refresh()
+  restoreLocalDraft()
+})
+
+onBeforeUnmount(() => {
+  if (draftSaveTimer) clearTimeout(draftSaveTimer)
+  if (draftDirty) persistLocalDraft()
+})
 
 async function refresh() {
   pending.value = true
@@ -1205,6 +1326,9 @@ async function refresh() {
     comments.value = apiListData(commentResponse)
     nextCommentCursor.value = commentResponse.meta?.nextCursor || ''
     setRevisions(apiListData(revisionResponse), revisionResponse.meta?.nextCursor || '')
+    if (articleResponse.data.latestRevision?.id) {
+      handleLatestRevisionDetail(await fetchRevisionDetail(articleResponse.data.latestRevision.id))
+    }
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load article. Sign in again if your session has expired.')
   } finally {
@@ -1283,18 +1407,30 @@ async function createRevision() {
         deck: revisionForm.deck,
         excerpt: revisionForm.excerpt,
         shortAnswer: revisionForm.shortAnswer,
-        bodyDocument: articleBodyDocumentFromHTML(html, revisionForm.title),
-        html
+        bodyDocument: html === baseDraftHTML.value
+          ? baseDraftDocument.value
+          : articleBodyDocumentFromHTML(html, revisionForm.title),
+        html,
+        seo: {
+          title: revisionForm.seoTitle,
+          description: revisionForm.seoDescription,
+          robots: revisionForm.robots,
+          openGraphTitle: revisionForm.openGraphTitle,
+          openGraphDescription: revisionForm.openGraphDescription,
+          openGraphImage: revisionForm.openGraphImage
+        }
       }
     })
-    revisionForm.title = ''
-    revisionForm.primaryCategoryId = ''
-    revisionForm.deck = ''
-    revisionForm.excerpt = ''
-    revisionForm.shortAnswer = ''
-    revisionForm.html = ''
+    draftPersistenceEnabled = false
+    removeLocalDraft()
     successMessage.value = `Revision #${response.data.revisionNumber} created.`
     await fetchArticle()
+    setRevisionDraftFromDetail(await fetchRevisionDetail(response.data.id))
+    await nextTick()
+    draftDirty = false
+    draftSaveState.value = 'idle'
+    draftSavedAt.value = ''
+    draftPersistenceEnabled = true
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not create revision.')
   } finally {
@@ -1782,6 +1918,76 @@ function setRevisions(values: AdminRevisionSummary[], nextCursor: string) {
   }
 }
 
+function setRevisionDraftFromDetail(revision: AdminRevisionDetail) {
+  const seo = seoFieldsFromSnapshot(revision.seoSnapshot)
+  revisionForm.title = revision.title
+  revisionForm.primaryCategoryId = primaryCategoryIDFromSnapshot(revision.taxonomySnapshot)
+  revisionForm.deck = revision.deck || ''
+  revisionForm.excerpt = revision.excerpt || ''
+  revisionForm.shortAnswer = revision.shortAnswer || ''
+  revisionForm.seoTitle = seo.title
+  revisionForm.seoDescription = seo.description
+  revisionForm.robots = seo.robots
+  revisionForm.openGraphTitle = seo.openGraphTitle
+  revisionForm.openGraphDescription = seo.openGraphDescription
+  revisionForm.openGraphImage = seo.openGraphImage
+  revisionForm.html = revision.sanitizedHtml || `<p>${escapeHTML(revision.title)}</p>`
+  baseDraftHTML.value = revisionForm.html
+  baseDraftDocument.value = revision.bodyDocument
+  baseDraftRevisionID.value = revision.id
+}
+
+function handleLatestRevisionDetail(revision: AdminRevisionDetail) {
+  if (!draftPersistenceEnabled || !baseDraftRevisionID.value) {
+    setRevisionDraftFromDetail(revision)
+    return
+  }
+  if (revision.id === baseDraftRevisionID.value) return
+
+  if (draftDirty) persistLocalDraft()
+  const localDraft = readLocalDraft()
+  draftPersistenceEnabled = false
+  setRevisionDraftFromDetail(revision)
+  draftDirty = false
+  draftSaveState.value = 'idle'
+  draftSavedAt.value = ''
+  staleDraft.value = localDraft?.baseRevisionId !== revision.id ? localDraft : null
+  if (staleDraft.value) draftSavedAt.value = staleDraft.value.savedAt
+  nextTick(() => {
+    draftPersistenceEnabled = true
+  })
+}
+
+function seoFieldsFromSnapshot(snapshot: unknown) {
+  const fallback = {
+    title: '',
+    description: '',
+    robots: 'index,follow',
+    openGraphTitle: '',
+    openGraphDescription: '',
+    openGraphImage: ''
+  }
+  if (!snapshot || typeof snapshot !== 'object') return fallback
+  const seo = snapshot as Record<string, unknown>
+  const openGraph = seo.openGraph && typeof seo.openGraph === 'object'
+    ? seo.openGraph as Record<string, unknown>
+    : {}
+  return {
+    title: typeof seo.title === 'string' ? seo.title : '',
+    description: typeof seo.description === 'string' ? seo.description : '',
+    robots: typeof seo.robots === 'string' ? seo.robots : 'index,follow',
+    openGraphTitle: typeof openGraph.title === 'string' ? openGraph.title : '',
+    openGraphDescription: typeof openGraph.description === 'string' ? openGraph.description : '',
+    openGraphImage: typeof openGraph.image === 'string' ? openGraph.image : ''
+  }
+}
+
+function primaryCategoryIDFromSnapshot(snapshot: unknown) {
+  if (!snapshot || typeof snapshot !== 'object') return ''
+  const taxonomy = snapshot as { primaryCategory?: { id?: unknown } }
+  return typeof taxonomy.primaryCategory?.id === 'string' ? taxonomy.primaryCategory.id : ''
+}
+
 function publicationBody(revisionId: string) {
   return {
     revisionId,
@@ -1793,6 +1999,115 @@ function publicationBody(revisionId: string) {
 
 function latestRevisionID() {
   return article.value?.latestRevision?.id || ''
+}
+
+function localDraftKey() {
+  return `seoblog:article-draft:${projectID.value}:${articleID.value}`
+}
+
+function persistLocalDraft() {
+  if (!import.meta.client || !draftPersistenceEnabled || !draftDirty) return
+  if (draftSaveTimer) {
+    clearTimeout(draftSaveTimer)
+    draftSaveTimer = undefined
+  }
+  const savedAt = new Date().toISOString()
+  const snapshot: ArticleDraftSnapshot = {
+    schemaVersion: 1,
+    projectId: projectID.value,
+    articleId: articleID.value,
+    baseRevisionId: baseDraftRevisionID.value || latestRevisionID(),
+    savedAt,
+    fields: { ...revisionForm }
+  }
+  try {
+    localStorage.setItem(localDraftKey(), JSON.stringify(snapshot))
+    draftDirty = false
+    draftSavedAt.value = savedAt
+    draftSaveState.value = 'saved'
+  } catch {
+    draftSaveState.value = 'idle'
+    errorMessage.value = 'This browser could not save the revision draft locally.'
+  }
+}
+
+function restoreLocalDraft() {
+  if (!import.meta.client) return
+  const snapshot = readLocalDraft()
+  if (!snapshot) {
+    draftPersistenceEnabled = true
+    return
+  }
+  if (snapshot.baseRevisionId !== latestRevisionID()) {
+    staleDraft.value = snapshot
+    draftSavedAt.value = snapshot.savedAt
+    return
+  }
+  applyLocalDraft(snapshot)
+  draftSaveState.value = 'restored'
+}
+
+function restoreStaleDraft() {
+  if (!staleDraft.value) return
+  const snapshot = staleDraft.value
+  staleDraft.value = null
+  applyLocalDraft(snapshot)
+  draftDirty = true
+}
+
+function discardLocalDraft() {
+  staleDraft.value = null
+  draftSavedAt.value = ''
+  draftSaveState.value = 'idle'
+  draftDirty = false
+  removeLocalDraft()
+  draftPersistenceEnabled = true
+}
+
+function applyLocalDraft(snapshot: ArticleDraftSnapshot) {
+  draftPersistenceEnabled = false
+  Object.assign(revisionForm, snapshot.fields)
+  draftSavedAt.value = snapshot.savedAt
+  nextTick(() => {
+    draftPersistenceEnabled = true
+  })
+}
+
+function readLocalDraft(): ArticleDraftSnapshot | null {
+  try {
+    const raw = localStorage.getItem(localDraftKey())
+    if (!raw) return null
+    const value = JSON.parse(raw) as Partial<ArticleDraftSnapshot>
+    if (
+      value.schemaVersion !== 1
+      || value.projectId !== projectID.value
+      || value.articleId !== articleID.value
+      || typeof value.baseRevisionId !== 'string'
+      || typeof value.savedAt !== 'string'
+      || !isArticleDraftFields(value.fields)
+    ) {
+      removeLocalDraft()
+      return null
+    }
+    return value as ArticleDraftSnapshot
+  } catch {
+    removeLocalDraft()
+    return null
+  }
+}
+
+function isArticleDraftFields(value: unknown): value is ArticleDraftFields {
+  if (!value || typeof value !== 'object') return false
+  const fields = value as Record<string, unknown>
+  return [
+    'title', 'primaryCategoryId', 'deck', 'excerpt', 'shortAnswer', 'seoTitle', 'seoDescription',
+    'robots', 'openGraphTitle', 'openGraphDescription', 'openGraphImage', 'html'
+  ]
+    .every(key => typeof fields[key] === 'string')
+}
+
+function removeLocalDraft() {
+  if (import.meta.client) localStorage.removeItem(localDraftKey())
 }
 
 function isCurrentPublication(revision: AdminRevisionSummary) {

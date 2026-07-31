@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"seoblog/apps/backend/internal/store"
 )
@@ -200,7 +200,7 @@ func jitterTTL(key string, ttl time.Duration) time.Duration {
 	return ttl + jitter
 }
 
-func normalizedContentQuery(c *fiber.Ctx) string {
+func normalizedContentQuery(c fiber.Ctx) string {
 	values, err := url.ParseQuery(string(c.Request().URI().QueryString()))
 	if err != nil {
 		return string(c.Request().URI().QueryString())

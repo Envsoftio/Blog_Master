@@ -70,6 +70,13 @@ SEOBLOG_SMTP_REQUIRE_STARTTLS=true
 SEOBLOG_SMTP_FROM=noreply@proctorplus.io
 SEOBLOG_SMTP_FROM_NAME='Example Team'
 SEOBLOG_WEBHOOK_ENCRYPTION_KEY=xqhcQ/knhyV37B0W4qeA73cLHgFyMwPojXHnW0xVv/Y=
+SEOBLOG_AI_PROVIDER=openai-compatible
+SEOBLOG_AI_BASE_URL=https://provider.example.com/v1
+SEOBLOG_AI_API_KEY=
+SEOBLOG_AI_MODEL=
+SEOBLOG_AI_TIMEOUT=90s
+SEOBLOG_AI_MAX_INPUT_BYTES=262144
+SEOBLOG_AI_MAX_OUTPUT_TOKENS=4096
 SEOBLOG_DEPLOY_BACKUP_COMMAND=
 SEOBLOG_DEPLOY_BACKUP_VERIFY_COMMAND=
 SEOBLOG_DEPLOY_REQUIRE_BACKUP=false
@@ -83,6 +90,8 @@ SEOBLOG_RELEASE_ROOT=/srv/seoblog/current
 ```
 
 Set the public admin URL and ZeptoMail API-key password before enabling invitation or password-recovery email. Generate `SEOBLOG_WEBHOOK_ENCRYPTION_KEY` as 32 random bytes encoded with standard Base64 and provide the same value to the API and worker. Staging must also set `SEOBLOG_WEBHOOK_ALLOWED_HOSTS` to its non-production receiver hosts; an empty staging allowlist blocks all delivery. Production SMTP requires STARTTLS and the API never returns reset tokens in an API response. The signing and receiver contract is documented in [webhooks.md](webhooks.md).
+
+AI execution is disabled unless the base URL, API key, and model are all set. The worker calls an OpenAI-compatible chat-completions endpoint, enforces input/output bounds, and persists generated JSON as a review-only proposal with its run provenance. Use HTTPS for remote providers; plain HTTP is accepted only for a loopback development endpoint.
 
 ## Release safety
 

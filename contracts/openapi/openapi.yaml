@@ -541,6 +541,8 @@ components:
           type: string
         primaryCategoryId:
           type: string
+        seo:
+          $ref: "#/components/schemas/SeoRequest"
         shortAnswer:
           type: string
         title:
@@ -565,6 +567,29 @@ components:
           type: string
       required:
         - revisionId
+      type: object
+    SeoRequest:
+      additionalProperties: false
+      properties:
+        description:
+          type: string
+        openGraphDescription:
+          type: string
+        openGraphImage:
+          type: string
+        openGraphTitle:
+          type: string
+        robots:
+          type: string
+        title:
+          type: string
+      required:
+        - title
+        - description
+        - robots
+        - openGraphTitle
+        - openGraphDescription
+        - openGraphImage
       type: object
   securitySchemes:
     adminSession:
@@ -612,6 +637,24 @@ paths:
         "500":
           description: Internal server error
       summary: GET /
+      tags:
+        - Operations
+    head:
+      operationId: head
+      responses:
+        "200":
+          description: Successful response without a body
+        "400":
+          description: Invalid request
+        "401":
+          description: Authentication required
+        "403":
+          description: Insufficient permission
+        "404":
+          description: Resource not found
+        "500":
+          description: Internal server error
+      summary: HEAD /
       tags:
         - Operations
     options:
@@ -711,7 +754,7 @@ paths:
       operationId: head_api_v1_auth_csrf
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -829,7 +872,7 @@ paths:
       operationId: head_api_v1_auth_me
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -947,7 +990,7 @@ paths:
       operationId: head_api_v1_projects
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1024,7 +1067,7 @@ paths:
       operationId: head_api_v1_projects_projectid
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1082,7 +1125,7 @@ paths:
       operationId: head_api_v1_projects_projectid_ai_jobs
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1140,7 +1183,7 @@ paths:
       operationId: head_api_v1_projects_projectid_ai_jobs_jobid
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1199,7 +1242,7 @@ paths:
       operationId: head_api_v1_projects_projectid_ai_jobs_jobid_events
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1238,7 +1281,7 @@ paths:
       operationId: head_api_v1_projects_projectid_ai_runs
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1277,7 +1320,7 @@ paths:
       operationId: head_api_v1_projects_projectid_api_keys
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1395,7 +1438,7 @@ paths:
       operationId: head_api_v1_projects_projectid_articles
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1472,7 +1515,7 @@ paths:
       operationId: head_api_v1_projects_projectid_articles_articleid
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1511,7 +1554,7 @@ paths:
       operationId: head_api_v1_projects_projectid_articles_articleid_assignments
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1569,7 +1612,7 @@ paths:
       operationId: head_api_v1_projects_projectid_articles_articleid_comments
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1705,7 +1748,7 @@ paths:
       operationId: head_api_v1_projects_projectid_articles_articleid_corrections
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -1763,7 +1806,7 @@ paths:
       operationId: head_api_v1_projects_projectid_articles_articleid_disclosures
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -2290,7 +2333,7 @@ paths:
       operationId: head_api_v1_projects_projectid_audit_events
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -2329,7 +2372,7 @@ paths:
       operationId: head_api_v1_projects_projectid_authors
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -2406,7 +2449,7 @@ paths:
       operationId: head_api_v1_projects_projectid_authors_authorid
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -2464,7 +2507,7 @@ paths:
       operationId: head_api_v1_projects_projectid_categories
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -2602,7 +2645,7 @@ paths:
       operationId: head_api_v1_projects_projectid_deletion_impact
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -2641,7 +2684,7 @@ paths:
       operationId: head_api_v1_projects_projectid_delivery_status
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -2680,7 +2723,7 @@ paths:
       operationId: head_api_v1_projects_projectid_evidence_packets
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -2778,7 +2821,7 @@ paths:
       operationId: head_api_v1_projects_projectid_media
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -2856,7 +2899,7 @@ paths:
       operationId: head_api_v1_projects_projectid_media_assetid
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -2934,7 +2977,7 @@ paths:
       operationId: head_api_v1_projects_projectid_media_assetid_file
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -2973,7 +3016,7 @@ paths:
       operationId: head_api_v1_projects_projectid_members
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3131,7 +3174,7 @@ paths:
       operationId: head_api_v1_projects_projectid_quality_checks
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3170,7 +3213,7 @@ paths:
       operationId: head_api_v1_projects_projectid_review_assignees
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3229,7 +3272,7 @@ paths:
       operationId: head_api_v1_projects_projectid_revisions_revisionid_claims
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3327,7 +3370,7 @@ paths:
       operationId: head_api_v1_projects_projectid_series
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3385,7 +3428,7 @@ paths:
       operationId: head_api_v1_projects_projectid_sources
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3483,7 +3526,7 @@ paths:
       operationId: head_api_v1_projects_projectid_tags
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3541,7 +3584,7 @@ paths:
       operationId: head_api_v1_projects_projectid_voice_profile
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3599,7 +3642,7 @@ paths:
       operationId: head_api_v1_projects_projectid_webhook_attempts
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3658,7 +3701,7 @@ paths:
       operationId: head_api_v1_projects_projectid_webhooks
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3752,7 +3795,7 @@ paths:
       operationId: head_content_v1
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3861,7 +3904,7 @@ paths:
       operationId: head_content_v1_authors
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3898,7 +3941,7 @@ paths:
       operationId: head_content_v1_authors_slug
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3935,7 +3978,7 @@ paths:
       operationId: head_content_v1_categories
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -3972,7 +4015,7 @@ paths:
       operationId: head_content_v1_categories_slug
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4009,7 +4052,7 @@ paths:
       operationId: head_content_v1_changes
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4046,7 +4089,7 @@ paths:
       operationId: head_content_v1_discovery_manifest
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4083,7 +4126,7 @@ paths:
       operationId: head_content_v1_feed_data
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4120,7 +4163,7 @@ paths:
       operationId: head_content_v1_posts
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4157,7 +4200,7 @@ paths:
       operationId: head_content_v1_posts_by_id_contentid
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4194,7 +4237,7 @@ paths:
       operationId: head_content_v1_posts_slug
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4231,7 +4274,7 @@ paths:
       operationId: head_content_v1_posts_slug_related
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4286,7 +4329,7 @@ paths:
       operationId: head_content_v1_preview
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4395,7 +4438,7 @@ paths:
       operationId: head_content_v1_preview_revisions_revisionid
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4432,7 +4475,7 @@ paths:
       operationId: head_content_v1_redirects
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4469,7 +4512,7 @@ paths:
       operationId: head_content_v1_series
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4506,7 +4549,7 @@ paths:
       operationId: head_content_v1_series_slug
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4543,7 +4586,7 @@ paths:
       operationId: head_content_v1_tags
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4580,7 +4623,7 @@ paths:
       operationId: head_content_v1_tags_slug
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
@@ -4634,7 +4677,7 @@ paths:
       operationId: head_readyz
       responses:
         "200":
-          description: Successful response
+          description: Successful response without a body
         "400":
           description: Invalid request
         "401":
