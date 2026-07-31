@@ -668,10 +668,11 @@
                   <textarea v-model.trim="revisionForm.openGraphDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
                 </label>
               </fieldset>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">HTML</span>
-                <textarea v-model.trim="revisionForm.html" class="min-h-40 w-full rounded-md border border-[#bfcac3] px-3 py-2 font-mono text-sm dark:border-[#4b5650] dark:bg-[#171b18]" />
-              </label>
+              <ArticleStructuredEditor
+                v-model:html="revisionForm.html"
+                v-model:body-document="revisionBodyDocument"
+                label="Revision body"
+              />
 
               <button
                 class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
@@ -906,7 +907,7 @@ import {
   XCircle
 } from 'lucide-vue-next'
 import type { AdminAuthor, RevisionContributorInput } from '~/composables/useAdminApi'
-import { articleBodyDocumentFromHTML, hasValidRevisionContributors } from '~/composables/useAdminApi'
+import { articleBodyDocumentFromHTML, hasValidRevisionContributors, htmlToPlainText } from '~/composables/useAdminApi'
 
 type APIEnvelope<T> = {
   data: T
@@ -1004,10 +1005,11 @@ type ArticleDraftFields = {
   openGraphDescription: string
   openGraphImage: string
   html: string
+  bodyDocument: unknown
 }
 
 type ArticleDraftSnapshot = {
-  schemaVersion: 2
+  schemaVersion: 3
   projectId: string
   articleId: string
   baseRevisionId: string
@@ -1021,7 +1023,7 @@ type ArticleAutosave = {
   userId: string
   baseRevisionId: string
   version: number
-  draft: ArticleDraftFields & { bodyDocument?: unknown }
+  draft: Omit<ArticleDraftFields, 'bodyDocument'> & { bodyDocument?: unknown }
   stale: boolean
   createdAt: string
   updatedAt: string
@@ -1031,7 +1033,6 @@ type ArticleDraftRecovery = {
   snapshot: ArticleDraftSnapshot
   source: 'browser' | 'server'
   reason: 'stale-base' | 'version-conflict'
-  bodyDocument?: unknown
 }
 
 type AdminArticle = {
@@ -1152,8 +1153,7 @@ const serverAutosaveVersion = ref(0)
 const loadedServerAutosave = ref<ArticleAutosave | null>(null)
 const staleDraft = ref<ArticleDraftRecovery | null>(null)
 const reloadingServerDraft = ref(false)
-const baseDraftHTML = ref('')
-const baseDraftDocument = ref<unknown>({ type: 'doc', content: [] })
+const revisionBodyDocument = ref<unknown>({ type: 'doc', schemaVersion: 'tiptap-v1', content: [] })
 const baseDraftRevisionID = ref('')
 const attributionEdited = ref(false)
 const commentPending = reactive<Record<string, string>>({})
@@ -1360,7 +1360,7 @@ watch(
 )
 
 watch(
-  () => ({ ...revisionForm }),
+  () => ({ ...revisionForm, bodyDocument: revisionBodyDocument.value }),
   () => {
     if (!draftPersistenceEnabled || !import.meta.client) return
     draftDirty = true
@@ -1512,7 +1512,7 @@ async function createRevision() {
   }
   try {
     const csrfToken = await getCSRFToken()
-    const html = revisionForm.html.trim() || `<p>${escapeHTML(revisionForm.title)}</p>`
+    const html = effectiveDraftHTML()
     const response = await $fetch<APIEnvelope<AdminRevision>>(`/api/v1/projects/${projectID.value}/articles/${article.value.id}/revisions`, {
       method: 'POST',
       credentials: 'include',
@@ -1525,9 +1525,7 @@ async function createRevision() {
         deck: revisionForm.deck,
         excerpt: revisionForm.excerpt,
         shortAnswer: revisionForm.shortAnswer,
-        bodyDocument: html === baseDraftHTML.value
-          ? baseDraftDocument.value
-          : articleBodyDocumentFromHTML(html, revisionForm.title),
+        bodyDocument: draftBodyDocument(),
         html,
         seo: {
           title: revisionForm.seoTitle,
@@ -2068,8 +2066,9 @@ function setRevisionDraftFromDetail(revision: AdminRevisionDetail) {
   revisionForm.openGraphDescription = seo.openGraphDescription
   revisionForm.openGraphImage = seo.openGraphImage
   revisionForm.html = revision.sanitizedHtml || `<p>${escapeHTML(revision.title)}</p>`
-  baseDraftHTML.value = revisionForm.html
-  baseDraftDocument.value = revision.bodyDocument
+  revisionBodyDocument.value = isStructuredBodyDocument(revision.bodyDocument)
+    ? revision.bodyDocument
+    : articleBodyDocumentFromHTML(revisionForm.html, revisionForm.title)
   baseDraftRevisionID.value = revision.id
 }
 
@@ -2202,13 +2201,14 @@ function draftFieldsSnapshot(): ArticleDraftFields {
   return {
     ...revisionForm,
     contributors: revisionForm.contributors.map(contributor => ({ ...contributor })),
-    attributionEdited: attributionEdited.value
+    attributionEdited: attributionEdited.value,
+    bodyDocument: draftBodyDocument()
   }
 }
 
 function draftSnapshot(savedAt = new Date().toISOString()): ArticleDraftSnapshot {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     projectId: projectID.value,
     articleId: articleID.value,
     baseRevisionId: baseDraftRevisionID.value || latestRevisionID(),
@@ -2218,14 +2218,15 @@ function draftSnapshot(savedAt = new Date().toISOString()): ArticleDraftSnapshot
 }
 
 function effectiveDraftHTML() {
-  return revisionForm.html.trim() || `<p>${escapeHTML(revisionForm.title)}</p>`
+  return hasMeaningfulStructuredHTML(revisionForm.html)
+    ? revisionForm.html.trim()
+    : `<p>${escapeHTML(revisionForm.title)}</p>`
 }
 
 function draftBodyDocument() {
-  const html = effectiveDraftHTML()
-  return html === baseDraftHTML.value
-    ? baseDraftDocument.value
-    : articleBodyDocumentFromHTML(html, revisionForm.title)
+  return hasMeaningfulStructuredHTML(revisionForm.html) && isStructuredBodyDocument(revisionBodyDocument.value)
+    ? revisionBodyDocument.value
+    : articleBodyDocumentFromHTML(effectiveDraftHTML(), revisionForm.title)
 }
 
 function persistLocalDraft() {
@@ -2285,10 +2286,7 @@ async function persistServerAutosave() {
         body: {
           baseRevisionId,
           expectedVersion: serverAutosaveVersion.value,
-          draft: {
-            ...draftFieldsSnapshot(),
-            bodyDocument: draftBodyDocument()
-          }
+          draft: draftFieldsSnapshot()
         }
       }
     )
@@ -2411,29 +2409,29 @@ async function discardLocalDraft() {
 async function applyDraftRecovery(recovery: ArticleDraftRecovery) {
   draftPersistenceEnabled = false
   const snapshot = recovery.snapshot
-  const { attributionEdited: savedAttributionEdited, ...fields } = snapshot.fields
+  const { attributionEdited: savedAttributionEdited, bodyDocument, ...fields } = snapshot.fields
   Object.assign(revisionForm, fields)
   attributionEdited.value = savedAttributionEdited
+  revisionBodyDocument.value = bodyDocument
   draftSavedAt.value = snapshot.savedAt
-  if (recovery.bodyDocument !== undefined) {
-    baseDraftHTML.value = effectiveDraftHTML()
-    baseDraftDocument.value = recovery.bodyDocument
-  }
   await nextTick()
   draftPersistenceEnabled = true
 }
 
 function articleAutosaveSnapshot(autosave: ArticleAutosave): ArticleDraftSnapshot {
-  const { bodyDocument: _bodyDocument, ...fields } = autosave.draft
+  const bodyDocument = isStructuredBodyDocument(autosave.draft.bodyDocument)
+    ? autosave.draft.bodyDocument
+    : articleBodyDocumentFromHTML(autosave.draft.html, autosave.draft.title)
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     projectId: autosave.projectId,
     articleId: autosave.articleId,
     baseRevisionId: autosave.baseRevisionId,
     savedAt: autosave.updatedAt,
     fields: {
-      ...fields,
-      contributors: fields.contributors.map(contributor => ({ ...contributor }))
+      ...autosave.draft,
+      bodyDocument,
+      contributors: autosave.draft.contributors.map(contributor => ({ ...contributor }))
     }
   }
 }
@@ -2442,8 +2440,7 @@ function articleAutosaveRecovery(autosave: ArticleAutosave): ArticleDraftRecover
   return {
     snapshot: articleAutosaveSnapshot(autosave),
     source: 'server',
-    reason: 'stale-base',
-    bodyDocument: autosave.draft.bodyDocument
+    reason: 'stale-base'
   }
 }
 
@@ -2553,7 +2550,7 @@ function readLocalDraft(): ArticleDraftSnapshot | null {
       && isLegacyArticleDraftFields(value.fields)
     ) {
       return {
-        schemaVersion: 2,
+        schemaVersion: 3,
         projectId: value.projectId,
         articleId: value.articleId,
         baseRevisionId: value.baseRevisionId,
@@ -2561,12 +2558,33 @@ function readLocalDraft(): ArticleDraftSnapshot | null {
         fields: {
           ...value.fields,
           contributors: revisionForm.contributors.map(contributor => ({ ...contributor })),
-          attributionEdited: false
+          attributionEdited: false,
+          bodyDocument: articleBodyDocumentFromHTML(value.fields.html, value.fields.title)
         }
       }
     }
     if (
-      value.schemaVersion !== 2
+      value.schemaVersion === 2
+      && value.projectId === projectID.value
+      && value.articleId === articleID.value
+      && typeof value.baseRevisionId === 'string'
+      && typeof value.savedAt === 'string'
+      && isArticleDraftFieldsV2(value.fields)
+    ) {
+      return {
+        schemaVersion: 3,
+        projectId: value.projectId,
+        articleId: value.articleId,
+        baseRevisionId: value.baseRevisionId,
+        savedAt: value.savedAt,
+        fields: {
+          ...value.fields,
+          bodyDocument: articleBodyDocumentFromHTML(value.fields.html, value.fields.title)
+        }
+      }
+    }
+    if (
+      value.schemaVersion !== 3
       || value.projectId !== projectID.value
       || value.articleId !== articleID.value
       || typeof value.baseRevisionId !== 'string'
@@ -2583,7 +2601,7 @@ function readLocalDraft(): ArticleDraftSnapshot | null {
   }
 }
 
-function isLegacyArticleDraftFields(value: unknown): value is Omit<ArticleDraftFields, 'contributors' | 'attributionEdited'> {
+function isLegacyArticleDraftFields(value: unknown): value is Omit<ArticleDraftFields, 'contributors' | 'attributionEdited' | 'bodyDocument'> {
   if (!value || typeof value !== 'object') return false
   const fields = value as Record<string, unknown>
   return [
@@ -2593,6 +2611,11 @@ function isLegacyArticleDraftFields(value: unknown): value is Omit<ArticleDraftF
 }
 
 function isArticleDraftFields(value: unknown): value is ArticleDraftFields {
+  return isArticleDraftFieldsV2(value)
+    && isStructuredBodyDocument((value as Record<string, unknown>).bodyDocument)
+}
+
+function isArticleDraftFieldsV2(value: unknown): value is Omit<ArticleDraftFields, 'bodyDocument'> {
   if (!value || typeof value !== 'object') return false
   const fields = value as Record<string, unknown>
   const stringsAreValid = [
@@ -2603,6 +2626,16 @@ function isArticleDraftFields(value: unknown): value is ArticleDraftFields {
   return stringsAreValid
     && typeof fields.attributionEdited === 'boolean'
     && isContributorDraftValue(fields.contributors)
+}
+
+function isStructuredBodyDocument(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object'
+    && (value as Record<string, unknown>).type === 'doc'
+    && Array.isArray((value as Record<string, unknown>).content))
+}
+
+function hasMeaningfulStructuredHTML(value: string) {
+  return Boolean(htmlToPlainText(value) || /<(?:img|hr|table)\b/i.test(value))
 }
 
 function isContributorDraftValue(value: unknown): value is RevisionContributorInput[] {

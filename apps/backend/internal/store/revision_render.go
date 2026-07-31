@@ -33,7 +33,7 @@ var safeHTMLIDPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,127}$`)
 
 var allowedRevisionElements = map[string]struct{}{
 	"p": {}, "h2": {}, "h3": {}, "h4": {},
-	"ul": {}, "ol": {}, "li": {}, "strong": {}, "em": {}, "s": {},
+	"ul": {}, "ol": {}, "li": {}, "strong": {}, "em": {}, "u": {}, "s": {},
 	"blockquote": {}, "pre": {}, "code": {}, "a": {}, "br": {}, "hr": {},
 	"figure": {}, "figcaption": {}, "img": {}, "table": {}, "thead": {},
 	"tbody": {}, "tfoot": {}, "tr": {}, "th": {}, "td": {}, "sup": {}, "sub": {},

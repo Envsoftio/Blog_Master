@@ -151,3 +151,69 @@ func TestRenderRevisionBodyAllowsExplicitDecorativeImage(t *testing.T) {
 		t.Fatalf("unsafe image attribute survived: %s", rendered.HTML)
 	}
 }
+
+func TestRenderRevisionBodyAcceptsStructuredEditorOutput(t *testing.T) {
+	document := map[string]any{
+		"type":          "doc",
+		"schemaVersion": "tiptap-v1",
+		"content": []any{
+			map[string]any{
+				"type":    "heading",
+				"attrs":   map[string]any{"level": 2, "id": "editor-heading"},
+				"content": []any{map[string]any{"type": "text", "text": "Editor heading"}},
+			},
+			map[string]any{
+				"type": "paragraph",
+				"content": []any{
+					map[string]any{"type": "text", "text": "Structured ", "marks": []any{map[string]any{"type": "bold"}}},
+					map[string]any{
+						"type": "text",
+						"text": "link",
+						"marks": []any{map[string]any{
+							"type":  "link",
+							"attrs": map[string]any{"href": "https://example.test/reference"},
+						}},
+					},
+				},
+			},
+			map[string]any{
+				"type": "table",
+				"content": []any{map[string]any{
+					"type": "tableRow",
+					"content": []any{map[string]any{
+						"type": "tableHeader",
+						"content": []any{map[string]any{
+							"type":    "paragraph",
+							"content": []any{map[string]any{"type": "text", "text": "Column"}},
+						}},
+					}},
+				}},
+			},
+		},
+	}
+	rendered, err := renderRevisionBody(
+		document,
+		`<h2 id="editor-heading">Editor heading</h2><p><strong>Structured </strong><u>content</u> with <a href="https://example.test/reference">link</a>.</p><table><tbody><tr><th>Column</th></tr><tr><td>Value</td></tr></tbody></table><img src="/media/chart.png" alt="Quarterly chart">`,
+		"Fallback",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`<h2 id="editor-heading">Editor heading</h2>`,
+		`<u>content</u>`,
+		`href="https://example.test/reference" rel="noopener noreferrer"`,
+		`<table>`,
+		`src="/media/chart.png" alt="Quarterly chart" loading="lazy"`,
+	} {
+		if !strings.Contains(rendered.HTML, expected) {
+			t.Fatalf("structured editor HTML is missing %q: %s", expected, rendered.HTML)
+		}
+	}
+	if !strings.Contains(rendered.DocumentJSON, `"schemaVersion":"tiptap-v1"`) {
+		t.Fatalf("structured document schema version was not retained: %s", rendered.DocumentJSON)
+	}
+	if !strings.Contains(rendered.Markdown, "## Editor heading") || !strings.Contains(rendered.Markdown, "**Structured **") {
+		t.Fatalf("unexpected editor Markdown export: %q", rendered.Markdown)
+	}
+}

@@ -1498,8 +1498,11 @@ function structuredInlineNodes(parent: ParentNode, marks: StructuredNode['marks'
     const nextMarks = [...marks]
     if (tag === 'strong' || tag === 'b') nextMarks.push({ type: 'bold' })
     if (tag === 'em' || tag === 'i') nextMarks.push({ type: 'italic' })
+    if (tag === 'u') nextMarks.push({ type: 'underline' })
     if (tag === 's' || tag === 'del') nextMarks.push({ type: 'strike' })
     if (tag === 'code') nextMarks.push({ type: 'code' })
+    if (tag === 'sup') nextMarks.push({ type: 'superscript' })
+    if (tag === 'sub') nextMarks.push({ type: 'subscript' })
     if (tag === 'a') nextMarks.push({ type: 'link', attrs: { href: child.getAttribute('href') || '', title: child.getAttribute('title') || '' } })
     nodes.push(...structuredInlineNodes(child, nextMarks))
   }

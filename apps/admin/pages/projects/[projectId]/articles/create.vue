@@ -152,11 +152,11 @@
               </div>
             </fieldset>
 
-            <label class="field">
-              <span>Article HTML</span>
-              <textarea v-model.trim="articleForm.html" class="article-html" placeholder="Write or paste the opening HTML revision…" />
-              <small>When left blank, the draft starts with a paragraph containing the article title.</small>
-            </label>
+            <ArticleStructuredEditor
+              v-model:html="articleForm.html"
+              v-model:body-document="createBodyDocument"
+              label="Opening article body"
+            />
           </div>
         </section>
 
@@ -291,6 +291,7 @@ const slugTouched = ref(false)
 const categorySlugTouched = ref(false)
 const draftSavedAt = ref('')
 const draftSaving = ref(false)
+const createBodyDocument = ref<unknown>({ type: 'doc', schemaVersion: 'tiptap-v1', content: [] })
 let draftPersistenceEnabled = false
 let draftDirty = false
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
@@ -336,7 +337,12 @@ const canCreateArticle = computed(() => Boolean(
   && hasValidRevisionContributors(articleForm.contributors)
 ))
 const canCreateCategory = computed(() => canManageTaxonomy.value && Boolean(categoryForm.name.trim() && categoryForm.slug.trim()))
-const htmlForSubmission = computed(() => articleForm.html.trim() || `<p>${escapeHTML(articleForm.title || 'Untitled draft')}</p>`)
+const htmlForSubmission = computed(() => hasMeaningfulStructuredHTML(articleForm.html)
+  ? articleForm.html.trim()
+  : `<p>${escapeHTML(articleForm.title || 'Untitled draft')}</p>`)
+const bodyDocumentForSubmission = computed(() => hasMeaningfulStructuredHTML(articleForm.html) && isStructuredBodyDocument(createBodyDocument.value)
+  ? createBodyDocument.value
+  : articleBodyDocumentFromHTML(htmlForSubmission.value, articleForm.title))
 const plainText = computed(() => htmlToPlainText(htmlForSubmission.value))
 const wordCount = computed(() => plainText.value ? plainText.value.split(/\s+/).length : 0)
 const selectedCategory = computed(() => categories.value.find(category => category.id === articleForm.primaryCategoryId) || null)
@@ -364,7 +370,7 @@ watch(() => categoryForm.name, (value) => {
 })
 
 watch(
-  () => ({ ...articleForm, slugTouched: slugTouched.value }),
+  () => ({ ...articleForm, bodyDocument: createBodyDocument.value, slugTouched: slugTouched.value }),
   () => {
     if (!draftPersistenceEnabled || !import.meta.client) return
     draftDirty = true
@@ -459,7 +465,7 @@ async function createArticle() {
       deck: articleForm.deck,
       excerpt: articleForm.excerpt,
       shortAnswer: articleForm.shortAnswer,
-      bodyDocument: articleBodyDocumentFromHTML(htmlForSubmission.value, articleForm.title),
+      bodyDocument: bodyDocumentForSubmission.value,
       html: htmlForSubmission.value,
       seo: {
         title: articleForm.seoTitle,
@@ -503,11 +509,11 @@ function persistCreateDraft() {
   const savedAt = new Date().toISOString()
   try {
     localStorage.setItem(createDraftKey(), JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       projectId: projectID.value,
       savedAt,
       slugTouched: slugTouched.value,
-      fields: { ...articleForm }
+      fields: { ...articleForm, bodyDocument: createBodyDocument.value }
     }))
     draftDirty = false
     draftSaving.value = false
@@ -535,15 +541,19 @@ function restoreCreateDraft() {
         'seoTitle', 'seoDescription', 'robots', 'openGraphTitle', 'openGraphDescription', 'openGraphImage', 'html'
       ]
       if (
-        saved.schemaVersion === 2
+        (saved.schemaVersion === 2 || saved.schemaVersion === 3)
         && saved.projectId === projectID.value
         && typeof saved.savedAt === 'string'
         && saved.fields
         && stringKeys.every(key => typeof saved.fields?.[key] === 'string')
         && isContributorDraftValue(saved.fields.contributors)
+        && (saved.schemaVersion !== 3 || isStructuredBodyDocument(saved.fields.bodyDocument))
       ) {
         Object.assign(articleForm, Object.fromEntries(stringKeys.map(key => [key, saved.fields?.[key]])))
         articleForm.contributors = saved.fields.contributors.map(contributor => ({ ...contributor }))
+        createBodyDocument.value = saved.schemaVersion === 3
+          ? saved.fields.bodyDocument
+          : articleBodyDocumentFromHTML(articleForm.html, articleForm.title)
         slugTouched.value = saved.slugTouched === true
         draftSavedAt.value = saved.savedAt
       } else if (
@@ -558,6 +568,7 @@ function restoreCreateDraft() {
         articleForm.contributors = saved.fields.primaryAuthorId
           ? [{ authorId: saved.fields.primaryAuthorId, role: 'primary_author', position: 0 }]
           : articleForm.contributors
+        createBodyDocument.value = articleBodyDocumentFromHTML(articleForm.html, articleForm.title)
         slugTouched.value = saved.slugTouched === true
         draftSavedAt.value = saved.savedAt
       } else {
@@ -580,6 +591,16 @@ function isContributorDraftValue(value: unknown): value is RevisionContributorIn
       && typeof candidate.role === 'string'
       && typeof candidate.position === 'number'
   })
+}
+
+function isStructuredBodyDocument(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object'
+    && (value as Record<string, unknown>).type === 'doc'
+    && Array.isArray((value as Record<string, unknown>).content))
+}
+
+function hasMeaningfulStructuredHTML(value: string) {
+  return Boolean(htmlToPlainText(value) || /<(?:img|hr|table)\b/i.test(value))
 }
 
 function removeCreateDraft() {
@@ -626,8 +647,7 @@ function escapeHTML(value: string) {
 .setup-fields__title,
 .setup-fields__category { grid-column: 1 / -1; }
 .field small { color: var(--text-faint); font-size: 9px; line-height: 1.45; }
-.mono-input,
-.article-html { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.mono-input { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 .template-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; padding: 14px 16px 16px; }
 .template-option { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); font-size: 11px; font-weight: 600; text-align: left; cursor: pointer; transition: border-color 140ms ease, background 140ms ease, color 140ms ease; }
 .template-option:hover { border-color: var(--border-strong); background: var(--surface-subtle); color: var(--text); }
@@ -641,7 +661,6 @@ function escapeHTML(value: string) {
 .seo-fields legend { padding: 0 7px; color: var(--text-soft); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .seo-fields__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .seo-fields__wide { grid-column: 1 / -1; }
-.article-html { min-height: 270px !important; font-size: 12px; line-height: 1.6; }
 .create-form__actions { position: sticky; z-index: 20; bottom: 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 11px 12px; background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(14px); box-shadow: var(--shadow-md); }
 .create-form__actions > div { display: grid; min-width: 0; }
 .create-form__actions strong { font-size: 11px; }
