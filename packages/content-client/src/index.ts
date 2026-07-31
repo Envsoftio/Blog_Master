@@ -90,14 +90,24 @@ export type PublishedTaxonomy = {
   topics: TaxonomyTerm[]
 }
 
+export type JSONLDPrimitive = string | number | boolean | null
+export type JSONLDValue = JSONLDPrimitive | JSONLDObject | JSONLDValue[]
+export type JSONLDObject = { [key: string]: JSONLDValue }
+
+export type PublishedOpenGraph = {
+  title?: string
+  description?: string
+  image?: string
+}
+
 export type PublishedSEO = {
   title: string
   description?: string
   canonicalUrl: string
   robots: string
   index: boolean
-  openGraph: unknown
-  structuredData: unknown
+  openGraph: PublishedOpenGraph
+  structuredData: JSONLDObject[]
   hreflang: unknown
 }
 

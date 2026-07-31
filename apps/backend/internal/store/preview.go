@@ -169,10 +169,12 @@ func (s *Store) GetPreviewPost(ctx context.Context, projectID, articleID, revisi
 		       cr.contributor_snapshot_json, cr.source_snapshot_json, cr.claim_snapshot_json,
 		       cr.media_snapshot_json, `+publishedDisclosureJSON+`, `+publishedCorrectionsJSON+`,
 		       COALESCE(pp.canonical_url, ''), 'noindex,nofollow', cr.content_hash,
-		       '', cr.created_at, cr.created_at
+		       '', cr.created_at, cr.created_at,
+		       COALESCE(p.publisher_name, p.name), COALESCE(p.publisher_url, '')
 		FROM content_revisions cr
 		JOIN content_items ci
 		  ON ci.project_id = cr.project_id AND ci.id = cr.content_id
+		JOIN projects p ON p.id = cr.project_id
 		LEFT JOIN project_publications pp
 		  ON pp.project_id = cr.project_id
 		 AND pp.content_id = cr.content_id

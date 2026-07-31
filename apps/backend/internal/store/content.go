@@ -70,7 +70,8 @@ const publishedPostColumns = `
 	cr.media_snapshot_json, ` + publishedDisclosureJSON + `, ` + publishedCorrectionsJSON + `,
 	pp.canonical_url, pp.robots_directive, cr.content_hash,
 	COALESCE(pp.first_published_at, ''), COALESCE(pp.materially_modified_at, ''),
-	COALESCE(pp.first_published_at, pp.created_at)
+	COALESCE(pp.first_published_at, pp.created_at),
+	COALESCE(p.publisher_name, p.name), COALESCE(p.publisher_url, '')
 `
 
 func (s *Store) ListPublishedPosts(
@@ -96,6 +97,7 @@ func (s *Store) ListPublishedPosts(
 		FROM project_publications pp
 		JOIN content_items ci
 		  ON ci.project_id = pp.project_id AND ci.id = pp.content_id
+		JOIN projects p ON p.id = pp.project_id
 		JOIN content_revisions cr
 		  ON cr.project_id = pp.project_id AND cr.content_id = pp.content_id AND cr.id = pp.published_revision_id
 		WHERE pp.project_id = ?
@@ -187,6 +189,7 @@ func (s *Store) GetPublishedPostBySlug(ctx context.Context, projectID, slug, loc
 		FROM project_publications pp
 		JOIN content_items ci
 		  ON ci.project_id = pp.project_id AND ci.id = pp.content_id
+		JOIN projects p ON p.id = pp.project_id
 		JOIN content_revisions cr
 		  ON cr.project_id = pp.project_id AND cr.content_id = pp.content_id AND cr.id = pp.published_revision_id
 		WHERE pp.project_id = ?
@@ -203,6 +206,7 @@ func (s *Store) GetPublishedPostByID(ctx context.Context, projectID, contentID, 
 		FROM project_publications pp
 		JOIN content_items ci
 		  ON ci.project_id = pp.project_id AND ci.id = pp.content_id
+		JOIN projects p ON p.id = pp.project_id
 		JOIN content_revisions cr
 		  ON cr.project_id = pp.project_id AND cr.content_id = pp.content_id AND cr.id = pp.published_revision_id
 		WHERE pp.project_id = ?
@@ -229,6 +233,7 @@ func (s *Store) ListRelatedPosts(ctx context.Context, projectID, slug, locale st
 		 AND pp.locale = source.locale
 		JOIN content_items ci
 		  ON ci.project_id = pp.project_id AND ci.id = pp.content_id
+		JOIN projects p ON p.id = pp.project_id
 		JOIN content_revisions cr
 		  ON cr.project_id = pp.project_id AND cr.content_id = pp.content_id AND cr.id = pp.published_revision_id
 		WHERE rel.project_id = ?
@@ -270,6 +275,7 @@ func scanPost(row rowScanner, relationshipOrigin *string) (PublishedPost, error)
 		&sourcesJSON, &claimsJSON, &mediaJSON, &disclosuresJSON, &correctionsJSON,
 		&post.SEO.CanonicalURL, &post.SEO.Robots, &post.ContentHash,
 		&post.PublishedAt, &post.ModifiedAt, &post.PaginationKey,
+		&post.PublisherName, &post.PublisherURL,
 	}
 	if relationshipOrigin != nil {
 		dest = append(dest, relationshipOrigin)
@@ -287,7 +293,7 @@ func scanPost(row rowScanner, relationshipOrigin *string) (PublishedPost, error)
 	post.SEO.Description = stringFromMap(seo, "description", post.Excerpt)
 	post.SEO.Index = !strings.Contains(strings.ToLower(post.SEO.Robots), "noindex")
 	post.SEO.OpenGraph = mapValue(seo, "openGraph", map[string]any{})
-	post.SEO.StructuredData = mapValue(seo, "structuredData", []any{})
+	post.SEO.StructuredData = []any{}
 	post.SEO.Hreflang = mapValue(seo, "hreflang", []any{})
 
 	post.Taxonomy = PublishedTaxonomy{
@@ -305,6 +311,9 @@ func scanPost(row rowScanner, relationshipOrigin *string) (PublishedPost, error)
 	post.Media = decodeJSON(mediaJSON, map[string]any{})
 	post.Disclosures = decodeJSON(disclosuresJSON, []any{})
 	post.Corrections = decodeJSON(correctionsJSON, []any{})
+	if structuredData := publishedArticleStructuredData(post); len(structuredData) > 0 {
+		post.SEO.StructuredData = structuredData
+	}
 	return post, nil
 }
 

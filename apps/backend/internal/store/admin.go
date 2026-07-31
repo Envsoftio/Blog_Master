@@ -652,6 +652,7 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 		    publisher_url = ?,
 		    default_robots_policy = ?,
 		    solo_owner_approval_enabled = ?,
+		    content_generation = content_generation + 1,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, next.Name, nullIfEmpty(next.PrimaryDomain), verifiedDomainsJSON, next.BlogBasePath,

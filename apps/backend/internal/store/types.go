@@ -24,6 +24,8 @@ type PublishedPost struct {
 	ModifiedAt    string            `json:"modifiedAt,omitempty"`
 	ContentHash   string            `json:"-"`
 	PaginationKey string            `json:"-"`
+	PublisherName string            `json:"-"`
+	PublisherURL  string            `json:"-"`
 }
 
 type PublishedContent struct {

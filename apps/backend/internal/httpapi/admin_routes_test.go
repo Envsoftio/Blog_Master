@@ -227,6 +227,35 @@ func TestAdminProjectAccessIsMembershipScoped(t *testing.T) {
 	}
 }
 
+func TestProjectPublisherUpdateAdvancesContentGeneration(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"publisher-cache","name":"Publisher Cache"}`)
+
+	var before int64
+	if err := db.QueryRow(`SELECT content_generation FROM projects WHERE id = ?`, project.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	updateRequest := newMemberMutationRequest(
+		http.MethodPatch,
+		"/api/v1/projects/"+project.ID,
+		`{"publisherName":"Example Publishing","publisherUrl":"https://publisher.example/about"}`,
+		login,
+	)
+	updateResponse := mustTest(t, server, updateRequest)
+	if updateResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected publisher update 200, got %d: %s", updateResponse.StatusCode, readBody(t, updateResponse))
+	}
+
+	var after int64
+	if err := db.QueryRow(`SELECT content_generation FROM projects WHERE id = ?`, project.ID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before+1 {
+		t.Fatalf("expected publisher settings to advance content generation from %d to %d, got %d", before, before+1, after)
+	}
+}
+
 func TestProjectMembershipInvitationAndRoleLifecycle(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
@@ -1954,6 +1983,19 @@ func TestRevisionContributorsAreScopedOrderedAndImmutable(t *testing.T) {
 	if len(published.Data.Authors) != 2 || published.Data.Authors[0].DisplayName != "Primary Author" ||
 		len(published.Data.Contributors) != 1 || published.Data.Contributors[0].Role != "editor" {
 		t.Fatalf("expected immutable attribution in public JSON, got authors=%#v contributors=%#v", published.Data.Authors, published.Data.Contributors)
+	}
+	structuredData, ok := published.Data.SEO.StructuredData.([]any)
+	if !ok || len(structuredData) != 1 {
+		t.Fatalf("expected one generated article schema, got %#v", published.Data.SEO.StructuredData)
+	}
+	articleSchema, ok := structuredData[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected an article schema object, got %#v", structuredData[0])
+	}
+	schemaAuthors, ok := articleSchema["author"].([]any)
+	if !ok || len(schemaAuthors) != 2 || schemaAuthors[0].(map[string]any)["name"] != "Primary Author" ||
+		schemaAuthors[1].(map[string]any)["name"] != "Co Author" {
+		t.Fatalf("expected separate immutable author schema objects, got %#v", articleSchema["author"])
 	}
 
 	filteredRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts?author=primary-author", nil)
