@@ -110,6 +110,8 @@ export type TaxonomyTerm = {
   name: string
   description?: string
   parentId?: string
+  ancestors?: TaxonomyTerm[]
+  children?: TaxonomyTerm[]
   indexable: boolean
 }
 
@@ -809,8 +811,10 @@ export function useAdminApi() {
     )
   }
 
-  async function listTaxonomy(projectID: string, type: 'categories' | 'tags') {
-    return normalizeAPIListEnvelope(await request<APIListEnvelope<TaxonomyTerm>>(`/api/v1/projects/${projectID}/${type}`))
+  async function listTaxonomy(projectID: string, type: 'categories' | 'tags', cursor = '', limit = 100) {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<TaxonomyTerm>>(`/api/v1/projects/${projectID}/${type}`, {
+      query: { limit, ...(cursor ? { cursor } : {}) }
+    }))
   }
 
   async function createTaxonomy(projectID: string, type: 'categories' | 'tags', payload: TaxonomyCreatePayload) {
@@ -821,11 +825,34 @@ export function useAdminApi() {
   }
 
   async function listCategories(projectID: string) {
-    return await listTaxonomy(projectID, 'categories')
+    const categories = new Map<string, TaxonomyTerm>()
+    const seenCursors = new Set<string>()
+    let cursor = ''
+
+    do {
+      const response = await listTaxonomy(projectID, 'categories', cursor, 100)
+      for (const category of response.data) categories.set(category.id, category)
+      const nextCursor = response.meta?.nextCursor || ''
+      if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Category pagination returned a repeated cursor')
+      if (nextCursor) seenCursors.add(nextCursor)
+      cursor = nextCursor
+    } while (cursor)
+
+    return {
+      data: [...categories.values()],
+      meta: { projectId: projectID, limit: categories.size }
+    } satisfies APIListEnvelope<TaxonomyTerm>
   }
 
-  async function createCategory(projectID: string, payload: CategoryCreatePayload) {
+  async function createCategory(projectID: string, payload: TaxonomyCreatePayload) {
     return await createTaxonomy(projectID, 'categories', payload)
+  }
+
+  async function updateCategory(projectID: string, categoryID: string, payload: Partial<TaxonomyCreatePayload>) {
+    return await request<APIEnvelope<TaxonomyTerm>>(`/api/v1/projects/${projectID}/categories/${categoryID}`, await withCSRF({
+      method: 'PATCH',
+      body: payload
+    }))
   }
 
   async function listAuthors(projectID: string) {
@@ -1236,6 +1263,7 @@ export function useAdminApi() {
     createTaxonomy,
     listCategories,
     createCategory,
+    updateCategory,
     listAuthors,
     getAuthor,
     createAuthor,

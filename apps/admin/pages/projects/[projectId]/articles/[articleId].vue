@@ -601,7 +601,7 @@
                 <span class="text-sm font-medium">Primary category</span>
                 <select v-model="revisionForm.primaryCategoryId" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]">
                   <option value="">Keep current category</option>
-                  <option v-for="category in categories" :key="category.id" :value="category.id">{{ category.name }}</option>
+                  <option v-for="category in categories" :key="category.id" :value="category.id">{{ categoryPathLabel(category) }}</option>
                 </select>
               </label>
               <label class="block space-y-2">
@@ -704,7 +704,7 @@
                 >
                   <option value="">{{ loadingCopyCategories ? 'Loading categories…' : 'Select a category' }}</option>
                   <option v-for="category in copyDestinationCategories" :key="category.id" :value="category.id">
-                    {{ category.name }}
+                    {{ categoryPathLabel(category) }}
                   </option>
                 </select>
               </label>
@@ -1018,6 +1018,8 @@ type TaxonomyTerm = {
   name: string
   description?: string
   parentId?: string
+  ancestors?: TaxonomyTerm[]
+  children?: TaxonomyTerm[]
   indexable: boolean
 }
 
@@ -1305,10 +1307,7 @@ async function refresh() {
       $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
       fetchAllCopyProjects(),
       fetchAllReviewAssignees(),
-      $fetch<APIListEnvelope<TaxonomyTerm>>(`/api/v1/projects/${projectID.value}/categories`, {
-        credentials: 'include',
-        query: { limit: 100 }
-      }),
+      fetchAllCategories(projectID.value),
       $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}`, { credentials: 'include' }),
       $fetch<APIListEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/assignments`, {
         credentials: 'include',
@@ -1326,7 +1325,7 @@ async function refresh() {
     project.value = projectResponse.data
     projects.value = projectListResponse
     members.value = memberResponse
-    categories.value = sortCategories(apiListData(categoryResponse))
+    categories.value = sortCategories(categoryResponse)
     setArticle(articleResponse.data)
     assignments.value = apiListData(assignmentResponse)
     nextAssignmentCursor.value = assignmentResponse.meta?.nextCursor || ''
@@ -1483,32 +1482,9 @@ async function loadCopyDestinationCategories(destinationProjectId: string) {
   if (!destinationProjectId) return
   loadingCopyCategories.value = true
   try {
-    const allCategories = new Map<string, TaxonomyTerm>()
-    const seenCursors = new Set<string>()
-    let cursor = ''
-
-    do {
-      const response = await $fetch<APIListEnvelope<TaxonomyTerm>>(
-        `/api/v1/projects/${destinationProjectId}/categories`,
-        {
-          credentials: 'include',
-          query: {
-            limit: 100,
-            ...(cursor ? { cursor } : {})
-          }
-        }
-      )
-      if (requestVersion !== copyCategoryRequestVersion) return
-      for (const category of apiListData(response)) allCategories.set(category.id, category)
-
-      const nextCursor = response.meta?.nextCursor || ''
-      if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Category pagination returned a repeated cursor')
-      if (nextCursor) seenCursors.add(nextCursor)
-      cursor = nextCursor
-    } while (cursor)
-
+    const allCategories = await fetchAllCategories(destinationProjectId)
     if (requestVersion !== copyCategoryRequestVersion) return
-    copyDestinationCategories.value = sortCategories([...allCategories.values()])
+    copyDestinationCategories.value = sortCategories(allCategories)
     const destination = projects.value.find(candidate => candidate.id === destinationProjectId)
     copyForm.locale = destination?.defaultLocale || 'en'
   } catch (error) {
@@ -1519,6 +1495,26 @@ async function loadCopyDestinationCategories(destinationProjectId: string) {
       loadingCopyCategories.value = false
     }
   }
+}
+
+async function fetchAllCategories(targetProjectID: string) {
+  const allCategories = new Map<string, TaxonomyTerm>()
+  const seenCursors = new Set<string>()
+  let cursor = ''
+
+  do {
+    const response = await $fetch<APIListEnvelope<TaxonomyTerm>>(`/api/v1/projects/${targetProjectID}/categories`, {
+      credentials: 'include',
+      query: { limit: 100, ...(cursor ? { cursor } : {}) }
+    })
+    for (const category of apiListData(response)) allCategories.set(category.id, category)
+    const nextCursor = response.meta?.nextCursor || ''
+    if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Category pagination returned a repeated cursor')
+    if (nextCursor) seenCursors.add(nextCursor)
+    cursor = nextCursor
+  } while (cursor)
+
+  return [...allCategories.values()]
 }
 
 async function submitRevision() {
@@ -1999,6 +1995,10 @@ function primaryCategoryIDFromSnapshot(snapshot: unknown) {
   return typeof taxonomy.primaryCategory?.id === 'string' ? taxonomy.primaryCategory.id : ''
 }
 
+function categoryPathLabel(category: TaxonomyTerm) {
+  return [...(category.ancestors || []).map(ancestor => ancestor.name), category.name].join(' / ')
+}
+
 function publicationBody(revisionId: string) {
   return {
     revisionId,
@@ -2371,7 +2371,7 @@ async function getCSRFToken() {
 }
 
 function sortCategories(values: TaxonomyTerm[]) {
-  return [...values].sort((left, right) => left.name.localeCompare(right.name))
+  return [...values].sort((left, right) => categoryPathLabel(left).localeCompare(categoryPathLabel(right)))
 }
 
 function parseBackendUTC(value: string) {

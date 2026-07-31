@@ -53,7 +53,7 @@
               <span>Primary category</span>
               <select v-model="articleForm.primaryCategoryId" :disabled="categories.length === 0" required>
                 <option value="" disabled>Select category</option>
-                <option v-for="category in categories" :key="category.id" :value="category.id">{{ category.name }}</option>
+                <option v-for="category in categories" :key="category.id" :value="category.id">{{ categoryPathLabel(category) }}</option>
               </select>
               <small v-if="categories.length === 0">Create a category from the side panel before saving the draft.</small>
             </label>
@@ -183,7 +183,7 @@
               <div><dt>Template</dt><dd>{{ labelize(articleForm.articleType) }}</dd></div>
               <div><dt>Words</dt><dd>{{ wordCount }}</dd></div>
               <div><dt>Locale</dt><dd>{{ articleForm.locale || 'Not set' }}</dd></div>
-              <div><dt>Category</dt><dd>{{ selectedCategory?.name || 'Not set' }}</dd></div>
+              <div><dt>Category</dt><dd>{{ selectedCategory ? categoryPathLabel(selectedCategory) : 'Not set' }}</dd></div>
             </dl>
             <div class="draft-preview__path"><span>Canonical path</span><code>{{ canonicalPath }}</code></div>
           </div>
@@ -196,13 +196,21 @@
           </div>
           <div class="side-panel__body">
             <label class="field"><span>Name</span><input v-model.trim="categoryForm.name" placeholder="Category name" required></label>
-            <label class="field"><span>Slug</span><input v-model.trim="categoryForm.slug" class="mono-input" placeholder="category-slug" required></label>
+            <label class="field"><span>Slug</span><input v-model.trim="categoryForm.slug" class="mono-input" placeholder="category-slug" required @input="categorySlugTouched = true"></label>
+            <label class="field">
+              <span>Parent category</span>
+              <select v-model="categoryForm.parentId">
+                <option value="">No parent · root category</option>
+                <option v-for="category in categoryParentOptions" :key="category.id" :value="category.id">{{ categoryPathLabel(category) }}</option>
+              </select>
+            </label>
             <label class="field"><span>Description</span><textarea v-model.trim="categoryForm.description" class="textarea--compact" /></label>
             <label class="checkbox-field"><input v-model="categoryForm.indexable" type="checkbox"><span>Indexable archive</span></label>
             <button class="button side-panel__button" type="submit" :disabled="creatingCategory || !canCreateCategory">
               <LoaderCircle v-if="creatingCategory" class="spin" :size="15" />
               <Plus v-else :size="15" />Create and select category
             </button>
+            <NuxtLink class="side-panel__link" :to="`/projects/${projectID}/categories`">Manage the full category tree</NuxtLink>
           </div>
         </form>
 
@@ -262,6 +270,7 @@ const creatingCategory = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
 const slugTouched = ref(false)
+const categorySlugTouched = ref(false)
 const draftSavedAt = ref('')
 const draftSaving = ref(false)
 let draftPersistenceEnabled = false
@@ -290,6 +299,7 @@ const articleForm = reactive({
 const categoryForm = reactive({
   name: '',
   slug: '',
+  parentId: '',
   description: '',
   indexable: true
 })
@@ -310,6 +320,7 @@ const htmlForSubmission = computed(() => articleForm.html.trim() || `<p>${escape
 const plainText = computed(() => htmlToPlainText(htmlForSubmission.value))
 const wordCount = computed(() => plainText.value ? plainText.value.split(/\s+/).length : 0)
 const selectedCategory = computed(() => categories.value.find(category => category.id === articleForm.primaryCategoryId) || null)
+const categoryParentOptions = computed(() => categories.value.filter(category => (category.ancestors?.length || 0) < 2))
 const canonicalPath = computed(() => {
   const basePath = project.value?.blogBasePath || '/blog'
   const normalizedBase = basePath.startsWith('/') ? basePath : `/${basePath}`
@@ -323,7 +334,7 @@ watch(() => articleForm.title, (value) => {
 })
 
 watch(() => categoryForm.name, (value) => {
-  if (!categoryForm.slug) {
+  if (!categorySlugTouched.value) {
     categoryForm.slug = slugify(value)
   }
 })
@@ -360,7 +371,7 @@ async function refresh() {
       api.listArticles(projectID.value, 20)
     ])
     project.value = projectResponse.data
-    categories.value = categoryResponse.data
+    categories.value = [...categoryResponse.data].sort((left, right) => categoryPathLabel(left).localeCompare(categoryPathLabel(right)))
     recentArticles.value = articleResponse.data
     if (!articleForm.locale) {
       articleForm.locale = project.value.defaultLocale || 'en'
@@ -382,13 +393,16 @@ async function createCategory() {
     const response = await api.createCategory(projectID.value, {
       name: categoryForm.name,
       slug: categoryForm.slug,
+      parentId: categoryForm.parentId,
       description: categoryForm.description,
       indexable: categoryForm.indexable
     })
-    categories.value = [...categories.value, response.data].sort((left, right) => left.name.localeCompare(right.name))
+    categories.value = [...categories.value, response.data].sort((left, right) => categoryPathLabel(left).localeCompare(categoryPathLabel(right)))
     articleForm.primaryCategoryId = response.data.id
     categoryForm.name = ''
     categoryForm.slug = ''
+    categorySlugTouched.value = false
+    categoryForm.parentId = ''
     categoryForm.description = ''
     categoryForm.indexable = true
     successMessage.value = 'Category created.'
@@ -438,6 +452,10 @@ async function createArticle() {
 function clearMessages() {
   errorMessage.value = ''
   successMessage.value = ''
+}
+
+function categoryPathLabel(category: TaxonomyTerm) {
+  return [...(category.ancestors || []).map(ancestor => ancestor.name), category.name].join(' / ')
 }
 
 function createDraftKey() {
@@ -597,6 +615,8 @@ function escapeHTML(value: string) {
 .recent-articles small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent-articles span { font-size: 10px; font-weight: 650; }
 .recent-articles small { margin-top: 2px; color: var(--text-faint); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 8px; }
+.side-panel__link { color: var(--primary); font-size: 9px; text-align: center; text-decoration: none; }
+.side-panel__link:hover { text-decoration: underline; }
 .loading-surface { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 9px; color: var(--text-soft); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
