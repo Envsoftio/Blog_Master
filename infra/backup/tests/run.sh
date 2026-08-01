@@ -20,6 +20,7 @@ grep -q '^retention:$' "$repo_root/infra/backup/litestream.yml" || fail "remote 
 grep -q '^  enabled: false$' "$repo_root/infra/backup/litestream.yml" || fail "continuous-chain remote deletion must be disabled"
 grep -q '^socket:$' "$repo_root/infra/backup/litestream.yml" || fail "Litestream control socket is required"
 grep -q 'object-lock-retain-until-date' "$repo_root/infra/backup/create-recovery-point.sh" || fail "snapshot Object Lock is required"
+grep -q -- '--content-md5' "$repo_root/infra/backup/create-recovery-point.sh" || fail "B2 Object Lock uploads must include Content-MD5"
 grep -q "get-object.*downloaded_db" "$repo_root/infra/backup/create-recovery-point.sh" || fail "new snapshots must be downloaded for verification"
 grep -q 'PRAGMA quick_check' "$repo_root/infra/backup/create-recovery-point.sh" || fail "isolated SQLite verification is required"
 grep -q 'SEOBLOG_DEPLOY_REQUIRE_BACKUP=true' "$repo_root/infra/deploy/deploy-release.sh" || fail "production backup gate must default to enabled"

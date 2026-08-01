@@ -272,7 +272,7 @@ done
 
 if [ "$CONFIGURE_BACKUPS" = "1" ]; then
   missing_backup_runtime=0
-  for cmd in aws flock litestream sha256sum sqlite3; do
+  for cmd in aws flock litestream openssl sha256sum sqlite3; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       echo "$cmd is required before --configure-backups can install services" >&2
       missing_backup_runtime=1

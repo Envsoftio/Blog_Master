@@ -20,7 +20,7 @@ if [ -r "$backup_env_file" ]; then
   set +a
 fi
 
-for command_name in aws date flock litestream node sha256sum sqlite3; do
+for command_name in aws date flock litestream node openssl sha256sum sqlite3; do
   require_command "$command_name"
 done
 for variable_name in \
@@ -78,6 +78,7 @@ check_database() {
 check_database "$restored_db"
 
 sha256="$(sha256sum "$restored_db" | awk '{print $1}')"
+content_md5="$(openssl dgst -md5 -binary "$restored_db" | base64 -w 0)"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 retain_until="$(date -u -d "+${retention_days} days" +%Y-%m-%dT%H:%M:%SZ)"
 release_id="${RELEASE_ID:-none}"
@@ -92,6 +93,7 @@ log "uploading locked ${KIND} snapshot s3://${SEOBLOG_BACKUP_BUCKET}/${object_ke
   --bucket "$SEOBLOG_BACKUP_BUCKET" \
   --key "$object_key" \
   --body "$restored_db" \
+  --content-md5 "$content_md5" \
   --server-side-encryption AES256 \
   --object-lock-mode "$lock_mode" \
   --object-lock-retain-until-date "$retain_until" \
