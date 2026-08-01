@@ -22,81 +22,141 @@
         <option value="heading-4">Heading 4</option>
       </select>
 
-      <span class="structured-editor__group" aria-label="Inline formatting">
-        <button type="button" :class="buttonClass('bold')" :aria-pressed="editor.isActive('bold')" :disabled="disabled" title="Bold" @click="run('toggleBold')"><strong>B</strong></button>
-        <button type="button" :class="buttonClass('italic')" :aria-pressed="editor.isActive('italic')" :disabled="disabled" title="Italic" @click="run('toggleItalic')"><em>I</em></button>
-        <button type="button" :class="buttonClass('underline')" :aria-pressed="editor.isActive('underline')" :disabled="disabled" title="Underline" @click="run('toggleUnderline')"><u>U</u></button>
-        <button type="button" :class="buttonClass('strike')" :aria-pressed="editor.isActive('strike')" :disabled="disabled" title="Strikethrough" @click="run('toggleStrike')"><s>S</s></button>
-        <button type="button" :class="buttonClass('code')" :aria-pressed="editor.isActive('code')" :disabled="disabled" title="Inline code" @click="run('toggleCode')"><code>&lt;/&gt;</code></button>
+      <span class="structured-editor__group" aria-label="Text formatting">
+        <button type="button" :class="buttonClass('bold')" :aria-pressed="editor.isActive('bold')" :disabled="disabled" aria-label="Bold" title="Bold (⌘B)" @click="run('toggleBold')"><Bold :size="17" /></button>
+        <button type="button" :class="buttonClass('italic')" :aria-pressed="editor.isActive('italic')" :disabled="disabled" aria-label="Italic" title="Italic (⌘I)" @click="run('toggleItalic')"><Italic :size="17" /></button>
+        <button type="button" :class="buttonClass('underline')" :aria-pressed="editor.isActive('underline')" :disabled="disabled" aria-label="Underline" title="Underline (⌘U)" @click="run('toggleUnderline')"><Underline :size="17" /></button>
+        <button type="button" :class="buttonClass('strike')" :aria-pressed="editor.isActive('strike')" :disabled="disabled" aria-label="Strikethrough" title="Strikethrough" @click="run('toggleStrike')"><Strikethrough :size="17" /></button>
+        <button type="button" :class="buttonClass('code')" :aria-pressed="editor.isActive('code')" :disabled="disabled" aria-label="Inline code" title="Inline code" @click="run('toggleCode')"><Code2 :size="17" /></button>
       </span>
 
       <span class="structured-editor__group" aria-label="Links">
-        <button type="button" :class="buttonClass('link')" :aria-pressed="editor.isActive('link')" :disabled="disabled" title="Add or edit link" @click="editLink">Link</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled || !editor.isActive('link')" title="Remove link" @click="editor.chain().focus().unsetLink().run()">Unlink</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled || !editor.isActive('heading')" title="Set this heading's anchor" @click="editHeadingAnchor">Anchor</button>
+        <button type="button" :class="buttonClass('link')" :aria-pressed="editor.isActive('link')" :disabled="disabled" aria-label="Add or edit link" title="Add or edit link" @click="editLink"><Link2 :size="17" /></button>
+        <button type="button" class="structured-editor__button" :disabled="disabled || !editor.isActive('link')" aria-label="Remove link" title="Remove link" @click="editor.chain().focus().unsetLink().run()"><Unlink2 :size="17" /></button>
       </span>
 
       <span class="structured-editor__group" aria-label="Blocks">
-        <button type="button" :class="buttonClass('bulletList')" :aria-pressed="editor.isActive('bulletList')" :disabled="disabled" title="Bulleted list" @click="run('toggleBulletList')">Bullets</button>
-        <button type="button" :class="buttonClass('orderedList')" :aria-pressed="editor.isActive('orderedList')" :disabled="disabled" title="Numbered list" @click="run('toggleOrderedList')">Numbers</button>
-        <button type="button" :class="buttonClass('blockquote')" :aria-pressed="editor.isActive('blockquote')" :disabled="disabled" title="Block quote" @click="run('toggleBlockquote')">Quote</button>
-        <button type="button" :class="buttonClass('codeBlock')" :aria-pressed="editor.isActive('codeBlock')" :disabled="disabled" title="Code block" @click="run('toggleCodeBlock')">Code block</button>
+        <button type="button" :class="buttonClass('bulletList')" :aria-pressed="editor.isActive('bulletList')" :disabled="disabled" aria-label="Bulleted list" title="Bulleted list" @click="run('toggleBulletList')"><List :size="17" /></button>
+        <button type="button" :class="buttonClass('orderedList')" :aria-pressed="editor.isActive('orderedList')" :disabled="disabled" aria-label="Numbered list" title="Numbered list" @click="run('toggleOrderedList')"><ListOrdered :size="17" /></button>
+        <button type="button" :class="buttonClass('blockquote')" :aria-pressed="editor.isActive('blockquote')" :disabled="disabled" aria-label="Block quote" title="Block quote" @click="run('toggleBlockquote')"><Quote :size="17" /></button>
+        <button type="button" :class="buttonClass('codeBlock')" :aria-pressed="editor.isActive('codeBlock')" :disabled="disabled" aria-label="Code block" title="Code block" @click="run('toggleCodeBlock')"><SquareCode :size="17" /></button>
       </span>
 
-      <span class="structured-editor__group" aria-label="Insert content">
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert horizontal rule" @click="editor.chain().focus().setHorizontalRule().run()">Rule</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a 3 by 3 table" @click="editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()">Table</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert image from URL" @click="insertImage">Image</button>
-      </span>
+      <details ref="insertMenu" class="structured-editor__menu" :class="{ 'is-disabled': disabled }">
+        <summary class="structured-editor__menu-trigger"><Plus :size="16" /> Insert <ChevronDown :size="14" /></summary>
+        <div class="structured-editor__menu-panel">
+          <p class="structured-editor__menu-label">Content</p>
+          <button type="button" @click="insertFromMenu(insertImage)"><ImageIcon :size="17" /><span><strong>Image</strong><small>From a URL</small></span></button>
+          <button type="button" @click="insertFromMenu(() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run())"><Table2 :size="17" /><span><strong>Table</strong><small>3 × 3 with header</small></span></button>
+          <button type="button" @click="insertFromMenu(() => editor?.chain().focus().setHorizontalRule().run())"><Minus :size="17" /><span><strong>Divider</strong><small>Separate sections</small></span></button>
+          <p class="structured-editor__menu-label">Article blocks</p>
+          <button type="button" @click="insertEditorialFromMenu('callout')"><MessageSquareText :size="17" /><span><strong>Callout</strong><small>Highlight useful context</small></span></button>
+          <button type="button" @click="insertEditorialFromMenu('takeaway')"><Lightbulb :size="17" /><span><strong>Key takeaway</strong><small>Summarize the main point</small></span></button>
+          <button type="button" @click="insertEditorialFromMenu('steps')"><ListChecks :size="17" /><span><strong>Steps</strong><small>A guided process</small></span></button>
+          <button type="button" @click="insertEditorialFromMenu('pros-cons')"><Scale :size="17" /><span><strong>Pros and cons</strong><small>Show tradeoffs</small></span></button>
+          <button type="button" @click="insertEditorialFromMenu('cta')"><MousePointerClick :size="17" /><span><strong>Call to action</strong><small>Prompt a next step</small></span></button>
+          <button type="button" @click="insertEditorialFromMenu('faq')"><CircleHelp :size="17" /><span><strong>FAQ</strong><small>Question and answer</small></span></button>
+        </div>
+      </details>
 
-      <span v-if="mediaAssets.length" class="structured-editor__group structured-editor__picker" aria-label="Project media">
-        <select v-model="selectedMediaID" class="structured-editor__select" aria-label="Project image" :disabled="disabled">
-          <option value="">Project image…</option>
-          <option v-for="asset in insertableMedia" :key="asset.id" :value="asset.id">{{ mediaLabel(asset) }}</option>
-        </select>
-        <button type="button" class="structured-editor__button" :disabled="disabled || !selectedMediaID" @click="insertSelectedMedia">Insert</button>
-      </span>
+      <details ref="moreMenu" class="structured-editor__menu" :class="{ 'is-disabled': disabled }">
+        <summary class="structured-editor__menu-trigger">More <ChevronDown :size="14" /></summary>
+        <div class="structured-editor__menu-panel structured-editor__menu-panel--right">
+          <p class="structured-editor__menu-label">Special blocks</p>
+          <button type="button" @click="insertFromMenu(insertTaskList, moreMenu)"><ListTodo :size="17" /><span><strong>Task list</strong><small>Checklist items</small></span></button>
+          <button type="button" @click="insertFromMenu(insertAttributedQuote, moreMenu)"><Quote :size="17" /><span><strong>Quote with citation</strong><small>Attributed quotation</small></span></button>
+          <button type="button" @click="insertFromMenu(insertComparisonTable, moreMenu)"><Columns3 :size="17" /><span><strong>Comparison</strong><small>Compare options in a table</small></span></button>
+          <button type="button" @click="insertFromMenu(insertGallery, moreMenu)"><GalleryHorizontalEnd :size="17" /><span><strong>Gallery</strong><small>Multiple project images</small></span></button>
+          <button type="button" @click="insertFromMenu(insertTranscript, moreMenu)"><Captions :size="17" /><span><strong>Transcript</strong><small>Timestamped dialogue</small></span></button>
+          <button type="button" @click="insertFromMenu(insertRelatedReference, moreMenu)"><BookOpen :size="17" /><span><strong>Related article</strong><small>Internal reading reference</small></span></button>
+          <button type="button" @click="insertFromMenu(insertEmbed, moreMenu)"><PlaySquare :size="17" /><span><strong>Embed</strong><small>YouTube, Vimeo, or Wistia</small></span></button>
+        </div>
+      </details>
 
-      <span v-if="sources.length" class="structured-editor__group structured-editor__picker" aria-label="Project citations">
-        <select v-model="selectedSourceID" class="structured-editor__select" aria-label="Project source" :disabled="disabled">
-          <option value="">Citation…</option>
-          <option v-for="source in sources" :key="source.id" :value="source.id">{{ source.title }}</option>
-        </select>
-        <button type="button" class="structured-editor__button" :disabled="disabled || !selectedSourceID" @click="insertSelectedCitation">Cite</button>
-      </span>
-
-      <span class="structured-editor__group" aria-label="Editorial blocks">
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a callout" @click="insertEditorialBlock('callout')">Callout</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a key takeaway" @click="insertEditorialBlock('takeaway')">Takeaway</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a steps section" @click="insertEditorialBlock('steps')">Steps</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a pros and cons section" @click="insertEditorialBlock('pros-cons')">Pros / cons</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a call to action" @click="insertEditorialBlock('cta')">CTA</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a FAQ section" @click="insertEditorialBlock('faq')">FAQ</button>
-      </span>
-
-      <span class="structured-editor__group" aria-label="Specialized blocks">
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a task checklist" @click="insertTaskList">Tasks</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert an attributed quote" @click="insertAttributedQuote">Quote + cite</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a comparison table" @click="insertComparisonTable">Compare</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert an image gallery" @click="insertGallery">Gallery</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a transcript" @click="insertTranscript">Transcript</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a related article reference" @click="insertRelatedReference">Related</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert an allowlisted embed reference" @click="insertEmbed">Embed</button>
-      </span>
-
-      <span v-if="editor.isActive('table')" class="structured-editor__group" aria-label="Table controls">
-        <button type="button" class="structured-editor__button" :disabled="disabled" @click="editor.chain().focus().addRowAfter().run()">+ Row</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" @click="editor.chain().focus().addColumnAfter().run()">+ Column</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" @click="editor.chain().focus().deleteRow().run()">− Row</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled" @click="editor.chain().focus().deleteColumn().run()">− Column</button>
-        <button type="button" class="structured-editor__button structured-editor__button--danger" :disabled="disabled" @click="editor.chain().focus().deleteTable().run()">Delete table</button>
-      </span>
-
+      <span class="structured-editor__spacer" />
       <span class="structured-editor__group structured-editor__group--history" aria-label="History">
-        <button type="button" class="structured-editor__button" :disabled="disabled || !editor.can().chain().focus().undo().run()" title="Undo" @click="editor.chain().focus().undo().run()">Undo</button>
-        <button type="button" class="structured-editor__button" :disabled="disabled || !editor.can().chain().focus().redo().run()" title="Redo" @click="editor.chain().focus().redo().run()">Redo</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled || !editor.can().chain().focus().undo().run()" aria-label="Undo" title="Undo (⌘Z)" @click="editor.chain().focus().undo().run()"><Undo2 :size="17" /></button>
+        <button type="button" class="structured-editor__button" :disabled="disabled || !editor.can().chain().focus().redo().run()" aria-label="Redo" title="Redo (⇧⌘Z)" @click="editor.chain().focus().redo().run()"><Redo2 :size="17" /></button>
       </span>
     </div>
+
+    <div v-if="editor && (mediaAssets.length || sources.length || editor.isActive('heading') || editor.isActive('table'))" class="structured-editor__context-bar">
+      <span v-if="mediaAssets.length" class="structured-editor__picker">
+        <ImageIcon :size="16" />
+        <select v-model="selectedMediaID" class="structured-editor__select" aria-label="Project image" :disabled="disabled">
+          <option value="">Choose project image…</option>
+          <option v-for="asset in insertableMedia" :key="asset.id" :value="asset.id">{{ mediaLabel(asset) }}</option>
+        </select>
+        <button type="button" class="structured-editor__text-button" :disabled="disabled || !selectedMediaID" @click="insertSelectedMedia">Insert</button>
+      </span>
+      <span v-if="sources.length" class="structured-editor__picker">
+        <BookOpen :size="16" />
+        <select v-model="selectedSourceID" class="structured-editor__select" aria-label="Project source" :disabled="disabled">
+          <option value="">Choose citation…</option>
+          <option v-for="source in sources" :key="source.id" :value="source.id">{{ source.title }}</option>
+        </select>
+        <button type="button" class="structured-editor__text-button" :disabled="disabled || !selectedSourceID" @click="insertSelectedCitation">Cite</button>
+      </span>
+      <span v-if="editor.isActive('heading')" class="structured-editor__picker structured-editor__picker--context">
+        <Anchor :size="16" />
+        <button type="button" class="structured-editor__text-button" :disabled="disabled" @click="editHeadingAnchor">Edit heading anchor</button>
+      </span>
+      <span v-if="editor.isActive('table')" class="structured-editor__picker structured-editor__picker--context">
+        <Table2 :size="16" />
+        <span class="structured-editor__context-label">Table</span>
+        <button type="button" class="structured-editor__text-button" :disabled="disabled" @click="editor.chain().focus().addRowAfter().run()">Add row</button>
+        <button type="button" class="structured-editor__text-button" :disabled="disabled" @click="editor.chain().focus().addColumnAfter().run()">Add column</button>
+        <button type="button" class="structured-editor__text-button" :disabled="disabled" @click="editor.chain().focus().deleteRow().run()">Remove row</button>
+        <button type="button" class="structured-editor__text-button" :disabled="disabled" @click="editor.chain().focus().deleteColumn().run()">Remove column</button>
+        <button type="button" class="structured-editor__text-button structured-editor__text-button--danger" :disabled="disabled" @click="editor.chain().focus().deleteTable().run()"><Trash2 :size="14" /> Delete</button>
+      </span>
+    </div>
+
+    <form v-if="editorDialog" class="structured-editor__dialog" role="dialog" :aria-label="dialogTitle" @submit.prevent="applyEditorDialog">
+      <div class="structured-editor__dialog-heading">
+        <div>
+          <strong>{{ dialogTitle }}</strong>
+          <small>{{ dialogDescription }}</small>
+        </div>
+        <button type="button" aria-label="Close" title="Close" @click="closeEditorDialog"><X :size="17" /></button>
+      </div>
+
+      <label v-if="editorDialog === 'embed'">
+        <span>Provider</span>
+        <select v-model="dialogFields.provider">
+          <option value="youtube">YouTube</option>
+          <option value="vimeo">Vimeo</option>
+          <option value="wistia">Wistia</option>
+        </select>
+      </label>
+      <label v-if="editorDialog === 'link' || editorDialog === 'image' || editorDialog === 'embed'">
+        <span>{{ editorDialog === 'image' ? 'Image URL' : 'URL' }}</span>
+        <input v-model.trim="dialogFields.url" type="text" autofocus :placeholder="editorDialog === 'link' ? 'https://example.com or /page' : 'https://…'" />
+      </label>
+      <label v-if="editorDialog === 'image'">
+        <span>Alt text <small>Leave blank only if decorative</small></span>
+        <input v-model="dialogFields.alt" type="text" placeholder="Describe what the image shows" />
+      </label>
+      <label v-if="editorDialog === 'image'">
+        <span>Caption <small>Optional</small></span>
+        <input v-model="dialogFields.caption" type="text" placeholder="Add context below the image" />
+      </label>
+      <label v-if="editorDialog === 'anchor'">
+        <span>Heading anchor</span>
+        <div class="structured-editor__input-prefix"><span>#</span><input v-model.trim="dialogFields.anchor" type="text" autofocus placeholder="section-name" /></div>
+      </label>
+      <label v-if="editorDialog === 'related'">
+        <span>Related article ID</span>
+        <input v-model.trim="dialogFields.articleId" type="text" autofocus placeholder="article-id" />
+      </label>
+
+      <p v-if="dialogError" class="structured-editor__dialog-error" role="alert">{{ dialogError }}</p>
+      <div class="structured-editor__dialog-actions">
+        <button type="button" @click="closeEditorDialog">Cancel</button>
+        <button v-if="editorDialog === 'link' && editor?.isActive('link')" type="button" class="structured-editor__dialog-remove" @click="removeLink">Remove link</button>
+        <button type="submit" class="structured-editor__dialog-primary">{{ dialogActionLabel }}</button>
+      </div>
+    </form>
 
     <div class="structured-editor__canvas">
       <EditorContent v-if="editor" :editor="editor" />
@@ -115,6 +175,41 @@ import Image from '@tiptap/extension-image'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import StarterKit from '@tiptap/starter-kit'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
+import {
+  Anchor,
+  Bold,
+  BookOpen,
+  Captions,
+  ChevronDown,
+  CircleHelp,
+  Code2,
+  Columns3,
+  GalleryHorizontalEnd,
+  Image as ImageIcon,
+  Italic,
+  Lightbulb,
+  Link2,
+  List,
+  ListChecks,
+  ListOrdered,
+  ListTodo,
+  MessageSquareText,
+  Minus,
+  MousePointerClick,
+  PlaySquare,
+  Plus,
+  Quote,
+  Redo2,
+  Scale,
+  SquareCode,
+  Strikethrough,
+  Table2,
+  Trash2,
+  Underline,
+  Undo2,
+  Unlink2,
+  X
+} from 'lucide-vue-next'
 import type { AdminMediaAsset, AdminSource } from '~/composables/useAdminApi'
 
 const props = withDefaults(defineProps<{
@@ -141,6 +236,12 @@ const editor = shallowRef<Editor | null>(null)
 const editorError = ref('')
 const selectedMediaID = ref('')
 const selectedSourceID = ref('')
+const insertMenu = ref<HTMLDetailsElement | null>(null)
+const moreMenu = ref<HTMLDetailsElement | null>(null)
+type EditorDialog = 'link' | 'image' | 'anchor' | 'related' | 'embed'
+const editorDialog = ref<EditorDialog | null>(null)
+const dialogError = ref('')
+const dialogFields = reactive({ url: '', alt: '', caption: '', anchor: '', articleId: '', provider: 'youtube' })
 const normalizeHeadingIDsKey = new PluginKey('normalize-article-heading-ids')
 const insertableMedia = computed(() => props.mediaAssets.filter(asset => asset.status === 'ready' && asset.contentType.startsWith('image/') && isSafeEditorialURL(asset.url || '', false)))
 
@@ -400,6 +501,24 @@ const activeTextStyle = computed(() => {
   return 'paragraph'
 })
 
+const dialogTitle = computed(() => ({
+  link: 'Add a link',
+  image: 'Insert an image',
+  anchor: 'Edit heading anchor',
+  related: 'Insert a related article',
+  embed: 'Insert an embed'
+}[editorDialog.value || 'link']))
+
+const dialogDescription = computed(() => ({
+  link: 'Link the selected text to a safe URL.',
+  image: 'Use an HTTPS or root-relative image URL.',
+  anchor: 'Create a stable link directly to this heading.',
+  related: 'Reference another article by its ID.',
+  embed: 'Add a supported video or media reference.'
+}[editorDialog.value || 'link']))
+
+const dialogActionLabel = computed(() => editorDialog.value === 'link' && editor.value?.isActive('link') ? 'Update link' : 'Insert')
+
 onMounted(() => {
   const instance = new Editor({
     editable: !props.disabled,
@@ -442,9 +561,11 @@ onMounted(() => {
     onUpdate: ({ editor: updatedEditor }) => emitEditorState(updatedEditor)
   })
   editor.value = instance
+  document.addEventListener('pointerdown', closeMenusOnOutsideClick)
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', closeMenusOnOutsideClick)
   editor.value?.destroy()
   editor.value = null
 })
@@ -487,76 +608,136 @@ function buttonClass(format: string) {
   return ['structured-editor__button', { 'is-active': editor.value?.isActive(format) }]
 }
 
-function editLink() {
-  if (!editor.value || !import.meta.client) return
+function insertFromMenu(action: () => unknown, menu = insertMenu.value) {
+  if (props.disabled) return
+  action()
+  if (menu) menu.open = false
+}
+
+function insertEditorialFromMenu(kind: EditorialBlockKind) {
+  if (props.disabled) return
+  insertEditorialBlock(kind)
+  if (insertMenu.value) insertMenu.value.open = false
+}
+
+function closeMenusOnOutsideClick(event: PointerEvent) {
+  const target = event.target as globalThis.Node | null
+  if (target && (insertMenu.value?.contains(target) || moreMenu.value?.contains(target))) return
+  if (insertMenu.value) insertMenu.value.open = false
+  if (moreMenu.value) moreMenu.value.open = false
+}
+
+function openEditorDialog(kind: EditorDialog, values: Partial<typeof dialogFields> = {}) {
+  Object.assign(dialogFields, { url: '', alt: '', caption: '', anchor: '', articleId: '', provider: 'youtube' }, values)
+  dialogError.value = ''
   editorError.value = ''
-  const current = String(editor.value.getAttributes('link').href || '')
-  const requested = window.prompt('Link URL (HTTPS, mailto, /path, or #anchor)', current)
-  if (requested === null) return
-  const href = requested.trim()
-  if (!href) {
-    editor.value.chain().focus().extendMarkRange('link').unsetLink().run()
-    return
+  editorDialog.value = kind
+}
+
+function closeEditorDialog() {
+  editorDialog.value = null
+  dialogError.value = ''
+  editor.value?.commands.focus()
+}
+
+function removeLink() {
+  editor.value?.chain().focus().extendMarkRange('link').unsetLink().run()
+  closeEditorDialog()
+}
+
+function applyEditorDialog() {
+  const instance = editor.value
+  const kind = editorDialog.value
+  if (!instance || !kind) return
+  dialogError.value = ''
+
+  if (kind === 'link') {
+    const href = dialogFields.url.trim()
+    if (!isSafeEditorialURL(href, true)) {
+      dialogError.value = 'Use an HTTPS, mailto, root-relative, or document-anchor link.'
+      return
+    }
+    instance.chain().focus().extendMarkRange('link').setLink({ href }).run()
   }
-  if (!isSafeEditorialURL(href, true)) {
-    editorError.value = 'Use an HTTPS, mailto, root-relative, or document-anchor link.'
-    return
+
+  if (kind === 'image') {
+    const src = dialogFields.url.trim()
+    if (!isSafeEditorialURL(src, false)) {
+      dialogError.value = 'Use an HTTPS or root-relative image URL.'
+      return
+    }
+    const alt = dialogFields.alt.trim()
+    const caption = dialogFields.caption.trim()
+    const image = { type: 'image', attrs: { src, alt, decorative: alt.length === 0 } }
+    instance.chain().focus().insertContent(caption
+      ? { type: 'figure', content: [image, { type: 'figcaption', content: [{ type: 'text', text: caption }] }] }
+      : image).run()
   }
-  editor.value.chain().focus().extendMarkRange('link').setLink({ href }).run()
+
+  if (kind === 'anchor') {
+    const id = dialogFields.anchor.trim()
+    if (!safeHeadingID(id)) {
+      dialogError.value = 'Start with a letter and use only letters, numbers, hyphens, or underscores.'
+      return
+    }
+    const currentPosition = instance.state.selection.$from.before(instance.state.selection.$from.depth)
+    let conflict = false
+    instance.state.doc.descendants((node, position) => {
+      if (node.type.name === 'heading' && position !== currentPosition && node.attrs.id === id) conflict = true
+    })
+    if (conflict) {
+      dialogError.value = `The anchor “${id}” is already used by another heading.`
+      return
+    }
+    instance.chain().focus().updateAttributes('heading', { id }).run()
+  }
+
+  if (kind === 'related') {
+    const articleId = dialogFields.articleId.trim()
+    if (!safeReferenceID(articleId)) {
+      dialogError.value = 'Use only letters, numbers, hyphens, and underscores.'
+      return
+    }
+    instance.chain().focus().insertContent({
+      type: 'relatedReference',
+      attrs: { articleId },
+      content: [
+        { type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Related reading' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'Summarize why this article is relevant.' }] }
+      ]
+    }).run()
+  }
+
+  if (kind === 'embed') {
+    const provider = dialogFields.provider.trim().toLowerCase()
+    const url = dialogFields.url.trim()
+    if (!safeEmbedProvider(provider) || !isSafeEmbedURL(url, provider)) {
+      dialogError.value = 'Use an HTTPS URL from the selected provider.'
+      return
+    }
+    instance.chain().focus().insertContent({
+      type: 'embedReference',
+      attrs: { provider, url },
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: `${providerLabel(provider)} embed` }] }]
+    }).run()
+  }
+
+  closeEditorDialog()
+}
+
+function editLink() {
+  if (!editor.value) return
+  openEditorDialog('link', { url: String(editor.value.getAttributes('link').href || '') })
 }
 
 function editHeadingAnchor() {
-  if (!editor.value || !import.meta.client || !editor.value.isActive('heading')) return
-  editorError.value = ''
-  const current = String(editor.value.getAttributes('heading').id || '')
-  const requested = window.prompt('Heading anchor (letters, numbers, hyphens, and underscores)', current)
-  if (requested === null) return
-  const id = requested.trim()
-  if (!safeHeadingID(id)) {
-    editorError.value = 'Anchors must start with a letter and use only letters, numbers, hyphens, or underscores.'
-    return
-  }
-  const currentPosition = editor.value.state.selection.$from.before(editor.value.state.selection.$from.depth)
-  let conflict = false
-  editor.value.state.doc.descendants((node, position) => {
-    if (node.type.name === 'heading' && position !== currentPosition && node.attrs.id === id) conflict = true
-  })
-  if (conflict) {
-    editorError.value = `The anchor “${id}” is already used by another heading.`
-    return
-  }
-  editor.value.chain().focus().updateAttributes('heading', { id }).run()
+  if (!editor.value?.isActive('heading')) return
+  openEditorDialog('anchor', { anchor: String(editor.value.getAttributes('heading').id || '') })
 }
 
 function insertImage() {
-  if (!editor.value || !import.meta.client) return
-  editorError.value = ''
-  const requested = window.prompt('Image URL (HTTPS or /root-relative path)')
-  if (requested === null) return
-  const src = requested.trim()
-  if (!isSafeEditorialURL(src, false)) {
-    editorError.value = 'Use an HTTPS or root-relative image URL.'
-    return
-  }
-  const requestedAlt = window.prompt('Image alt text (leave blank only for a decorative image)')
-  if (requestedAlt === null) return
-  const alt = requestedAlt.trim()
-  const requestedCaption = window.prompt('Image caption (optional)')
-  if (requestedCaption === null) return
-  const image = {
-    type: 'image',
-    attrs: { src, alt, decorative: alt.length === 0 }
-  }
-  const caption = requestedCaption.trim()
-  editor.value.chain().focus().insertContent(caption
-    ? {
-        type: 'figure',
-        content: [
-          image,
-          { type: 'figcaption', content: [{ type: 'text', text: caption }] }
-        ]
-      }
-    : image).run()
+  if (!editor.value) return
+  openEditorDialog('image')
 }
 
 function insertEditorialBlock(kind: EditorialBlockKind) {
@@ -666,39 +847,13 @@ function insertTranscript() {
 }
 
 function insertRelatedReference() {
-  if (!editor.value || !import.meta.client) return
-  editorError.value = ''
-  const articleId = window.prompt('Related article ID')
-  if (articleId === null) return
-  const trimmed = articleId.trim()
-  if (!safeReferenceID(trimmed)) {
-    editorError.value = 'Related article IDs may only contain letters, numbers, hyphens, and underscores.'
-    return
-  }
-  editor.value.chain().focus().insertContent({
-    type: 'relatedReference',
-    attrs: { articleId: trimmed },
-    content: [
-      { type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Related reading' }] },
-      { type: 'paragraph', content: [{ type: 'text', text: 'Summarize why this article is relevant.' }] }
-    ]
-  }).run()
+  if (!editor.value) return
+  openEditorDialog('related')
 }
 
 function insertEmbed() {
-  if (!editor.value || !import.meta.client) return
-  editorError.value = ''
-  const provider = (window.prompt('Embed provider (youtube, vimeo, wistia)', 'youtube') || '').trim().toLowerCase()
-  const url = (window.prompt('Embed URL (HTTPS from the selected provider)') || '').trim()
-  if (!safeEmbedProvider(provider) || !isSafeEmbedURL(url, provider)) {
-    editorError.value = 'Embeds must use an allowlisted provider URL: YouTube, Vimeo, or Wistia.'
-    return
-  }
-  editor.value.chain().focus().insertContent({
-    type: 'embedReference',
-    attrs: { provider, url },
-    content: [{ type: 'paragraph', content: [{ type: 'text', text: `${providerLabel(provider)} embed` }] }]
-  }).run()
+  if (!editor.value) return
+  openEditorDialog('embed')
 }
 
 function insertSelectedMedia() {
@@ -813,32 +968,79 @@ function providerLabel(provider: string) {
 </script>
 
 <style scoped>
-.structured-editor { overflow: hidden; border: 1px solid var(--border, #bfcac3); border-radius: 8px; background: var(--surface, #fff); }
+.structured-editor { position: relative; overflow: visible; border: 1px solid var(--border, #bfcac3); border-radius: 10px; background: var(--surface, #fff); }
 .structured-editor:focus-within { border-color: color-mix(in srgb, var(--primary, #165a4a) 70%, white); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary, #165a4a) 14%, transparent); }
-.structured-editor__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border, #d7ded8); background: var(--surface-subtle, #f5f7f5); }
+.structured-editor__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border, #d7ded8); border-radius: 10px 10px 0 0; background: var(--surface-subtle, #f5f7f5); }
 .structured-editor__heading > div { display: grid; gap: 2px; }
-.structured-editor__label { font-size: 12px; font-weight: 700; }
+.structured-editor__label { font-size: 13px; font-weight: 700; }
 .structured-editor__heading small,
 .structured-editor__help { color: var(--text-faint, #667169); font-size: 12px; }
-.structured-editor__mode { padding: 3px 6px; border-radius: 999px; background: var(--primary-soft, #e6f2ec); color: var(--primary, #165a4a); font-size: 12px; font-weight: 700; text-transform: uppercase; }
-.structured-editor__toolbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; padding: 10px; border-bottom: 1px solid var(--border, #d7ded8); background: var(--surface, #fff); }
-.structured-editor__group { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px; align-content: flex-start; padding: 8px; border: 1px solid var(--border, #d7ded8); border-radius: 6px; background: var(--surface-subtle, #f5f7f5); }
-.structured-editor__group--history { margin-left: 0; padding-right: 8px; border-right: 1px solid var(--border, #d7ded8); }
+.structured-editor__mode { padding: 4px 8px; border-radius: 999px; background: var(--primary-soft, #e6f2ec); color: var(--primary, #165a4a); font-size: 11px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; }
+.structured-editor__toolbar { position: relative; z-index: 4; display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--border, #d7ded8); background: var(--surface, #fff); }
+.structured-editor__group { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 2px; padding-left: 5px; margin-left: 2px; border-left: 1px solid var(--border, #d7ded8); }
+.structured-editor__group--history { margin-left: 4px; }
+.structured-editor__spacer { flex: 1 1 auto; }
 .structured-editor__select,
-.structured-editor__button { min-height: 30px; border: 1px solid var(--border, #c9d4cc); border-radius: 5px; background: var(--surface, #fff); color: var(--text, #28342d); font-size: 12px; }
-.structured-editor__select { min-width: 0; max-width: 100%; padding: 0 24px 0 8px; }
-.structured-editor__button { min-width: 30px; max-width: 100%; padding: 4px 7px; cursor: pointer; white-space: nowrap; }
+.structured-editor__button { min-height: 34px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text, #28342d); font-size: 13px; }
+.structured-editor__select { min-width: 124px; max-width: 220px; min-height: 34px; padding: 0 28px 0 9px; border-color: var(--border, #c9d4cc); background: var(--surface, #fff); }
+.structured-editor__button { display: inline-grid; min-width: 34px; padding: 0; place-items: center; cursor: pointer; }
 .structured-editor__button:hover:not(:disabled),
-.structured-editor__button.is-active { border-color: color-mix(in srgb, var(--primary, #165a4a) 50%, var(--border, #c9d4cc)); background: var(--primary-soft, #e6f2ec); color: var(--primary, #165a4a); }
+.structured-editor__button.is-active { background: var(--primary-soft, #e6f2ec); color: var(--primary, #165a4a); }
 .structured-editor__button--danger { color: #9b2d23; }
 .structured-editor__button:disabled,
 .structured-editor__select:disabled { opacity: .45; cursor: not-allowed; }
-.structured-editor__canvas { position: relative; background: var(--surface, #fff); }
+.structured-editor__menu { position: relative; flex: 0 0 auto; }
+.structured-editor__menu[open] { z-index: 5; }
+.structured-editor__menu.is-disabled { opacity: .45; pointer-events: none; }
+.structured-editor__menu summary { list-style: none; }
+.structured-editor__menu summary::-webkit-details-marker { display: none; }
+.structured-editor__menu-trigger { display: inline-flex; min-height: 34px; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid transparent; border-radius: 6px; color: var(--text, #28342d); font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; }
+.structured-editor__menu-trigger:hover,
+.structured-editor__menu[open] > .structured-editor__menu-trigger { background: var(--surface-subtle, #f2f5f3); color: var(--primary, #165a4a); }
+.structured-editor__menu-panel { position: absolute; top: calc(100% + 7px); left: 0; display: grid; width: 286px; max-height: 440px; overflow-y: auto; padding: 7px; border: 1px solid var(--border, #d7ded8); border-radius: 9px; background: var(--surface, #fff); box-shadow: 0 14px 35px rgb(23 35 28 / 18%); }
+.structured-editor__menu-panel--right { right: 0; left: auto; }
+.structured-editor__menu-label { margin: 7px 8px 4px; color: var(--text-faint, #667169); font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.structured-editor__menu-panel button { display: grid; grid-template-columns: 22px 1fr; gap: 9px; align-items: center; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text, #28342d); text-align: left; cursor: pointer; }
+.structured-editor__menu-panel button:hover { background: var(--surface-subtle, #f2f5f3); color: var(--primary, #165a4a); }
+.structured-editor__menu-panel button > span { display: grid; gap: 1px; }
+.structured-editor__menu-panel strong { font-size: 13px; font-weight: 650; }
+.structured-editor__menu-panel small { color: var(--text-faint, #667169); font-size: 11px; }
+.structured-editor__context-bar { position: relative; z-index: 3; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--border, #d7ded8); background: var(--surface-subtle, #f5f7f5); }
+.structured-editor__picker { display: inline-flex; min-width: 0; align-items: center; gap: 6px; color: var(--text-faint, #667169); }
+.structured-editor__picker .structured-editor__select { min-width: 150px; min-height: 30px; font-size: 12px; }
+.structured-editor__picker--context { margin-left: auto; }
+.structured-editor__context-label { font-size: 12px; font-weight: 700; }
+.structured-editor__text-button { display: inline-flex; min-height: 28px; align-items: center; gap: 4px; padding: 0 7px; border: 0; border-radius: 5px; background: transparent; color: var(--primary, #165a4a); font-size: 12px; font-weight: 700; cursor: pointer; }
+.structured-editor__text-button:hover:not(:disabled) { background: var(--primary-soft, #e6f2ec); }
+.structured-editor__text-button:disabled { opacity: .45; cursor: not-allowed; }
+.structured-editor__text-button--danger { color: #9b2d23; }
+.structured-editor__dialog { position: relative; z-index: 2; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 14px; border-bottom: 1px solid var(--border, #d7ded8); background: color-mix(in srgb, var(--primary-soft, #e6f2ec) 48%, var(--surface, #fff)); }
+.structured-editor__dialog-heading { grid-column: 1 / -1; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.structured-editor__dialog-heading > div { display: grid; gap: 2px; }
+.structured-editor__dialog-heading strong { font-size: 13px; }
+.structured-editor__dialog-heading small { color: var(--text-faint, #667169); font-size: 11px; }
+.structured-editor__dialog-heading > button { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--text-faint, #667169); cursor: pointer; }
+.structured-editor__dialog-heading > button:hover { background: var(--surface-subtle, #f2f5f3); color: var(--text, #28342d); }
+.structured-editor__dialog label { display: grid; gap: 5px; min-width: 0; color: var(--text, #28342d); font-size: 12px; font-weight: 650; }
+.structured-editor__dialog label > span small { color: var(--text-faint, #667169); font-weight: 400; }
+.structured-editor__dialog input,
+.structured-editor__dialog select { width: 100%; min-height: 36px; padding: 0 10px; border: 1px solid var(--border, #bfcac3); border-radius: 6px; background: var(--surface, #fff); color: var(--text, #28342d); font-size: 13px; outline: none; }
+.structured-editor__dialog input:focus,
+.structured-editor__dialog select:focus { border-color: var(--primary, #165a4a); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary, #165a4a) 12%, transparent); }
+.structured-editor__input-prefix { display: flex; align-items: center; border: 1px solid var(--border, #bfcac3); border-radius: 6px; background: var(--surface, #fff); }
+.structured-editor__input-prefix > span { padding-left: 10px; color: var(--text-faint, #667169); }
+.structured-editor__input-prefix input { border: 0; box-shadow: none; }
+.structured-editor__dialog-error { grid-column: 1 / -1; margin: 0; color: #9b2d23; font-size: 12px; }
+.structured-editor__dialog-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 7px; }
+.structured-editor__dialog-actions button { min-height: 32px; padding: 0 11px; border: 1px solid var(--border, #bfcac3); border-radius: 6px; background: var(--surface, #fff); color: var(--text, #28342d); font-size: 12px; font-weight: 700; cursor: pointer; }
+.structured-editor__dialog-actions .structured-editor__dialog-remove { margin-right: auto; border-color: transparent; background: transparent; color: #9b2d23; }
+.structured-editor__dialog-actions .structured-editor__dialog-primary { border-color: var(--primary, #165a4a); background: var(--primary, #165a4a); color: white; }
+.structured-editor__canvas { position: relative; overflow: hidden; border-radius: 0 0 10px 10px; background: var(--surface, #fff); }
 .structured-editor__loading { display: grid; min-height: 260px; place-items: center; color: var(--text-faint, #667169); font-size: 13px; }
 .structured-editor__error { margin: 0; padding: 8px 12px; border-top: 1px solid #edc6c2; background: #fff4f2; color: #9b2d23; font-size: 12px; }
-.structured-editor__help { margin: 0; padding: 7px 12px; border-top: 1px solid var(--border, #d7ded8); background: var(--surface-subtle, #f5f7f5); }
+.structured-editor__help { margin: 0; padding: 7px 12px; border-top: 1px solid var(--border, #d7ded8); border-radius: 0 0 10px 10px; background: var(--surface-subtle, #f5f7f5); }
 .structured-editor--disabled { opacity: .75; }
-:deep(.tiptap) { min-height: 260px; padding: 16px; color: var(--text, #28342d); font-size: 13px; line-height: 1.7; outline: none; }
+:deep(.tiptap) { min-height: 420px; padding: 28px clamp(18px, 5vw, 64px); color: var(--text, #28342d); font-size: 15px; line-height: 1.75; outline: none; }
 :deep(.tiptap > :first-child) { margin-top: 0; }
 :deep(.tiptap > :last-child) { margin-bottom: 0; }
 :deep(.tiptap p),
@@ -894,8 +1096,16 @@ function providerLabel(provider: string) {
 :deep(.tiptap th) { background: var(--surface-subtle, #f2f5f3); font-weight: 700; }
 :deep(.tiptap .selectedCell::after) { position: absolute; inset: 0; z-index: 2; background: color-mix(in srgb, var(--primary, #165a4a) 15%, transparent); content: ''; pointer-events: none; }
 @media (max-width: 680px) {
-  .structured-editor__toolbar { grid-template-columns: 1fr; }
+  .structured-editor__toolbar > .structured-editor__select { min-width: 112px; }
+  .structured-editor__spacer { display: none; }
+  .structured-editor__menu-panel--right { right: auto; left: 0; }
+  .structured-editor__context-bar { align-items: stretch; }
+  .structured-editor__picker { width: 100%; }
+  .structured-editor__picker .structured-editor__select { flex: 1; }
+  .structured-editor__picker--context { margin-left: 0; }
+  .structured-editor__dialog { grid-template-columns: 1fr; }
   .structured-editor__heading { align-items: flex-start; }
   .structured-editor__mode { display: none; }
+  :deep(.tiptap) { min-height: 340px; padding: 20px 16px; }
 }
 </style>

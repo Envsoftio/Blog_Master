@@ -55,9 +55,39 @@
           Loading article
         </div>
 
-        <div v-else-if="article" class="grid gap-6">
-          <div class="order-2 space-y-5">
-            <article class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+        <div v-else-if="article" class="article-workspace">
+          <header class="article-workspace__hero">
+            <div class="article-workspace__title">
+              <p>{{ labelize(article.articleType) }}</p>
+              <h1>{{ article.title }}</h1>
+              <span>/{{ article.slug }}</span>
+            </div>
+            <div class="article-workspace__status">
+              <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="editorialClass(article.editorialState)">{{ labelize(article.editorialState) }}</span>
+              <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="publicationClass(article.publicationState)">{{ labelize(article.publicationState) }}</span>
+            </div>
+          </header>
+
+          <nav class="article-workspace__tabs" aria-label="Article workspace">
+            <button v-if="canWriteArticles" type="button" :class="{ 'is-active': workspaceTab === 'write' }" :aria-current="workspaceTab === 'write' ? 'page' : undefined" @click="workspaceTab = 'write'">
+              <FilePenLine :size="17" /> Write
+            </button>
+            <button type="button" :class="{ 'is-active': workspaceTab === 'overview' }" :aria-current="workspaceTab === 'overview' ? 'page' : undefined" @click="workspaceTab = 'overview'">
+              <Hash :size="17" /> Overview
+            </button>
+            <button v-if="canPublishArticles" type="button" :class="{ 'is-active': workspaceTab === 'publish' }" :aria-current="workspaceTab === 'publish' ? 'page' : undefined" @click="workspaceTab = 'publish'">
+              <UploadCloud :size="17" /> Publish
+            </button>
+            <button type="button" :class="{ 'is-active': workspaceTab === 'review' }" :aria-current="workspaceTab === 'review' ? 'page' : undefined" @click="workspaceTab = 'review'">
+              <UserCheck :size="17" /> Review <span v-if="openAssignmentCount + openCommentCount" class="article-workspace__count">{{ openAssignmentCount + openCommentCount }}</span>
+            </button>
+            <button type="button" :class="{ 'is-active': workspaceTab === 'history' }" :aria-current="workspaceTab === 'history' ? 'page' : undefined" @click="workspaceTab = 'history'">
+              <History :size="17" /> History
+            </button>
+          </nav>
+
+          <div v-show="workspaceTab !== 'write' && workspaceTab !== 'publish'" class="article-workspace__panel-stack">
+            <article v-show="workspaceTab === 'overview'" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div class="min-w-0">
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">{{ labelize(article.articleType) }}</p>
@@ -99,7 +129,7 @@
               </div>
             </article>
 
-            <article class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <article v-show="workspaceTab === 'review'" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Latest immutable revision</p>
@@ -164,14 +194,14 @@
             </article>
 
             <ArticleTrustPanel
-              v-if="article.latestRevision"
+              v-if="article.latestRevision && workspaceTab === 'review'"
               :project-id="projectID"
               :article-id="articleID"
               :revision-id="article.latestRevision.id"
               :role="project?.role || ''"
             />
 
-            <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <section v-show="workspaceTab === 'history'" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Immutable history</p>
@@ -367,7 +397,7 @@
               </div>
             </section>
 
-            <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <section v-show="workspaceTab === 'review'" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Review ownership</p>
@@ -478,7 +508,7 @@
               </button>
             </section>
 
-            <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <section v-show="workspaceTab === 'review'" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Review thread</p>
@@ -577,8 +607,8 @@
             </section>
           </div>
 
-          <div class="order-1 space-y-5">
-            <form v-if="canWriteArticles" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="createRevision">
+          <div v-show="workspaceTab === 'write' || workspaceTab === 'overview' || workspaceTab === 'publish'" class="article-workspace__panel-stack" :class="{ 'article-publish-grid': workspaceTab === 'publish' }">
+            <form v-if="canWriteArticles" v-show="workspaceTab === 'write'" class="article-compose space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="createRevision">
               <div class="flex items-start gap-3">
                 <FilePenLine class="mt-1 h-4 w-4 text-[#3162a3]" />
                 <div class="min-w-0 flex-1">
@@ -624,7 +654,7 @@
                 Your saved working draft was restored after the latest immutable revision was checked.
               </p>
 
-              <label class="block space-y-2">
+              <label class="article-compose__title block space-y-2">
                 <span class="text-sm font-medium">Title</span>
                 <input v-model.trim="revisionForm.title" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
               </label>
@@ -647,20 +677,26 @@
                 :media-assets="mediaAssets"
                 :sources="sources"
               />
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Deck</span>
-                <textarea v-model.trim="revisionForm.deck" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Excerpt</span>
-                <textarea v-model.trim="revisionForm.excerpt" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Short answer</span>
-                <textarea v-model.trim="revisionForm.shortAnswer" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
-              </label>
-              <fieldset class="grid gap-3 rounded-md border border-[#d7ded8] p-3 dark:border-[#3f4843] sm:grid-cols-2">
-                <legend class="px-2 text-sm font-medium">SEO and social preview</legend>
+              <div class="article-compose__summaries">
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">Deck <small>Optional subtitle</small></span>
+                  <textarea v-model.trim="revisionForm.deck" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                </label>
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">Excerpt <small>Article summary</small></span>
+                  <textarea v-model.trim="revisionForm.excerpt" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                </label>
+                <label class="block space-y-2">
+                  <span class="text-sm font-medium">Short answer <small>Direct answer for search</small></span>
+                  <textarea v-model.trim="revisionForm.shortAnswer" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                </label>
+              </div>
+              <details class="article-compose__advanced">
+                <summary>
+                  <span><strong>SEO and social preview</strong><small>Search metadata, robots, and Open Graph</small></span>
+                  <ChevronDown :size="17" />
+                </summary>
+                <div class="grid gap-3 p-3 sm:grid-cols-2">
                 <label class="block space-y-2">
                   <span class="text-sm font-medium">SEO title</span>
                   <input v-model.trim="revisionForm.seoTitle" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Defaults to revision title" />
@@ -690,7 +726,8 @@
                   <span class="text-sm font-medium">Open Graph description</span>
                   <textarea v-model.trim="revisionForm.openGraphDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
                 </label>
-              </fieldset>
+                </div>
+              </details>
               <button
                 class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
                 type="submit"
@@ -704,6 +741,7 @@
 
             <form
               v-if="projectIsActive && copyDestinations.length"
+              v-show="workspaceTab === 'overview'"
               class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]"
               @submit.prevent="copyArticle"
             >
@@ -789,7 +827,7 @@
               </button>
             </form>
 
-            <form v-if="canPublishArticles" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="publishArticle">
+            <form v-if="canPublishArticles" v-show="workspaceTab === 'publish'" class="article-publish__primary space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="publishArticle">
               <div class="flex items-start gap-3">
                 <UploadCloud class="mt-1 h-4 w-4 text-[#165a4a]" />
                 <div>
@@ -827,7 +865,7 @@
               </div>
             </form>
 
-            <form v-if="canPublishArticles" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="scheduleArticle">
+            <form v-if="canPublishArticles" v-show="workspaceTab === 'publish'" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="scheduleArticle">
               <div class="flex items-start gap-3">
                 <CalendarClock class="mt-1 h-4 w-4 text-[#8a5b00]" />
                 <div>
@@ -851,7 +889,7 @@
               </button>
             </form>
 
-            <form v-if="canPublishArticles" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="rollbackArticle">
+            <form v-if="canPublishArticles" v-show="workspaceTab === 'publish'" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="rollbackArticle">
               <div class="flex items-start gap-3">
                 <History class="mt-1 h-4 w-4 text-[#6b5797]" />
                 <div>
@@ -879,7 +917,7 @@
               </button>
             </form>
 
-            <section v-if="canPublishArticles" class="space-y-4 rounded-lg border border-[#d9b7aa] bg-white p-5 shadow-sm dark:border-[#6d352f] dark:bg-[#202522]">
+            <section v-if="canPublishArticles" v-show="workspaceTab === 'publish'" class="article-publish__danger space-y-4 rounded-lg border border-[#d9b7aa] bg-white p-5 shadow-sm dark:border-[#6d352f] dark:bg-[#202522]">
               <div class="flex items-start gap-3">
                 <Trash2 class="mt-1 h-4 w-4 text-[#9b2d23] dark:text-[#ffc4bd]" />
                 <div>
@@ -913,6 +951,7 @@ import {
   ArrowLeft,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
   CopyPlus,
   FilePenLine,
   GitCompareArrows,
@@ -1140,6 +1179,7 @@ const project = ref<AdminProject | null>(null)
 const currentUser = useState<{ id: string } | null>('admin-user', () => null)
 const projects = ref<AdminProject[]>([])
 const article = ref<AdminArticle | null>(null)
+const workspaceTab = ref<'write' | 'overview' | 'publish' | 'review' | 'history'>('write')
 const categories = ref<TaxonomyTerm[]>([])
 const authors = ref<AdminAuthor[]>([])
 const mediaAssets = ref<AdminMediaAsset[]>([])
@@ -1253,6 +1293,9 @@ const canWriteArticles = computed(() => projectIsActive.value && ['project_owner
 const canReviewArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'reviewer'].includes(project.value?.role || ''))
 const canPublishArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
 const canComment = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'reviewer', 'writer'].includes(project.value?.role || ''))
+watch(canWriteArticles, (canWrite) => {
+  if (!canWrite && workspaceTab.value === 'write') workspaceTab.value = 'overview'
+})
 const canCreateRevision = computed(() => canWriteArticles.value && Boolean(
   revisionForm.title.trim()
   && hasValidRevisionContributors(revisionForm.contributors)
@@ -3126,6 +3169,186 @@ function apiErrorStatus(error: unknown) {
   color: var(--text);
 }
 
+.article-workspace {
+  display: grid;
+  gap: 20px;
+}
+
+.article-workspace__hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 4px 2px 0;
+}
+
+.article-workspace__title {
+  min-width: 0;
+}
+
+.article-workspace__title p {
+  margin: 0 0 5px;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.article-workspace__title h1 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: clamp(24px, 3vw, 34px);
+  font-weight: 750;
+  letter-spacing: -.025em;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.article-workspace__title > span {
+  display: block;
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.article-workspace__status {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+  padding-top: 6px;
+}
+
+.article-workspace__tabs {
+  position: sticky;
+  z-index: 20;
+  top: 0;
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(12px);
+}
+
+.article-workspace__tabs button {
+  display: inline-flex;
+  min-height: 38px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 13px;
+  border: 0 !important;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.article-workspace__tabs button:hover {
+  background: var(--surface-subtle);
+  color: var(--text);
+}
+
+.article-workspace__tabs button.is-active {
+  background: var(--primary-soft);
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+.article-workspace__count {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 10px;
+}
+
+.article-workspace__panel-stack {
+  display: grid;
+  gap: 20px;
+}
+
+.article-compose {
+  border-top: 3px solid var(--primary) !important;
+  border-radius: 12px !important;
+  padding: clamp(18px, 3vw, 28px) !important;
+}
+
+.article-compose__title input {
+  min-height: 48px;
+  padding-right: 14px;
+  padding-left: 14px;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.article-compose__summaries {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.article-compose__summaries small {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.article-compose__summaries textarea {
+  min-height: 92px;
+}
+
+.article-compose__advanced {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.article-compose__advanced > summary {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 13px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.article-compose__advanced > summary::-webkit-details-marker { display: none; }
+.article-compose__advanced > summary:hover { background: var(--surface-subtle); }
+.article-compose__advanced > summary > span { display: grid; gap: 2px; }
+.article-compose__advanced > summary strong { font-size: 13px; }
+.article-compose__advanced > summary small { color: var(--text-faint); font-size: 11px; }
+.article-compose__advanced[open] > summary { border-bottom: 1px solid var(--border); }
+.article-compose__advanced[open] > summary svg { transform: rotate(180deg); }
+
+.article-publish-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.article-publish__primary,
+.article-publish__danger { grid-column: 1 / -1; }
+
 .article-detail > header {
   display: none;
 }
@@ -3343,6 +3566,48 @@ function apiErrorStatus(error: unknown) {
 @media (min-width: 1024px) {
   .article-detail .lg\:grid-cols-\[minmax\(0\,1fr\)_150px_190px_auto\] {
     grid-template-columns: minmax(0, 1fr) 150px 190px auto;
+  }
+}
+
+@media (max-width: 820px) {
+  .article-workspace__hero {
+    display: grid;
+    gap: 12px;
+  }
+
+  .article-workspace__status {
+    justify-content: flex-start;
+    padding-top: 0;
+  }
+
+  .article-compose__summaries,
+  .article-publish-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .article-publish__primary,
+  .article-publish__danger {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .article-workspace__title h1 {
+    font-size: 24px;
+  }
+
+  .article-workspace__tabs {
+    margin-right: -2px;
+    margin-left: -2px;
+  }
+
+  .article-workspace__tabs button {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .article-compose {
+    padding: 16px !important;
   }
 }
 </style>
