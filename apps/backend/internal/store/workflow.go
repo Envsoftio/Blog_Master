@@ -2889,7 +2889,6 @@ func seoSnapshotJSON(input SEOInput, canonicalURL string) (string, error) {
 			"description": input.OpenGraphSummary,
 			"image":       input.OpenGraphImage,
 		},
-		"structuredData": []any{},
 	})
 	return string(raw), err
 }

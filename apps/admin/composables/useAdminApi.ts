@@ -186,6 +186,7 @@ export type AdminAPIKey = {
   createdBy: string
   createdAt: string
   revokedAt?: string
+  status: 'active' | 'expired' | 'revoked'
 }
 
 export type ReviewComment = {
@@ -809,8 +810,10 @@ export function useAdminApi() {
     )
   }
 
-  async function listAPIKeys(projectID: string) {
-    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminAPIKey>>(`/api/v1/projects/${projectID}/api-keys`))
+  async function listAPIKeys(projectID: string, cursor = '', limit = 100) {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminAPIKey>>(`/api/v1/projects/${projectID}/api-keys`, {
+      query: { limit, ...(cursor ? { cursor } : {}) }
+    }))
   }
 
   async function createAPIKey(projectID: string, payload: { environment: string, name: string, scopes: string[], expiresAt?: string }) {
@@ -820,9 +823,16 @@ export function useAdminApi() {
     }))
   }
 
-  async function mutateAPIKey(projectID: string, keyID: string, action: 'rotate' | 'revoke') {
-    return await request<APIEnvelope<AdminAPIKey | { key: AdminAPIKey, secret: string }>>(
-      `/api/v1/projects/${projectID}/api-keys/${keyID}/${action}`,
+  async function rotateAPIKey(projectID: string, keyID: string) {
+    return await request<APIEnvelope<{ key: AdminAPIKey, secret: string }>>(
+      `/api/v1/projects/${projectID}/api-keys/${keyID}/rotate`,
+      await withCSRF({ method: 'POST' })
+    )
+  }
+
+  async function revokeAPIKey(projectID: string, keyID: string) {
+    return await request<APIEnvelope<AdminAPIKey>>(
+      `/api/v1/projects/${projectID}/api-keys/${keyID}/revoke`,
       await withCSRF({ method: 'POST' })
     )
   }
@@ -1274,7 +1284,8 @@ export function useAdminApi() {
     memberLoginAction,
     listAPIKeys,
     createAPIKey,
-    mutateAPIKey,
+    rotateAPIKey,
+    revokeAPIKey,
     listTaxonomy,
     createTaxonomy,
     listCategories,

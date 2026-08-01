@@ -1,16 +1,16 @@
-# Product Requirements Document: Multi-Project SEO and LLM Blog Content Provider
+# Product Requirements Document: Multi-Project Article Content Provider
 
 | Field | Value |
 |---|---|
-| Status | Draft v1.15, active implementation alignment |
-| Version | 1.15 |
+| Status | Draft v1.16, active implementation alignment |
+| Version | 1.16 |
 | Date | 2026-08-01 |
 | Product | Headless blog CMS and versioned JSON content API |
 | Primary users | Project owner/administrator, editor, reviewer, writer, landing-page developer |
 | Direct consumers | Landing-project build, SSR, ISR and backend services |
 | Indirect consumers | Visitors, search crawlers and answer engines through landing-project HTML |
 | Object storage decision | Backblaze B2 Cloud Storage for media and SQLite backup data |
-| Revision note | Clarified the headless SEO boundary; removed workspace grouping and CMS-side domain verification, webmaster imports, IndexNow reporting, landing/CDN acknowledgements and automated internal-link/cannibalization analysis from committed scope |
+| Revision note | Made the consumer-owned SEO boundary explicit: the provider stores and returns optional SEO fields but does not generate or render JSON-LD, HTML metadata or crawler-facing output |
 
 ## 1. Executive summary
 
@@ -46,6 +46,8 @@ The provider owns:
 - Published JSON contracts, ETags, Redis caching and change events.
 - JSON discovery and redirect manifests needed by landing projects.
 
+SEO-related values in the JSON contract are optional, editorially managed inputs. They are not rendered SEO output and do not make this provider a public website. A consuming project may use, override or ignore them according to its own routes, domain, templates and SEO policy.
+
 Each landing project owns:
 
 - Public URL routing and HTTP status codes.
@@ -55,6 +57,8 @@ Each landing project owns:
 - Redirect execution.
 - Its public CDN/page cache.
 - Visitor analytics, comments, newsletter capture and other site experiences.
+
+The landing project is the sole SEO execution boundary. It decides the final canonical URL, robots directives, page metadata, Open Graph tags, JSON-LD graph, sitemap/feed membership and redirect behavior. This provider must not emit those items as crawler-facing HTML, headers or files, and must not generate a schema.org graph on the consumer's behalf.
 
 Except for the Nuxt administration application, media delivery and health/documentation endpoints, content-provider responses are JSON. The Go API may include sanitized HTML as a JSON string and structured editor blocks as JSON, but it does not return a complete public blog webpage.
 
@@ -100,13 +104,13 @@ Direct database access from landing projects is rejected because it would:
 - Bypass publication status, approval, cache invalidation and rate limits.
 - Couple every landing page to internal tables and migrations.
 - Make key revocation, audit, API versioning and response compatibility difficult.
-- Prevent the backend from enforcing canonical URLs and published revision selection.
+- Prevent the backend from enforcing project isolation and published revision selection.
 
 A project may issue multiple named API keys per environment and consumer, for example `project-a-production-build`, `project-a-production-runtime` and `project-a-staging`. Every key maps to exactly one `project_id` and a published-read scope set. The backend derives the project from the key; it does not trust a client-supplied tenant identifier. Multiple keys permit independent revocation, usage tracking and overlapping rotation without interrupting every consumer.
 
 The API key is secret only when used server-to-server. It must remain in private environment configuration and must never be embedded in browser JavaScript, HTML, `localStorage` or a `NUXT_PUBLIC_*` setting. A browser cannot keep an API key secret. A browser-facing public Content API is outside the initial scope; a landing project that needs runtime retrieval shall proxy it through its own server.
 
-For SEO, the preferred integration is build-time generation, SSR or ISR. The provider returns JSON; the landing project turns it into article HTML, title, canonical URL, structured data and metadata in its initial page response. Crawlers must not need the provider API key, a cookie or client-side JavaScript to read an article.
+For SEO, the preferred integration is build-time generation, SSR or ISR. The provider returns article JSON plus optional editorial metadata inputs; the landing project decides how to turn those inputs into article HTML, title, canonical URL, structured data and metadata in its initial page response. Crawlers must not need the provider API key, a cookie or client-side JavaScript to read an article.
 
 Representative article response:
 
@@ -144,18 +148,7 @@ Representative article response:
       "description": "Search description",
       "canonicalUrl": "https://project.example/blog/example-post",
       "index": true,
-      "openGraph": {},
-      "structuredData": [
-        {
-          "@context": "https://schema.org",
-          "@type": "BlogPosting",
-          "@id": "https://project.example/blog/example-post#article",
-          "url": "https://project.example/blog/example-post",
-          "mainEntityOfPage": "https://project.example/blog/example-post",
-          "headline": "Example title",
-          "datePublished": "2026-07-28T10:00:00Z"
-        }
-      ]
+      "openGraph": {}
     },
     "trust": {
       "sources": [],
@@ -270,9 +263,9 @@ Every AI-assisted publication requires:
 
 AI detector scores are not a publication gate. Quality is measured through factual accuracy, source validity, originality, specificity, usefulness, brand voice and human review.
 
-### 2.5 How is the platform designed for SEO and LLMs?
+### 2.5 How does the platform support consumer-owned SEO and LLM discoverability?
 
-The provider supplies the structured JSON needed for the landing project to implement characteristics that make content strong for search and useful for LLM retrieval and citation:
+The provider supplies article content and optional metadata inputs. The landing project independently implements the characteristics that make its rendered pages strong for search and useful for LLM retrieval and citation:
 
 - Stable, crawlable, canonical public HTML.
 - Original reporting, data, examples or expertise.
@@ -283,9 +276,9 @@ The provider supplies the structured JSON needed for the landing project to impl
 - Useful tables, FAQs, media and transcripts where appropriate.
 - Topic clusters, internal links and consistent entities.
 - JSON discovery and redirect manifests from which the landing project produces XML sitemaps, RSS/Atom and redirects.
-- Accurate structured data that matches visible content.
+- Accurate structured data generated by the landing project and matched to its visible content.
 
-There is no special guaranteed “LLM schema.” A landing project may generate `llms.txt` as an optional derivative for systems that choose to use it, but it is not a source of truth and Google currently says it ignores it. Conventional technical SEO, evidence and useful public pages remain the foundation. The JSON provider enables these outputs but does not serve the public crawler-facing files itself.
+There is no special guaranteed “LLM schema.” A landing project may generate `llms.txt` as an optional derivative for systems that choose to use it, but it is not a source of truth. Conventional technical SEO, evidence and useful public pages remain the foundation. The JSON provider supplies reusable content and metadata inputs but neither generates nor serves crawler-facing SEO output.
 
 ### 2.6 Why Fiber, and why was it not the initial conservative default?
 
@@ -352,7 +345,7 @@ This does not combine Go and Nuxt into one executable. In production, Nginx is t
 
 ## 3. Product problem
 
-Maintaining a separate blog backend, authoring workflow and SEO implementation for every landing-page project produces duplication, inconsistent quality and operational risk. Writers have no unified workflow, AI output may be published without sufficient evidence, and landing integrations can drift in fields, URLs, schema and caching.
+Maintaining a separate article store, authoring workflow and publication backend for every landing-page project produces duplication, inconsistent quality and operational risk. Writers have no unified workflow, AI output may be published without sufficient evidence, and landing integrations can drift in their interpretation of content and optional metadata fields. Each landing project still intentionally owns its site-specific SEO implementation.
 
 The product must provide:
 
@@ -360,7 +353,7 @@ The product must provide:
 - Strong project isolation without a complex enterprise identity platform.
 - A safe draft, review, approval and publication workflow.
 - Fast and reliable delivery of published content.
-- Search- and answer-engine-friendly page data.
+- Complete article/entity data and optional metadata inputs that downstream renderers can use for search- and answer-engine-friendly pages.
 - AI assistance that improves research and writing without bypassing human responsibility.
 - Low operational complexity and a clear scaling path.
 
@@ -372,10 +365,10 @@ The product must provide:
 - Allow administrators and writers to create content manually or with AI assistance.
 - Preserve a complete immutable revision, review, approval and audit history.
 - Deliver only approved published revisions through a stable API.
-- Produce versioned JSON data needed by landing projects for canonical public blog pages, archives, feeds, redirects and structured data.
+- Produce versioned article JSON and optional metadata/integration data from which landing projects build their own public pages, archives, feeds, redirects and structured data.
 - Make publishing, updating, unpublishing and rollback predictable and recoverable.
 - Reduce repeated implementation work across landing projects through OpenAPI and generated SDKs.
-- Improve organic discovery, crawlability, sourceworthiness and LLM citation potential.
+- Enable landing projects to improve organic discovery, crawlability, sourceworthiness and LLM citation potential without moving their SEO execution into this provider.
 - Start with an affordable SQLite-centered deployment without preventing a later database migration.
 
 ### 4.2 Engineering goals
@@ -551,15 +544,15 @@ No default password or public bootstrap route is permitted.
 ### 8.1 Project management
 
 - **FR-PROJECT-002:** Each project shall have a stable internal ID, a globally unique slug and a separate non-secret public identifier.
-- **FR-PROJECT-003:** Each project shall configure its project name, primary domain, blog base path and timezone. The content language is fixed to English.
-- **FR-PROJECT-004:** Each project shall configure publisher name, logo, URL and verified external identities.
-- **FR-PROJECT-005:** Each project shall configure default SEO title patterns, social images and robots behavior.
+- **FR-PROJECT-003:** Each project shall configure its project name and timezone and may configure an intended primary domain and blog base path as advisory integration inputs. The content language is fixed to English.
+- **FR-PROJECT-004:** Each project may configure publisher name, logo, URL and verified external identities for downstream consumers.
+- **FR-PROJECT-005:** Each project may configure default SEO title patterns, social images and robots intent; consuming projects may override or ignore these fields.
 - **FR-PROJECT-006:** Each project shall have a voice profile, topic boundaries, approved product facts, terminology and prohibited claims.
 - **FR-PROJECT-007:** Each project shall support multiple named staging and production API keys without requiring one shared credential.
 - **FR-PROJECT-008:** Staging and preview JSON shall default to `index: false` and shall never enter the production discovery manifest consumed for public sitemaps.
 - **FR-PROJECT-009:** Authorized users shall be able to create, list, view, update, suspend, archive and, subject to dependency checks and retention, delete projects.
 - **FR-PROJECT-010:** A project is the tenant/security boundary and shall own its articles, revisions, publications, taxonomy, authors, assets, sources, AI jobs, integrations and audit records.
-- **FR-PROJECT-011:** In MVP, one project shall normally represent one landing-page website or brand with exactly one configured primary canonical domain and optional staging/alias domains.
+- **FR-PROJECT-011:** In MVP, one project shall normally represent one landing-page website or brand. It may record one intended primary domain plus staging/alias domains, but the consuming project remains authoritative for deployed domains and canonical URLs.
 - **FR-PROJECT-012:** Project creation and the creator’s `project_owner` membership shall commit atomically.
 - **FR-PROJECT-013:** Suspending a project shall immediately deny its human sessions within that project, reject its API keys and stop new schedules/webhook deliveries without destroying published history.
 - **FR-PROJECT-014:** Project archival or deletion shall produce a dependency report covering active keys, members, publications, schedules, redirects, assets, webhooks and pending jobs.
@@ -683,7 +676,7 @@ Supported body blocks shall include:
 - **FR-CONTENT-010:** Raw HTML blocks shall be disabled by default. Any later exception requires a separately reviewed sanitizer and project policy.
 - **FR-CONTENT-011:** Meaningful images shall require alt text; decorative images shall carry an explicit decorative flag and empty alt value.
 - **FR-CONTENT-012:** Tables shall support header semantics and a landing rendering contract that remains usable on narrow screens.
-- **FR-CONTENT-013:** FAQ questions and answers used in structured-data inputs shall also be visible in the article body.
+- **FR-CONTENT-013:** FAQ questions and answers exposed for possible consumer-side structured data shall also be visible in the article body.
 - **FR-CONTENT-014:** Heading IDs shall remain stable across normal text edits and shall change only through an explicit anchor-edit action with collision checking.
 - **FR-CONTENT-015:** The admin shall provide revision history and accessible side-by-side or inline diff for public fields and structured body changes.
 - **FR-CONTENT-016:** Every Article shall have exactly one non-null `project_id`, assigned at creation and immutable afterward.
@@ -725,7 +718,7 @@ Supported body blocks shall include:
 - **FR-WORKFLOW-010:** The system shall display provider publication, Redis/outbox and webhook-delivery status without claiming visibility into landing-site or CDN propagation.
 - **FR-WORKFLOW-011:** Content shall support assignment, due dates, reviewer/SME assignment and notifications.
 - **FR-WORKFLOW-012:** Comments shall support mentions without exposing users from projects the commenter cannot access.
-- **FR-WORKFLOW-013:** Approval shall cover every public field—body, title, byline, sources, taxonomy, media, SEO, social and structured-data inputs. Changing any approved public field requires a new approval-bound revision or publication-metadata revision.
+- **FR-WORKFLOW-013:** Approval shall cover every published field—body, title, byline, sources, taxonomy, media and optional SEO/social inputs. Changing any approved published field requires a new approval-bound revision or publication-metadata revision.
 - **FR-WORKFLOW-014:** Reviewers shall be able to compare the submitted revision against its base revision and the currently published revision before approval.
 
 ### 8.9 Scheduling and lifecycle
@@ -758,27 +751,27 @@ Supported body blocks shall include:
 - **FR-MEDIA-011:** Image processing shall remove EXIF/GPS metadata unless an explicit editorial policy preserves it.
 - **FR-MEDIA-012:** Risk-appropriate document and archive uploads shall be malware scanned before becoming downloadable.
 
-### 8.11 SEO and landing-rendering data
+### 8.11 Optional SEO inputs and landing-rendering data
 
-The provider returns SEO and discovery data as JSON. The landing project is responsible for converting that contract into public HTML, headers, crawler files and redirects.
+The provider may return editorial SEO fields and discovery data as JSON. These values are advisory inputs, not final SEO directives. The landing project owns all validation against its actual route/domain and all conversion into public HTML, headers, JSON-LD, crawler files and redirects.
 
-- **FR-SEO-001:** Every publication JSON object shall include its intended stable canonical URL on the landing project’s configured primary domain.
-- **FR-SEO-002:** The API shall return title, description, canonical URL, robots intent, social metadata and publication dates.
-- **FR-SEO-003:** The API shall return verified inputs for `BlogPosting`/`Article`, `BreadcrumbList`, author profile and organization structured data.
-- **FR-SEO-004:** Returned structured-data inputs shall never contain unsupported ratings, FAQs, claims or entities.
-- **FR-SEO-005:** The JSON contract shall include canonical and English-language metadata for the landing renderer.
+- **FR-SEO-001:** A publication JSON object may include an editorially intended canonical URL, but the landing project shall validate or replace it for its real route and domain.
+- **FR-SEO-002:** The API shall return optional title, description, canonical, robots-intent and social metadata fields alongside publication dates for consumers that choose to use them.
+- **FR-SEO-003:** The API shall return article, author, taxonomy, organization and media data from which a landing project can generate its own `BlogPosting`/`Article` and `BreadcrumbList` JSON-LD.
+- **FR-SEO-004:** The provider shall not generate schema.org/JSON-LD objects. Structured-data selection, validation and rendering belong to the landing project.
+- **FR-SEO-005:** The JSON contract may include canonical and English-language metadata inputs for the landing renderer; these inputs are never emitted as crawler-facing tags by the provider.
 - **FR-SEO-006:** The provider shall return a JSON discovery manifest containing the canonical indexable URLs and material `lastmod` data from which each landing project builds XML sitemap files.
 - **FR-SEO-007:** The provider shall return ordered JSON feed data from which a landing project may build RSS and/or Atom.
 - **FR-SEO-008:** Discovery-manifest `lastmod` and returned modification dates shall reflect material changes only.
 - **FR-SEO-009:** The provider shall return previous-slug redirect records; the landing project shall emit one-hop permanent redirects.
 - **FR-SEO-010:** Duplicate publication across project domains shall require either one declared canonical original or a materially distinct adaptation.
-- **FR-SEO-011:** The provider shall return project crawler-policy configuration; the landing project owns its public `robots.txt`.
+- **FR-SEO-011:** The provider may return editorial crawler-policy intent; the landing project owns the final policy and its public `robots.txt`.
 - **FR-SEO-012:** The provider may return optional JSON data for a landing project to produce `llms.txt`, but shall not serve or treat it as a ranking requirement.
 - **FR-SEO-014:** Preview and staging JSON shall be explicitly flagged non-indexable and shall not enter the production discovery manifest.
 - **FR-SEO-015:** The JSON contract shall not include obsolete `meta keywords`.
 - **FR-SEO-017:** Empty or thin taxonomy/archive entries shall be excluded from the discovery manifest or flagged `index: false`.
 - **FR-SEO-018:** A link checker shall detect broken links, redirected internal links, redirect chains and loops and expose results to editors and landing integrations.
-- **FR-SEO-019:** The landing integration guide and reference tests shall verify that returned SEO fields are rendered consistently in HTML, JSON-LD, sitemap/feed output and HTTP status/redirect behavior.
+- **FR-SEO-019:** Each landing integration shall test its own interpretation of optional SEO inputs across HTML, JSON-LD, sitemap/feed output and HTTP status/redirect behavior.
 - **FR-SEO-020:** The published JSON shall expose explicit Open Graph title, description and image plus primary-image dimensions when supplied and approved.
 - **FR-SEO-021:** Revisions may include editorially verified definitions and named-entity references for visible content and internal consistency; the system shall not fabricate entities or hidden LLM-only text.
 
@@ -905,7 +898,7 @@ Product-facing article field groups are:
 | Taxonomy | Primary category, secondary categories, tags, optional series/position, topic relationships |
 | Publishing | Editorial state, publication state, schedule, approved/published revision |
 | Dates | Created, first published, materially modified, review due, content expiry, retired |
-| SEO/social | SEO title/description, canonical, robots, Open Graph fields, structured-data inputs |
+| SEO/social inputs | Optional SEO title/description, intended canonical, robots intent and Open Graph fields for consumer interpretation |
 | Trust | Sources, block citations, claims, methodology, disclosures, corrections |
 | AI/internal | Brief, evidence packet, AI jobs/runs, assistance level, provenance and quality results |
 | Operations | Revision number, content hash, publication version, cache generation and audit history |
@@ -1214,7 +1207,7 @@ The provider’s standard article JSON supplies the landing project with data to
 13. Manual/deterministic related articles and optional topic-cluster links.
 14. Author biography.
 15. Reusable CTA/component identifiers.
-16. Accurate JSON-LD inputs and Open Graph metadata.
+16. Accurate article/entity inputs and optional Open Graph metadata from which consumers can build their own JSON-LD and tags.
 17. Optional editorial definitions and entity references that correspond to visible content.
 
 Visitor comments and newsletter subscriptions are outside this provider’s scope. A landing project may use returned CTA/component identifiers to connect its own visitor-facing services.
@@ -1314,7 +1307,7 @@ Raw session, invitation, reset, API-key and preview secrets are never stored. Ha
 - Series and manually curated topic-cluster relationships.
 - Advanced stale-content/correction workflows, provider-side editorial analytics and landing-integration diagnostics.
 - Refined editor/reviewer capabilities.
-- SEO/social/structured-data inputs, redirect history, discovery/feed JSON and webhooks.
+- Optional SEO/social inputs, article/entity data, redirect history, discovery/feed JSON and webhooks.
 - Versioned published JSON, cursor pagination, ETag and Redis cache behavior.
 
 **Uncommitted future considerations**
@@ -1651,7 +1644,7 @@ Landing-rendered HTML → visitors, search crawlers and answer engines
 
 ### 11.2 Repository and runtime structure
 
-The product shall use one Git monorepo containing independent Go and Nuxt applications. The checked-in v1.15 layout and naming baseline is:
+The product shall use one Git monorepo containing independent Go and Nuxt applications. The checked-in v1.16 layout and naming baseline is:
 
 ```text
 seoblog/
@@ -1723,7 +1716,7 @@ editorial       review, comments and approvals
 publication     schedules, published pointers and rollback
 taxonomy        categories, tags, topics and series
 media           assets, variants, credits and storage
-seo             canonical rules, schema inputs, discovery/feed data and redirect manifests
+metadata        optional canonical/social/crawler intent plus discovery/feed and redirect integration data
 delivery        published JSON DTOs, ETags and cache behavior
 integrations    project API keys and landing revalidation webhooks
 ai              providers, evidence, jobs, provenance and evaluations
@@ -2353,7 +2346,7 @@ An authorized project owner may change the configured canonical domain through a
 - Generate old-domain/old-path redirect requirements.
 - Update canonical and webhook targets atomically where possible.
 - Prevent redirect loops.
-- Revalidate sitemaps, feeds, structured data and project configuration.
+- Advance provider content generation and notify consumers so they can revalidate their own routes, sitemaps, feeds and structured data.
 - Preserve an audit record and rollback plan.
 
 ### 12.12 Operational runbooks
@@ -2809,8 +2802,8 @@ Each publication event includes `event_id`, `project_id`, `content_id`, `revisio
 
 ### 18.4 SEO and LLM readiness
 
-- The provider returns all required content/SEO data as JSON, and the reference landing integration renders complete article HTML and metadata in the initial response.
-- Canonical, robots, dates, authors, images and JSON-LD match visible content.
+- The provider returns article content plus optional SEO inputs as JSON, and each landing integration owns complete article HTML and metadata in the initial response.
+- On each landing project, canonical, robots, dates, authors, images and consumer-generated JSON-LD match visible content.
 - Old slugs redirect permanently.
 - Staging and preview URLs are non-indexable.
 - Sitemaps include only canonical indexable publications and use honest `lastmod`.
@@ -2849,7 +2842,7 @@ Production launch requires evidence that:
 - Article ownership tests prove non-null/immutable `project_id`, project-scoped repository signatures and composite foreign-key rejection of cross-project revisions, publications and dependencies.
 - Publication/cache failure tests always converge on the latest committed revision.
 - Preview and draft content cannot enter project-key results, production feed-data or discovery manifests.
-- Representative structured data, canonicals, dates, redirects and English-language metadata validate against rendered pages.
+- Representative consumer-generated structured data, canonicals, dates, redirects and English-language metadata validate against landing-project pages.
 - Redis loss produces slower service rather than incorrect or unavailable authoritative content.
 - A clean-host backup restoration meets the declared RPO/RTO or has a formally accepted exception.
 - Jobs/outbox delivery is retryable, idempotent, lease-safe and safe when processed out of order.
@@ -2871,13 +2864,13 @@ The product shall be implemented and accepted as one complete delivery. The work
 
 ### Current implementation checkpoint
 
-As of PRD v1.15, the checked-in foundation includes root Taskfile orchestration; Docker Compose services for Nginx, Nuxt, Go API, Go worker, Redis and Mailpit; an `admincli` for migrations/bootstrap/OpenAPI generation; embedded SQLite migrations; Fiber v3 with Huma; a Nuxt admin shell with project-scoped pages; invite/session/member/API-key/audit flows; article/category/author/series workflows; a TipTap visual editing foundation on article creation and revision editing; versioned per-user structured article autosaves with browser fallback and conflict recovery; scheduled publication behavior; revision history and comparison; rollback; audited cross-project article copying; preview tokens; source/claim/disclosure/correction workflows; media/B2 processing; AI evidence/jobs/provenance; webhook delivery/replay; Redis cache-aside reads; protected English-only Content API routes with generated Article JSON-LD; production release automation; and a server-only TypeScript client. This checkpoint is implementation evidence, not a scope reduction.
+As of PRD v1.16, the checked-in foundation includes root Taskfile orchestration; Docker Compose services for Nginx, Nuxt, Go API, Go worker, Redis and Mailpit; an `admincli` for migrations/bootstrap/OpenAPI generation; embedded SQLite migrations; Fiber v3 with Huma; a Nuxt admin shell with project-scoped pages; invite/session/member/API-key/audit flows; article/category/author/series workflows; a TipTap visual editing foundation on article creation and revision editing; versioned per-user structured article autosaves with browser fallback and conflict recovery; scheduled publication behavior; revision history and comparison; rollback; audited cross-project article copying; preview tokens; source/claim/disclosure/correction workflows; media/B2 processing; AI evidence/jobs/provenance; webhook delivery/replay; Redis cache-aside reads; protected English-only Content API routes with optional SEO/social inputs and no generated JSON-LD; production release automation; and a server-only TypeScript client. This checkpoint is implementation evidence, not a scope reduction.
 
-Still-required committed scope includes specialized semantic editor blocks, explicit collision-checked anchor editing, media/citation pickers and an accessible structured diff, BreadcrumbList output, responsive relationship/media output, advanced taxonomy, guarded domain configuration changes, lifecycle automation, mutation idempotency, backup/restore automation, observability, alerts and recovery runbooks.
+Still-required committed scope includes specialized semantic editor blocks, explicit collision-checked anchor editing, media/citation pickers and an accessible structured diff, consumer-ready breadcrumb ancestry, responsive relationship/media output, advanced taxonomy, guarded domain configuration changes, lifecycle automation, mutation idempotency, backup/restore automation, observability, alerts and recovery runbooks.
 
 ### Implementation status snapshot (2026-08-01)
 
-`Fully implemented` means the named bounded requirement slice is present and verified in the checked-in repository. `Partially implemented` means useful production code exists but one or more committed requirements in that area remain. `Not started` means no material implementation evidence was found during the v1.15 alignment review.
+`Fully implemented` means the named bounded requirement slice is present and verified in the checked-in repository. `Partially implemented` means useful production code exists but one or more committed requirements in that area remain. `Not started` means no material implementation evidence was found during the v1.16 alignment review.
 
 | Status | Requirement area | Checked-in evidence or remaining boundary |
 |---|---|---|
@@ -2885,14 +2878,14 @@ Still-required committed scope includes specialized semantic editor blocks, expl
 | Fully implemented | Password and exact-revision self-approval policy | The 15-character minimum, creator restrictions, owner-only solo-owner opt-in, approval hash and self-approval audit fields are enforced. |
 | Fully implemented | Article autosave and conflict-recovery slice | User/project/article-scoped structured drafts use optimistic versions and immutable base-revision guards; the admin retains browser fallback, restores interruption-safe drafts, warns on stale/another-tab work and clears the actor’s autosave after revision creation. |
 | Fully implemented | TipTap editor foundation slice | Article creation and revision editing use a shared TipTap visual editor for paragraphs, H2–H4, common inline formatting, safe links, lists, quotes, code, tables, figures/images, dividers and undo/redo; it emits versioned structured JSON plus HTML, preserves heading IDs during normal text edits and keeps structured documents in browser/server recovery. |
-| Fully implemented | Published Article JSON-LD slice | The Content API generates one safe `BlogPosting` or `NewsArticle` object from the approved publication snapshot, including canonical identity, normalized dates, separate immutable author objects, publisher organization, approved taxonomy and a safe absolute Open Graph image when present. Publisher-setting updates advance the project content generation, and the TypeScript client exposes typed JSON-LD objects. |
+| Fully implemented | Consumer-owned SEO boundary | The Content API returns approved article/entity data and optional SEO/social inputs but does not generate schema.org/JSON-LD. The consuming project owns canonical validation, metadata, JSON-LD and crawler-facing rendering. |
 | Fully implemented | Authors and contributors | Native article creation and revision editing support ordered multi-role contributors; immutable snapshots populate public JSON; approval requires exactly one accountable primary author; cross-project copies require complete remapping to active destination profiles. |
 | Partially implemented | Projects and domains | Project CRUD, settings, memberships and selection exist; guarded domain-change workflows remain. |
 | Partially implemented | Structured editing and autosave | The TipTap visual surface, structured conversion, allowlist rendering, derived fields, heading-ID preservation, local/server recovery and conflict reconciliation exist; specialized semantic blocks, explicit anchor-edit controls, project media/citation pickers and accessible structured diff remain. |
 | Partially implemented | Review, trust and publication | Review states, assignments, comments, quality/source gates, scheduling, publication, rollback, disclosures and corrections exist; full public-field approval coverage and mentions remain. |
 | Partially implemented | Taxonomy, series and discovery | Hierarchical categories, tags, primary category, series routes, redirects and manifests exist; relationship editing, aliases/merges, FTS and quality analysis remain. |
 | Partially implemented | Media and AI | B2 upload/processing and core evidence-backed AI jobs exist; attachment/output completion, malware scanning, expanded tasks, provider fallback, quotas and evaluations remain. |
-| Partially implemented | Content API, Redis and webhooks | Versioned protected English-only JSON routes, previews, validators, generated Article JSON-LD, cache-aside reads and signed retryable webhooks exist; BreadcrumbList, responsive media/relationships and pointer cache semantics remain. |
+| Partially implemented | Content API, Redis and webhooks | Versioned protected English-only JSON routes, previews, validators, optional metadata inputs, cache-aside reads and signed retryable webhooks exist; downstream integration examples and pointer cache semantics remain. |
 | Partially implemented | Release and audit operations | CI, checksummed artifacts, PM2/Nginx deployment, migrations, health checks, rollback and project audit views exist; backup gates, recovery rehearsals and metrics/alerts remain. |
 | Not started | Dedicated editorial templates | Dedicated briefs, prompts, structures and checklists for `standard`, `guide`, `tutorial` and `comparison` remain unimplemented. |
 | Not started | Landing SEO verification | Link checking and reference-renderer contract tests remain unimplemented. |
@@ -2927,7 +2920,7 @@ Still-required committed scope includes specialized semantic editor blocks, expl
 - Multiple named project API keys and the protected Content API.
 - Landing revalidation webhook.
 - Redis cache-aside and durable outbox.
-- Versioned article JSON, canonical/JSON-LD inputs, redirect records, discovery manifest and feed data.
+- Versioned article JSON, optional canonical/social inputs, article/entity data, redirect records, discovery manifest and feed data.
 - Advanced stale-content and correction workflows.
 - Series, topic clusters and advanced relationship analysis.
 - Configurable editor/reviewer permission refinements.
@@ -2939,10 +2932,10 @@ Product metrics:
 
 - Median time from approved brief to approved article.
 - Percentage of drafts approved without a second major rewrite.
-- Percentage of published articles with complete author, source and structured-data fields.
+- Percentage of published articles with complete author, source and optional metadata/entity fields.
 - Stale-content review completion rate.
-- Organic impressions, indexed canonical pages and search conversions by project.
-- Bing/other available citation metrics and referral traffic from answer engines.
+- Organic impressions, indexed canonical pages and search conversions reported by consuming projects when they choose to integrate those external measurements.
+- Citation metrics and answer-engine referral traffic reported by consuming projects when available; the provider does not collect visitor analytics itself.
 
 Reliability metrics:
 

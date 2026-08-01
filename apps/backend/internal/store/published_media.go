@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 )
 
@@ -39,8 +40,25 @@ func safePublishedMediaURL(raw string) string {
 	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
 		return raw
 	}
-	if value, ok := safeStructuredDataURL(raw, true); ok {
+	if value, ok := safePublishedAbsoluteURL(raw); ok {
 		return value
 	}
 	return ""
+}
+
+func safePublishedAbsoluteURL(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.ContainsAny(raw, "\x00\r\n\\") {
+		return "", false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || strings.ToLower(parsed.Scheme) != "https" {
+		return "", false
+	}
+	parsed.Scheme = "https"
+	parsed.Host = strings.ToLower(parsed.Host)
+	if parsed.Path == "" {
+		parsed.Path = "/"
+	}
+	return parsed.String(), true
 }

@@ -181,7 +181,7 @@ type healthOutput struct {
 }
 
 func (s *Server) registerRoutes() {
-	openapi := huma.DefaultConfig("SEO Blog CMS API", "0.1.0")
+	openapi := huma.DefaultConfig("Article Content Hub API", "0.1.0")
 	api := humafiber.New(s.app, openapi)
 	s.openAPI = api.OpenAPI()
 

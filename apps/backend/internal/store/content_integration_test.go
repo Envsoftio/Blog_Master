@@ -70,18 +70,6 @@ func TestPublishedPostQueryAndSnapshots(t *testing.T) {
 	if posts[0].Taxonomy.PrimaryCategory == nil {
 		t.Fatal("expected primary-category snapshot")
 	}
-	structuredData, ok := posts[0].SEO.StructuredData.([]any)
-	if !ok || len(structuredData) != 2 {
-		t.Fatalf("expected generated article and breadcrumb structured data, got %#v", posts[0].SEO.StructuredData)
-	}
-	article, ok := structuredData[0].(map[string]any)
-	if !ok || article["@type"] != "BlogPosting" || article["headline"] != "Published title" {
-		t.Fatalf("unexpected article structured data: %#v", structuredData[0])
-	}
-	publisher, ok := article["publisher"].(map[string]any)
-	if !ok || publisher["name"] != "Project" {
-		t.Fatalf("expected project-name publisher fallback, got %#v", article["publisher"])
-	}
 }
 
 func TestPublishedPostHydratesOrderedSeriesAndRelationships(t *testing.T) {

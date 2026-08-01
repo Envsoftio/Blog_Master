@@ -1,5 +1,67 @@
 components:
   schemas:
+    APIKeyWithSecret:
+      additionalProperties: false
+      properties:
+        key:
+          $ref: "#/components/schemas/AdminAPIKey"
+        secret:
+          type: string
+      required:
+        - key
+        - secret
+      type: object
+    AdminAPIKey:
+      additionalProperties: false
+      properties:
+        createdAt:
+          type: string
+        createdBy:
+          type: string
+        environment:
+          enum:
+            - production
+            - staging
+            - development
+            - preview
+          type: string
+        expiresAt:
+          type: string
+        id:
+          type: string
+        lastUsedAt:
+          type: string
+        name:
+          type: string
+        projectId:
+          type: string
+        revokedAt:
+          type: string
+        scopes:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        status:
+          enum:
+            - active
+            - expired
+            - revoked
+          type: string
+        tokenPrefix:
+          type: string
+      required:
+        - id
+        - projectId
+        - environment
+        - name
+        - tokenPrefix
+        - scopes
+        - createdBy
+        - createdAt
+        - status
+      type: object
     AdminArticle:
       additionalProperties: false
       properties:
@@ -209,6 +271,44 @@ components:
         - contentHash
         - createdAt
       type: object
+    ApiKeyRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ApiKeyRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        environment:
+          enum:
+            - production
+            - staging
+            - development
+            - preview
+          type: string
+        expiresAt:
+          type: string
+        name:
+          maxLength: 100
+          minLength: 1
+          type: string
+        scopes:
+          items:
+            enum:
+              - content:published:read
+              - taxonomy:published:read
+              - authors:published:read
+              - discovery:read
+              - redirects:read
+            type: string
+          type:
+            - array
+            - "null"
+      required:
+        - name
+      type: object
     ArticleAutosave:
       additionalProperties: false
       properties:
@@ -368,6 +468,40 @@ components:
       required:
         - sourceAuthorId
         - destinationAuthorId
+      type: object
+    EnvelopeAPIKeyWithSecret:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EnvelopeAPIKeyWithSecret.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          $ref: "#/components/schemas/APIKeyWithSecret"
+        meta:
+          $ref: "#/components/schemas/MetaData"
+      required:
+        - data
+      type: object
+    EnvelopeAdminAPIKey:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EnvelopeAdminAPIKey.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          $ref: "#/components/schemas/AdminAPIKey"
+        meta:
+          $ref: "#/components/schemas/MetaData"
+      required:
+        - data
       type: object
     EnvelopeAdminArticle:
       additionalProperties: false
@@ -532,6 +666,28 @@ components:
         - status
         - service
         - version
+      type: object
+    ListEnvelopeAdminAPIKey:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ListEnvelopeAdminAPIKey.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          items:
+            $ref: "#/components/schemas/AdminAPIKey"
+          type:
+            - array
+            - "null"
+        meta:
+          $ref: "#/components/schemas/PageMeta"
+      required:
+        - data
+        - meta
       type: object
     ListEnvelopeAdminArticle:
       additionalProperties: false
@@ -780,7 +936,7 @@ components:
       name: seoblog_session
       type: apiKey
 info:
-  title: SEO Blog CMS API
+  title: Article Content Hub API
   version: 0.1.0
 openapi: 3.1.0
 paths:
@@ -1479,100 +1635,310 @@ paths:
         - Administration
   /api/v1/projects/{projectID}/api-keys:
     get:
-      description: Administrative API route.
-      operationId: get_api_v1_projects_projectid_api_keys
+      description: Returns key metadata and server-derived status. Raw secrets and stored verifiers are never returned.
+      operationId: listProjectAPIKeys
+      parameters:
+        - description: Project identifier
+          in: path
+          name: projectID
+          required: true
+          schema:
+            type: string
+        - description: Opaque API-key list cursor
+          in: query
+          name: cursor
+          schema:
+            type: string
+        - description: Page size, up to 100
+          in: query
+          name: limit
+          schema:
+            maximum: 100
+            minimum: 1
+            type: integer
       responses:
         "200":
-          description: Successful response
-        "400":
-          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListEnvelopeAdminAPIKey"
+          description: API key page
         "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Authentication required
         "403":
-          description: Insufficient permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Management permission required
         "404":
-          description: Resource not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Project not found
         "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Internal server error
-      summary: GET /api/v1/projects/{projectID}/api-keys
+      security:
+        - adminSession: []
+      summary: List project API keys
       tags:
         - Administration
     head:
-      description: Administrative API route.
-      operationId: head_api_v1_projects_projectid_api_keys
+      operationId: headProjectAPIKeys
+      parameters:
+        - description: Project identifier
+          in: path
+          name: projectID
+          required: true
+          schema:
+            type: string
+        - description: Opaque API-key list cursor
+          in: query
+          name: cursor
+          schema:
+            type: string
+        - description: Page size, up to 100
+          in: query
+          name: limit
+          schema:
+            maximum: 100
+            minimum: 1
+            type: integer
       responses:
         "200":
-          description: Successful response without a body
-        "400":
-          description: Invalid request
+          description: The API key list is available
         "401":
           description: Authentication required
         "403":
-          description: Insufficient permission
+          description: Management permission required
         "404":
-          description: Resource not found
+          description: Project not found
         "500":
           description: Internal server error
-      summary: HEAD /api/v1/projects/{projectID}/api-keys
+      security:
+        - adminSession: []
+      summary: Check the project API key list
       tags:
         - Administration
     post:
-      description: Administrative API route.
-      operationId: post_api_v1_projects_projectid_api_keys
+      description: Creates a scoped server credential after recent human reauthentication. Store the returned secret immediately because it cannot be retrieved later.
+      operationId: createProjectAPIKey
+      parameters:
+        - description: Project identifier
+          in: path
+          name: projectID
+          required: true
+          schema:
+            type: string
+        - description: Administrative session CSRF token
+          in: header
+          name: X-CSRF-Token
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiKeyRequest"
+        required: true
       responses:
         "201":
-          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeAPIKeyWithSecret"
+          description: API key created; the secret is returned exactly once
         "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Invalid request
         "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Authentication required
         "403":
-          description: Insufficient permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Management permission or recent reauthentication required
         "404":
-          description: Resource not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Project or API key not found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Project or API key state does not allow this operation
         "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Internal server error
-      summary: POST /api/v1/projects/{projectID}/api-keys
+      security:
+        - adminSession: []
+      summary: Create a project API key
       tags:
         - Administration
   /api/v1/projects/{projectID}/api-keys/{keyID}/revoke:
     post:
-      description: Administrative API route.
-      operationId: post_api_v1_projects_projectid_api_keys_keyid_revoke
+      description: Immediately and permanently disables the selected credential after recent human reauthentication.
+      operationId: revokeProjectAPIKey
+      parameters:
+        - description: Project identifier
+          in: path
+          name: projectID
+          required: true
+          schema:
+            type: string
+        - description: API key identifier
+          in: path
+          name: keyID
+          required: true
+          schema:
+            type: string
+        - description: Administrative session CSRF token
+          in: header
+          name: X-CSRF-Token
+          required: true
+          schema:
+            type: string
       responses:
         "200":
-          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeAdminAPIKey"
+          description: Revoked API key metadata
         "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Invalid request
         "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Authentication required
         "403":
-          description: Insufficient permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Management permission or recent reauthentication required
         "404":
-          description: Resource not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Project or API key not found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Project or API key state does not allow this operation
         "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Internal server error
-      summary: POST /api/v1/projects/{projectID}/api-keys/{keyID}/revoke
+      security:
+        - adminSession: []
+      summary: Revoke a project API key
       tags:
         - Administration
   /api/v1/projects/{projectID}/api-keys/{keyID}/rotate:
     post:
-      description: Administrative API route.
-      operationId: post_api_v1_projects_projectid_api_keys_keyid_rotate
+      description: Creates a replacement with the same environment, scopes, and expiration. The previous key remains active for a zero-downtime deployment and must be revoked separately.
+      operationId: rotateProjectAPIKey
+      parameters:
+        - description: Project identifier
+          in: path
+          name: projectID
+          required: true
+          schema:
+            type: string
+        - description: API key identifier
+          in: path
+          name: keyID
+          required: true
+          schema:
+            type: string
+        - description: Administrative session CSRF token
+          in: header
+          name: X-CSRF-Token
+          required: true
+          schema:
+            type: string
       responses:
         "200":
-          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeAPIKeyWithSecret"
+          description: Replacement API key and one-time secret
         "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Invalid request
         "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Authentication required
         "403":
-          description: Insufficient permission
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Management permission or recent reauthentication required
         "404":
-          description: Resource not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Project or API key not found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Project or API key state does not allow this operation
         "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
           description: Internal server error
-      summary: POST /api/v1/projects/{projectID}/api-keys/{keyID}/rotate
+      security:
+        - adminSession: []
+      summary: Rotate a project API key
       tags:
         - Administration
   /api/v1/projects/{projectID}/archive:

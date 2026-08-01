@@ -50,35 +50,37 @@
           {{ successMessage }}
         </p>
 
-        <div v-if="oneTimeSecret" class="rounded-lg border border-[#b9dcc9] bg-white p-5 shadow-sm dark:border-[#2d644a] dark:bg-[#202522]">
+        <div v-if="oneTimeSecret" class="rounded-lg border-2 border-[#2f8068] bg-[#f5fcf8] p-5 shadow-sm dark:border-[#4caa8c] dark:bg-[#15251f]" role="status" aria-live="polite">
           <div class="flex flex-wrap items-start justify-between gap-4">
             <div class="min-w-0">
-              <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">One-time secret</p>
-              <h2 class="mt-1 text-lg font-semibold tracking-normal">{{ oneTimeSecret.name }}</h2>
+              <p class="inline-flex items-center gap-2 text-sm font-medium text-[#165a4a] dark:text-[#aee4d0]"><ShieldCheck class="h-4 w-4" /> One-time secret</p>
+              <h2 class="mt-1 text-lg font-semibold tracking-normal">Save {{ oneTimeSecret.name }} now</h2>
             </div>
             <div class="flex items-center gap-2">
               <button
                 class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] text-[#28342d] hover:bg-[#eef5f1] dark:border-[#414a45] dark:text-[#eef4ef] dark:hover:bg-[#2a302d]"
                 type="button"
-                title="Copy secret"
-                aria-label="Copy secret"
+                :title="secretCopied ? 'Copied' : 'Copy secret'"
+                :aria-label="secretCopied ? 'Secret copied' : 'Copy secret'"
                 @click="copySecret"
               >
-                <Copy class="h-4 w-4" />
-              </button>
-              <button
-                class="inline-flex h-10 w-10 items-center justify-center rounded-md border border-[#c9d4cc] text-[#28342d] hover:bg-[#eef5f1] dark:border-[#414a45] dark:text-[#eef4ef] dark:hover:bg-[#2a302d]"
-                type="button"
-                title="Dismiss"
-                aria-label="Dismiss"
-                @click="oneTimeSecret = null"
-              >
-                <X class="h-4 w-4" />
+                <Check v-if="secretCopied" class="h-4 w-4" />
+                <Copy v-else class="h-4 w-4" />
               </button>
             </div>
           </div>
           <p v-if="oneTimeSecret.note" class="mt-3 text-sm text-[#36594a] dark:text-[#b6d7c8]">{{ oneTimeSecret.note }}</p>
-          <code class="mt-4 block overflow-x-auto rounded-md bg-[#17201b] px-3 py-3 text-sm text-[#dff7ea]">{{ oneTimeSecret.secret }}</code>
+          <div class="mt-4 flex items-stretch overflow-hidden rounded-md bg-[#17201b] text-[#dff7ea]">
+            <code class="min-w-0 flex-1 overflow-x-auto px-3 py-3 text-sm">{{ secretVisible ? oneTimeSecret.secret : maskedSecret }}</code>
+            <button class="border-l border-white/20 px-3 hover:bg-white/10" type="button" :aria-label="secretVisible ? 'Hide secret' : 'Reveal secret'" @click="secretVisible = !secretVisible">
+              <EyeOff v-if="secretVisible" class="h-4 w-4" />
+              <Eye v-else class="h-4 w-4" />
+            </button>
+          </div>
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <p class="text-xs text-[#526158] dark:text-[#b6c4bb]">For server-side use only. Never expose this value in browser code.</p>
+            <button class="rounded-md bg-[#165a4a] px-3 py-2 text-sm font-medium text-white hover:bg-[#10463a]" type="button" @click="dismissSecret">I’ve saved this key</button>
+          </div>
         </div>
 
         <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -88,17 +90,41 @@
               <h2 class="mt-1 text-xl font-semibold tracking-normal">Server keys</h2>
             </div>
 
+            <div class="grid gap-3 sm:grid-cols-3">
+              <div v-for="summary in keySummary" :key="summary.label" class="rounded-lg border border-[#cfd8d1] bg-white px-4 py-3 dark:border-[#3f4843] dark:bg-[#202522]">
+                <p class="text-2xl font-semibold">{{ summary.value }}</p>
+                <p class="text-xs uppercase tracking-wide text-[#667169] dark:text-[#aeb8b0]">{{ summary.label }}</p>
+              </div>
+            </div>
+
+            <div class="grid gap-3 rounded-lg border border-[#cfd8d1] bg-white p-3 dark:border-[#3f4843] dark:bg-[#202522] sm:grid-cols-[1fr_150px_150px]">
+              <label class="relative">
+                <Search class="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-[#667169]" />
+                <input v-model.trim="filters.search" class="w-full rounded-md border border-[#bfcac3] py-2 pl-9 pr-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Search name or prefix" aria-label="Search API keys" />
+              </label>
+              <select v-model="filters.environment" class="rounded-md border border-[#bfcac3] px-3 py-2 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" aria-label="Filter by environment">
+                <option value="all">All environments</option>
+                <option v-for="environment in environments" :key="environment.value" :value="environment.value">{{ environment.label }}</option>
+              </select>
+              <select v-model="filters.status" class="rounded-md border border-[#bfcac3] px-3 py-2 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" aria-label="Filter by status">
+                <option value="all">All statuses</option>
+                <option value="active">Active</option>
+                <option value="expired">Expired</option>
+                <option value="revoked">Revoked</option>
+              </select>
+            </div>
+
             <div v-if="pending" class="flex items-center gap-3 rounded-lg border border-[#cfd8d1] bg-white p-5 text-sm text-[#58625c] dark:border-[#3f4843] dark:bg-[#202522] dark:text-[#bec7c1]">
               <LoaderCircle class="h-4 w-4 animate-spin" />
               Loading API keys
             </div>
 
-            <div v-else-if="apiKeys.length === 0" class="rounded-lg border border-dashed border-[#bfcac3] bg-white p-8 text-center dark:border-[#4b5650] dark:bg-[#202522]">
-              <h2 class="text-lg font-semibold">No API keys yet</h2>
-              <p class="mt-2 text-sm text-[#5f6a63] dark:text-[#b8c2bb]">Create a server-side credential for a landing build, SSR or ISR process.</p>
+            <div v-else-if="filteredAPIKeys.length === 0" class="rounded-lg border border-dashed border-[#bfcac3] bg-white p-8 text-center dark:border-[#4b5650] dark:bg-[#202522]">
+              <h2 class="text-lg font-semibold">{{ apiKeys.length ? 'No keys match these filters' : 'No API keys yet' }}</h2>
+              <p class="mt-2 text-sm text-[#5f6a63] dark:text-[#b8c2bb]">{{ apiKeys.length ? 'Clear or change the filters to see more keys.' : 'Create a server-side credential for a landing build, SSR or ISR process.' }}</p>
             </div>
 
-            <article v-for="apiKey in apiKeys" :key="apiKey.id" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <article v-for="apiKey in filteredAPIKeys" :key="apiKey.id" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div class="min-w-0">
                   <h3 class="truncate text-lg font-semibold">{{ apiKey.name }}</h3>
@@ -149,7 +175,7 @@
                   class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
                   type="button"
                   :disabled="Boolean(actionPending[apiKey.id]) || keyStatus(apiKey) !== 'active'"
-                  @click="rotateKey(apiKey)"
+                  @click="openKeyConfirmation('rotate', apiKey)"
                 >
                   <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': actionPending[apiKey.id] === 'rotate' }" />
                   Rotate
@@ -158,7 +184,7 @@
                   class="inline-flex items-center gap-2 rounded-md border border-[#d9b7aa] px-3 py-2 text-sm font-medium text-[#9b2d23] hover:bg-[#fff4f2] disabled:opacity-60 dark:border-[#6d352f] dark:text-[#ffc4bd] dark:hover:bg-[#2a1c1a]"
                   type="button"
                   :disabled="Boolean(actionPending[apiKey.id]) || Boolean(apiKey.revokedAt)"
-                  @click="revokeKey(apiKey)"
+                  @click="openKeyConfirmation('revoke', apiKey)"
                 >
                   <Ban class="h-4 w-4" />
                   Revoke
@@ -178,16 +204,14 @@
 
             <label class="block space-y-2">
               <span class="text-sm font-medium">Name</span>
-              <input v-model.trim="form.name" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
+              <input v-model.trim="form.name" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" maxlength="100" required />
+              <span class="block text-xs text-[#667169] dark:text-[#aeb8b0]">Use a workload name, such as “Production website”.</span>
             </label>
 
             <label class="block space-y-2">
               <span class="text-sm font-medium">Environment</span>
               <select v-model="form.environment" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]">
-                <option value="production">Production</option>
-                <option value="staging">Staging</option>
-                <option value="development">Development</option>
-                <option value="preview">Preview</option>
+                <option v-for="environment in environments" :key="environment.value" :value="environment.value">{{ environment.label }}</option>
               </select>
             </label>
 
@@ -198,6 +222,7 @@
 
             <fieldset class="space-y-2">
               <legend class="text-sm font-medium">Scopes</legend>
+              <p class="text-xs text-[#667169] dark:text-[#aeb8b0]">Grant only what this workload needs.</p>
               <label v-for="scope in availableScopes" :key="scope.value" class="flex items-center gap-2 text-sm">
                 <input v-model="form.scopes" class="h-4 w-4 rounded border-[#bfcac3]" type="checkbox" :value="scope.value" />
                 {{ scope.label }}
@@ -214,6 +239,28 @@
               Create key
             </button>
           </form>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="keyConfirmation" class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4" @click.self="keyConfirmation = null">
+      <div class="w-full max-w-md rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-xl dark:border-[#3f4843] dark:bg-[#202522]" role="dialog" aria-modal="true" aria-labelledby="key-confirmation-title">
+        <div class="flex items-start gap-3">
+          <TriangleAlert class="mt-1 h-5 w-5" :class="keyConfirmation.action === 'revoke' ? 'text-[#9b2d23]' : 'text-[#8a5b00]'" />
+          <div>
+            <h2 id="key-confirmation-title" class="text-lg font-semibold">{{ keyConfirmation.action === 'revoke' ? 'Revoke API key?' : 'Rotate API key?' }}</h2>
+            <p class="mt-2 text-sm text-[#5d6a61] dark:text-[#aeb8b0]">
+              <template v-if="keyConfirmation.action === 'revoke'">{{ keyConfirmation.key.name }} will stop working immediately. This cannot be undone.</template>
+              <template v-else>A replacement for {{ keyConfirmation.key.name }} will be created. The current key stays active until you revoke it after deployment.</template>
+            </p>
+            <p class="mt-3 rounded-md bg-[#f2f5f3] px-3 py-2 font-mono text-xs dark:bg-[#171b18]">{{ keyConfirmation.key.tokenPrefix }}…</p>
+          </div>
+        </div>
+        <div class="mt-5 flex justify-end gap-2">
+          <button class="rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]" type="button" @click="keyConfirmation = null">Cancel</button>
+          <button class="rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-60" :class="keyConfirmation.action === 'revoke' ? 'bg-[#9b2d23] hover:bg-[#7d241c]' : 'bg-[#165a4a] hover:bg-[#10463a]'" type="button" :disabled="Boolean(actionPending[keyConfirmation.key.id])" @click="confirmKeyAction">
+            {{ keyConfirmation.action === 'revoke' ? 'Revoke key' : 'Create replacement' }}
+          </button>
         </div>
       </div>
     </div>
@@ -265,42 +312,8 @@
 </template>
 
 <script setup lang="ts">
-import { Activity, ArrowLeft, Ban, CalendarClock, Copy, KeyRound, LoaderCircle, LockKeyhole, LogOut, Plus, RefreshCw, X } from 'lucide-vue-next'
-
-type APIEnvelope<T> = {
-  data: T
-}
-
-type APIListEnvelope<T> = {
-  data: T[]
-}
-
-type AdminProject = {
-  id: string
-  slug: string
-  name: string
-  status: string
-  role: string
-}
-
-type AdminAPIKey = {
-  id: string
-  projectId: string
-  environment: string
-  name: string
-  tokenPrefix: string
-  scopes: string[]
-  expiresAt?: string
-  lastUsedAt?: string
-  createdBy: string
-  createdAt: string
-  revokedAt?: string
-}
-
-type APIKeyWithSecret = {
-  key: AdminAPIKey
-  secret: string
-}
+import { Activity, ArrowLeft, Ban, CalendarClock, Check, Copy, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, LogOut, Plus, RefreshCw, Search, ShieldCheck, TriangleAlert } from 'lucide-vue-next'
+import type { AdminAPIKey, AdminProject } from '~/composables/useAdminApi'
 
 type PendingProtectedAction = {
   label: string
@@ -308,6 +321,7 @@ type PendingProtectedAction = {
 }
 
 const route = useRoute()
+const api = useAdminApi()
 const projectID = computed(() => {
   const value = route.params.projectId
   return Array.isArray(value) ? String(value[0] || '') : String(value || '')
@@ -321,6 +335,13 @@ const availableScopes = [
   { value: 'redirects:read', label: 'Redirects' }
 ]
 
+const environments = [
+  { value: 'production', label: 'Production' },
+  { value: 'staging', label: 'Staging' },
+  { value: 'development', label: 'Development' },
+  { value: 'preview', label: 'Preview' }
+]
+
 const project = ref<AdminProject | null>(null)
 const apiKeys = ref<AdminAPIKey[]>([])
 const pending = ref(true)
@@ -328,7 +349,10 @@ const creating = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
 const oneTimeSecret = ref<{ name: string, secret: string, note?: string } | null>(null)
+const secretVisible = ref(true)
+const secretCopied = ref(false)
 const actionPending = reactive<Record<string, string>>({})
+const keyConfirmation = ref<{ action: 'rotate' | 'revoke', key: AdminAPIKey } | null>(null)
 const reauthenticationOpen = ref(false)
 const reauthenticationPassword = ref('')
 const reauthenticationError = ref('')
@@ -341,8 +365,26 @@ const form = reactive({
   expiresAt: '',
   scopes: availableScopes.map((scope) => scope.value)
 })
+const filters = reactive({ search: '', environment: 'all', status: 'all' })
 
 const canCreate = computed(() => Boolean(form.name.trim() && form.scopes.length > 0))
+const filteredAPIKeys = computed(() => {
+  const query = filters.search.toLowerCase()
+  return apiKeys.value.filter((key) => {
+    if (filters.environment !== 'all' && key.environment !== filters.environment) return false
+    if (filters.status !== 'all' && keyStatus(key) !== filters.status) return false
+    return !query || key.name.toLowerCase().includes(query) || key.tokenPrefix.toLowerCase().includes(query)
+  })
+})
+const keySummary = computed(() => [
+  { label: 'Active', value: apiKeys.value.filter(key => keyStatus(key) === 'active').length },
+  { label: 'Used recently', value: apiKeys.value.filter(key => wasUsedRecently(key.lastUsedAt)).length },
+  { label: 'Revoked', value: apiKeys.value.filter(key => keyStatus(key) === 'revoked').length }
+])
+const maskedSecret = computed(() => {
+  const secret = oneTimeSecret.value?.secret || ''
+  return `${secret.slice(0, 12)}${'•'.repeat(Math.max(12, secret.length - 12))}`
+})
 const minimumExpiry = ref('')
 
 onMounted(() => {
@@ -354,12 +396,12 @@ async function refresh() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, keyResponse] = await Promise.all([
-      $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
-      $fetch<APIListEnvelope<AdminAPIKey>>(`/api/v1/projects/${projectID.value}/api-keys`, { credentials: 'include' })
+    const [projectResponse, keys] = await Promise.all([
+      api.getProject(projectID.value),
+      loadAllAPIKeys()
     ])
     project.value = projectResponse.data
-    apiKeys.value = apiListData(keyResponse)
+    apiKeys.value = keys
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load API keys. Sign in again if your session has expired.')
   } finally {
@@ -367,21 +409,30 @@ async function refresh() {
   }
 }
 
+async function loadAllAPIKeys() {
+  const keys: AdminAPIKey[] = []
+  const seenCursors = new Set<string>()
+  let cursor = ''
+  do {
+    const response = await api.listAPIKeys(projectID.value, cursor, 100)
+    keys.push(...apiListData(response))
+    const nextCursor = response.meta?.nextCursor || ''
+    if (!nextCursor || seenCursors.has(nextCursor)) break
+    seenCursors.add(nextCursor)
+    cursor = nextCursor
+  } while (cursor)
+  return keys.sort((left, right) => parseBackendUTC(right.createdAt).getTime() - parseBackendUTC(left.createdAt).getTime())
+}
+
 async function createKey() {
   creating.value = true
   clearMessages()
   try {
-    const csrfToken = await getCSRFToken()
-    const response = await $fetch<APIEnvelope<APIKeyWithSecret>>(`/api/v1/projects/${projectID.value}/api-keys`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {
-        name: form.name,
-        environment: form.environment,
-        expiresAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : '',
-        scopes: form.scopes
-      }
+    const response = await api.createAPIKey(projectID.value, {
+      name: form.name,
+      environment: form.environment,
+      expiresAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined,
+      scopes: form.scopes
     })
     upsertKey(response.data.key)
     oneTimeSecret.value = {
@@ -389,6 +440,8 @@ async function createKey() {
       secret: response.data.secret,
       note: 'Store this secret now. It cannot be shown again.'
     }
+    secretVisible.value = true
+    secretCopied.value = false
     form.name = ''
     form.environment = 'production'
     form.expiresAt = ''
@@ -406,19 +459,15 @@ async function rotateKey(apiKey: AdminAPIKey) {
   actionPending[apiKey.id] = 'rotate'
   clearMessages()
   try {
-    const csrfToken = await getCSRFToken()
-    const response = await $fetch<APIEnvelope<APIKeyWithSecret>>(`/api/v1/projects/${projectID.value}/api-keys/${apiKey.id}/rotate`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {}
-    })
+    const response = await api.rotateAPIKey(projectID.value, apiKey.id)
     upsertKey(response.data.key)
     oneTimeSecret.value = {
       name: response.data.key.name,
       secret: response.data.secret,
       note: `The previous key (${apiKey.tokenPrefix}) remains active. Revoke it after the replacement is deployed.`
     }
+    secretVisible.value = true
+    secretCopied.value = false
     successMessage.value = 'Replacement key created.'
   } catch (error) {
     if (queueReauthentication(error, `rotate ${apiKey.name}`, () => rotateKey(apiKey))) return
@@ -428,22 +477,26 @@ async function rotateKey(apiKey: AdminAPIKey) {
   }
 }
 
-async function revokeKey(apiKey: AdminAPIKey) {
-  if (!window.confirm('Revoke this API key?')) return
-  await performRevokeKey(apiKey)
+function openKeyConfirmation(action: 'rotate' | 'revoke', key: AdminAPIKey) {
+  keyConfirmation.value = { action, key }
+}
+
+async function confirmKeyAction() {
+  const confirmation = keyConfirmation.value
+  if (!confirmation) return
+  keyConfirmation.value = null
+  if (confirmation.action === 'rotate') {
+    await rotateKey(confirmation.key)
+  } else {
+    await performRevokeKey(confirmation.key)
+  }
 }
 
 async function performRevokeKey(apiKey: AdminAPIKey) {
   actionPending[apiKey.id] = 'revoke'
   clearMessages()
   try {
-    const csrfToken = await getCSRFToken()
-    const response = await $fetch<APIEnvelope<AdminAPIKey>>(`/api/v1/projects/${projectID.value}/api-keys/${apiKey.id}/revoke`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {}
-    })
+    const response = await api.revokeAPIKey(projectID.value, apiKey.id)
     upsertKey(response.data)
     successMessage.value = 'API key revoked.'
   } catch (error) {
@@ -469,13 +522,7 @@ async function confirmReauthentication() {
   reauthenticating.value = true
   reauthenticationError.value = ''
   try {
-    const csrfToken = await getCSRFToken()
-    await $fetch('/api/v1/auth/reauthenticate', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: { password: reauthenticationPassword.value }
-    })
+    await api.reauthenticate(reauthenticationPassword.value)
     const action = pendingProtectedAction.value
     reauthenticationOpen.value = false
     reauthenticationPassword.value = ''
@@ -498,8 +545,20 @@ function cancelReauthentication() {
 
 async function copySecret() {
   if (!oneTimeSecret.value) return
-  await navigator.clipboard.writeText(oneTimeSecret.value.secret)
-  successMessage.value = 'Secret copied.'
+  try {
+    await navigator.clipboard.writeText(oneTimeSecret.value.secret)
+    secretCopied.value = true
+    successMessage.value = 'Secret copied to the clipboard.'
+  } catch {
+    secretVisible.value = true
+    errorMessage.value = 'Clipboard access was blocked. Select and copy the visible key manually.'
+  }
+}
+
+function dismissSecret() {
+  oneTimeSecret.value = null
+  secretCopied.value = false
+  secretVisible.value = true
 }
 
 function upsertKey(apiKey: AdminAPIKey) {
@@ -513,32 +572,24 @@ function upsertKey(apiKey: AdminAPIKey) {
 
 async function logout() {
   try {
-    const csrfToken = await getCSRFToken()
-    await $fetch('/api/v1/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken }
-    })
+    await api.logout()
   } finally {
     await navigateTo('/')
   }
-}
-
-async function getCSRFToken() {
-  const response = await $fetch<APIEnvelope<{ csrfToken: string }>>('/api/v1/auth/csrf', {
-    credentials: 'include'
-  })
-  return response.data.csrfToken
 }
 
 function parseBackendUTC(value: string) {
   return new Date(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`)
 }
 
+function wasUsedRecently(value?: string) {
+  if (!value) return false
+  const usedAt = parseBackendUTC(value).getTime()
+  return Number.isFinite(usedAt) && usedAt >= Date.now() - 30 * 24 * 60 * 60 * 1000
+}
+
 function keyStatus(apiKey: AdminAPIKey) {
-  if (apiKey.revokedAt) return 'revoked'
-  if (apiKey.expiresAt && parseBackendUTC(apiKey.expiresAt).getTime() <= Date.now()) return 'expired'
-  return 'active'
+  return apiKey.status || (apiKey.revokedAt ? 'revoked' : apiKey.expiresAt && parseBackendUTC(apiKey.expiresAt).getTime() <= Date.now() ? 'expired' : 'active')
 }
 
 function keyStatusClass(apiKey: AdminAPIKey) {

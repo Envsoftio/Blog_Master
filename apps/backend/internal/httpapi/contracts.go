@@ -160,6 +160,7 @@ var implementedAdminRouteStatuses = map[string]string{
 // contract stays complete and available at /openapi.json and /openapi.yaml.
 func documentFiberRoutes(api huma.API, app *fiber.App) {
 	documentPasswordResetRoutes(api)
+	documentAPIKeyRoutes(api)
 	documentArticleManagementRoutes(api)
 	documentRollbackRoute(api)
 	documentCopyArticleRoute(api)
@@ -250,6 +251,108 @@ func documentFiberRoutes(api huma.API, app *fiber.App) {
 			}
 		}
 	}
+}
+
+func documentAPIKeyRoutes(api huma.API) {
+	openAPI := api.OpenAPI()
+	documentAdminSessionSecurity(openAPI)
+	registry := openAPI.Components.Schemas
+	metadataSchema := registry.Schema(reflect.TypeOf(store.AdminAPIKey{}), true, "AdminAPIKey")
+	listSchema := registry.Schema(reflect.TypeOf(ListEnvelope[store.AdminAPIKey]{}), true, "APIKeyListResponse")
+	secretSchema := registry.Schema(reflect.TypeOf(Envelope[store.APIKeyWithSecret]{}), true, "APIKeySecretResponse")
+	keySchema := registry.Schema(reflect.TypeOf(Envelope[store.AdminAPIKey]{}), true, "APIKeyResponse")
+	requestSchema := registry.Schema(reflect.TypeOf(apiKeyRequest{}), true, "CreateAPIKeyRequest")
+	problemSchema := registry.Schema(reflect.TypeOf(Problem{}), true, "Problem")
+	resolvedMetadataSchema := metadataSchema
+	if metadataSchema.Ref != "" {
+		resolvedMetadataSchema = registry.SchemaFromRef(metadataSchema.Ref)
+	}
+	if status := resolvedMetadataSchema.Properties["status"]; status != nil {
+		status.Enum = []any{"active", "expired", "revoked"}
+	}
+	if environment := resolvedMetadataSchema.Properties["environment"]; environment != nil {
+		environment.Enum = []any{"production", "staging", "development", "preview"}
+	}
+	resolvedRequestSchema := requestSchema
+	if requestSchema.Ref != "" {
+		resolvedRequestSchema = registry.SchemaFromRef(requestSchema.Ref)
+	}
+	resolvedRequestSchema.Required = []string{"name"}
+	if name := resolvedRequestSchema.Properties["name"]; name != nil {
+		name.MinLength = intPointer(1)
+		name.MaxLength = intPointer(100)
+	}
+	if environment := resolvedRequestSchema.Properties["environment"]; environment != nil {
+		environment.Enum = []any{"production", "staging", "development", "preview"}
+	}
+	if scopes := resolvedRequestSchema.Properties["scopes"]; scopes != nil && scopes.Items != nil {
+		scopes.Items.Enum = []any{"content:published:read", "taxonomy:published:read", "authors:published:read", "discovery:read", "redirects:read"}
+	}
+
+	problemResponse := func(description string) *huma.Response {
+		return &huma.Response{Description: description, Content: map[string]*huma.MediaType{
+			problemMediaType: {Schema: problemSchema},
+		}}
+	}
+	projectParameter := &huma.Param{Name: "projectID", In: "path", Description: "Project identifier", Required: true, Schema: &huma.Schema{Type: "string"}}
+	keyParameter := &huma.Param{Name: "keyID", In: "path", Description: "API key identifier", Required: true, Schema: &huma.Schema{Type: "string"}}
+	csrfParameter := &huma.Param{Name: "X-CSRF-Token", In: "header", Description: "Administrative session CSRF token", Required: true, Schema: &huma.Schema{Type: "string"}}
+	mutationResponses := func(successDescription string, successSchema *huma.Schema) map[string]*huma.Response {
+		return map[string]*huma.Response{
+			"200": {Description: successDescription, Content: map[string]*huma.MediaType{"application/json": {Schema: successSchema}}},
+			"400": problemResponse("Invalid request"),
+			"401": problemResponse("Authentication required"),
+			"403": problemResponse("Management permission or recent reauthentication required"),
+			"404": problemResponse("Project or API key not found"),
+			"409": problemResponse("Project or API key state does not allow this operation"),
+			"500": problemResponse("Internal server error"),
+		}
+	}
+
+	listParameters := []*huma.Param{
+		projectParameter,
+		{Name: "cursor", In: "query", Description: "Opaque API-key list cursor", Schema: &huma.Schema{Type: "string"}},
+		{Name: "limit", In: "query", Description: "Page size, up to 100", Schema: &huma.Schema{Type: "integer", Minimum: float64Pointer(1), Maximum: float64Pointer(100)}},
+	}
+	openAPI.AddOperation(&huma.Operation{
+		Method: http.MethodGet, Path: "/api/v1/projects/{projectID}/api-keys", OperationID: "listProjectAPIKeys",
+		Summary: "List project API keys", Description: "Returns key metadata and server-derived status. Raw secrets and stored verifiers are never returned.",
+		Tags: []string{"Administration"}, Parameters: listParameters, Security: adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"200": {Description: "API key page", Content: map[string]*huma.MediaType{"application/json": {Schema: listSchema}}},
+			"401": problemResponse("Authentication required"), "403": problemResponse("Management permission required"),
+			"404": problemResponse("Project not found"), "500": problemResponse("Internal server error"),
+		},
+	})
+	openAPI.AddOperation(&huma.Operation{
+		Method: http.MethodHead, Path: "/api/v1/projects/{projectID}/api-keys", OperationID: "headProjectAPIKeys",
+		Summary: "Check the project API key list", Tags: []string{"Administration"}, Parameters: listParameters, Security: adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"200": {Description: "The API key list is available"}, "401": {Description: "Authentication required"},
+			"403": {Description: "Management permission required"}, "404": {Description: "Project not found"}, "500": {Description: "Internal server error"},
+		},
+	})
+	createResponses := mutationResponses("API key created; the secret is returned exactly once", secretSchema)
+	createResponses["201"] = createResponses["200"]
+	delete(createResponses, "200")
+	openAPI.AddOperation(&huma.Operation{
+		Method: http.MethodPost, Path: "/api/v1/projects/{projectID}/api-keys", OperationID: "createProjectAPIKey",
+		Summary: "Create a project API key", Description: "Creates a scoped server credential after recent human reauthentication. Store the returned secret immediately because it cannot be retrieved later.",
+		Tags: []string{"Administration"}, Parameters: []*huma.Param{projectParameter, csrfParameter}, Security: adminSessionSecurityRequirement(),
+		RequestBody: &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{"application/json": {Schema: requestSchema}}}, Responses: createResponses,
+	})
+	openAPI.AddOperation(&huma.Operation{
+		Method: http.MethodPost, Path: "/api/v1/projects/{projectID}/api-keys/{keyID}/rotate", OperationID: "rotateProjectAPIKey",
+		Summary: "Rotate a project API key", Description: "Creates a replacement with the same environment, scopes, and expiration. The previous key remains active for a zero-downtime deployment and must be revoked separately.",
+		Tags: []string{"Administration"}, Parameters: []*huma.Param{projectParameter, keyParameter, csrfParameter}, Security: adminSessionSecurityRequirement(),
+		Responses: mutationResponses("Replacement API key and one-time secret", secretSchema),
+	})
+	openAPI.AddOperation(&huma.Operation{
+		Method: http.MethodPost, Path: "/api/v1/projects/{projectID}/api-keys/{keyID}/revoke", OperationID: "revokeProjectAPIKey",
+		Summary: "Revoke a project API key", Description: "Immediately and permanently disables the selected credential after recent human reauthentication.",
+		Tags: []string{"Administration"}, Parameters: []*huma.Param{projectParameter, keyParameter, csrfParameter}, Security: adminSessionSecurityRequirement(),
+		Responses: mutationResponses("Revoked API key metadata", keySchema),
+	})
 }
 
 func documentArticleManagementRoutes(api huma.API) {

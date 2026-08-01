@@ -6,11 +6,11 @@
 
     <aside class="app-sidebar" :class="{ 'app-sidebar--open': mobileOpen }">
       <div class="app-sidebar__brand">
-        <NuxtLink class="brand-mark" to="/dashboard" aria-label="SEO Blog CMS dashboard">
+        <NuxtLink class="brand-mark" to="/dashboard" aria-label="Article Content Hub dashboard">
           <span class="brand-mark__icon"><PenLine :size="19" /></span>
           <span class="brand-mark__text">
             <strong>Editorial</strong>
-            <small>SEO Blog CMS</small>
+            <small>Article Content Hub</small>
           </span>
         </NuxtLink>
         <button class="icon-button app-sidebar__close" type="button" title="Close navigation" aria-label="Close navigation" @click="mobileOpen = false">

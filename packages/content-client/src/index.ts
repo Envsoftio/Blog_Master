@@ -92,25 +92,24 @@ export type PublishedTaxonomy = {
   topics: TaxonomyTerm[]
 }
 
-export type JSONLDPrimitive = string | number | boolean | null
-export type JSONLDValue = JSONLDPrimitive | JSONLDObject | JSONLDValue[]
-export type JSONLDObject = { [key: string]: JSONLDValue }
-
 export type PublishedOpenGraph = {
   title?: string
   description?: string
   image?: string
 }
 
-export type PublishedSEO = {
+/** Advisory metadata inputs. The consuming site owns final SEO policy and rendering. */
+export type PublishedSEOInputs = {
   title: string
   description?: string
   canonicalUrl: string
   robots: string
   index: boolean
   openGraph: PublishedOpenGraph
-  structuredData: JSONLDObject[]
 }
+
+/** @deprecated Use PublishedSEOInputs to make the consumer-owned rendering boundary explicit. */
+export type PublishedSEO = PublishedSEOInputs
 
 export type PublishedMediaVariant = {
   name: string
@@ -176,7 +175,7 @@ export type PublishedPost = {
   claims: unknown
   disclosures: unknown
   corrections: unknown
-  seo: PublishedSEO
+  seo: PublishedSEOInputs
   relatedArticles: PublishedArticleLink[]
   topicRelationships: PublishedArticleLink[]
   publishedAt?: string

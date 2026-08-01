@@ -320,7 +320,6 @@ func scanPost(row rowScanner, relationshipOrigin *string) (PublishedPost, error)
 	post.SEO.Description = stringFromMap(seo, "description", post.Excerpt)
 	post.SEO.Index = !strings.Contains(strings.ToLower(post.SEO.Robots), "noindex")
 	post.SEO.OpenGraph = mapValue(seo, "openGraph", map[string]any{})
-	post.SEO.StructuredData = []any{}
 
 	post.Taxonomy = PublishedTaxonomy{
 		Categories: []TaxonomyTerm{},
@@ -339,9 +338,6 @@ func scanPost(row rowScanner, relationshipOrigin *string) (PublishedPost, error)
 	post.Corrections = decodeJSON(correctionsJSON, []any{})
 	post.RelatedArticles = []PublishedArticleLink{}
 	post.TopicRelationships = []PublishedArticleLink{}
-	if structuredData := publishedArticleStructuredData(post); len(structuredData) > 0 {
-		post.SEO.StructuredData = structuredData
-	}
 	return post, nil
 }
 

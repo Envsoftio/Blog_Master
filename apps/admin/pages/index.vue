@@ -1,7 +1,7 @@
 <template>
   <section class="login-page">
     <div class="login-page__top">
-      <NuxtLink class="login-brand" to="/" aria-label="SEO Blog CMS">
+      <NuxtLink class="login-brand" to="/" aria-label="Article Content Hub">
         <span><PenLine :size="19" /></span>
         <strong>Editorial</strong>
       </NuxtLink>
@@ -25,7 +25,7 @@
     <div class="login-layout">
       <aside class="login-context">
         <span class="login-context__mark"><BookOpenText :size="28" /></span>
-        <p>SEO Blog CMS</p>
+        <p>Article Content Hub</p>
         <h1>Plan, review, and publish with editorial confidence.</h1>
         <div class="login-context__features">
           <div><span><Layers3 :size="17" /></span><p><strong>Project isolation</strong><small>Content and access stay scoped to the selected project.</small></p></div>

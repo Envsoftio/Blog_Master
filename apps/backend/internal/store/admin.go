@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"seoblog/apps/backend/internal/security"
 )
@@ -195,6 +196,7 @@ type AdminAPIKey struct {
 	CreatedBy   string   `json:"createdBy"`
 	CreatedAt   string   `json:"createdAt"`
 	RevokedAt   string   `json:"revokedAt,omitempty"`
+	Status      string   `json:"status"`
 }
 
 type APIKeyWithSecret struct {
@@ -2109,6 +2111,18 @@ func scanAdminAPIKey(row rowScanner) (AdminAPIKey, error) {
 	if key.Scopes == nil {
 		key.Scopes = []string{}
 	}
+	key.Status = "active"
+	if key.RevokedAt != "" {
+		key.Status = "revoked"
+	} else if key.ExpiresAt != "" {
+		expiresAt, err := parseSQLiteTime(key.ExpiresAt)
+		if err != nil {
+			return AdminAPIKey{}, fmt.Errorf("parse API key expiration: %w", err)
+		}
+		if !expiresAt.After(time.Now().UTC()) {
+			key.Status = "expired"
+		}
+	}
 	return key, nil
 }
 
@@ -2337,6 +2351,9 @@ func applyAPIKeyDefaults(input APIKeyInput) APIKeyInput {
 func validateAPIKeyInput(input APIKeyInput) error {
 	if input.Name == "" {
 		return fmt.Errorf("%w: name is required", ErrValidation)
+	}
+	if utf8.RuneCountInString(input.Name) > 100 {
+		return fmt.Errorf("%w: name cannot exceed 100 characters", ErrValidation)
 	}
 	switch input.Environment {
 	case "production", "staging", "development", "preview":

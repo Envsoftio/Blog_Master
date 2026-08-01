@@ -18,7 +18,7 @@ type PublishedPost struct {
 	Claims             any                    `json:"claims"`
 	Disclosures        any                    `json:"disclosures"`
 	Corrections        any                    `json:"corrections"`
-	SEO                PublishedSEO           `json:"seo"`
+	SEO                PublishedSEOInputs     `json:"seo"`
 	RelatedArticles    []PublishedArticleLink `json:"relatedArticles"`
 	TopicRelationships []PublishedArticleLink `json:"topicRelationships"`
 	PublishedAt        string                 `json:"publishedAt,omitempty"`
@@ -70,14 +70,15 @@ type PublishedMediaVariant struct {
 	Height   int64  `json:"height"`
 }
 
-type PublishedSEO struct {
-	Title          string `json:"title"`
-	Description    string `json:"description,omitempty"`
-	CanonicalURL   string `json:"canonicalUrl"`
-	Robots         string `json:"robots"`
-	Index          bool   `json:"index"`
-	OpenGraph      any    `json:"openGraph"`
-	StructuredData any    `json:"structuredData"`
+// PublishedSEOInputs are advisory values for a consuming site's renderer.
+// This service does not turn them into HTML metadata, crawler directives or JSON-LD.
+type PublishedSEOInputs struct {
+	Title        string `json:"title"`
+	Description  string `json:"description,omitempty"`
+	CanonicalURL string `json:"canonicalUrl"`
+	Robots       string `json:"robots"`
+	Index        bool   `json:"index"`
+	OpenGraph    any    `json:"openGraph"`
 }
 
 type TaxonomyTerm struct {

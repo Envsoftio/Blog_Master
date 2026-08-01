@@ -1,4 +1,6 @@
-# SEO Blog CMS
+# Multi-Project Article Content Hub
+
+This repository is a headless editorial CMS and JSON article source for multiple independently deployed projects. It does not host a public blog. Consuming projects fetch the published article and optional SEO/social fields, then own all public routes, HTML, canonical/meta tags, JSON-LD, sitemaps, feeds, robots policy and redirects.
 
 Headless multi-project blog CMS and versioned JSON content API.
 

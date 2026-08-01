@@ -1012,6 +1012,9 @@ func TestProjectAPIKeyLifecycleAndContentAuth(t *testing.T) {
 	if first.Data.Secret == "" {
 		t.Fatal("expected raw API key secret at creation")
 	}
+	if first.Data.Key.Status != "active" {
+		t.Fatalf("expected a newly created key to be active, got %q", first.Data.Key.Status)
+	}
 	if !strings.HasPrefix(first.Data.Secret, first.Data.Key.TokenPrefix) {
 		t.Fatalf("expected token prefix to match secret prefix")
 	}
@@ -1069,6 +1072,9 @@ func TestProjectAPIKeyLifecycleAndContentAuth(t *testing.T) {
 	decodeJSONResponse(t, revokeResponse, &revoked)
 	if revoked.Data.RevokedAt == "" {
 		t.Fatal("expected revoked key response to include revokedAt")
+	}
+	if revoked.Data.Status != "revoked" {
+		t.Fatalf("expected revoked key status, got %q", revoked.Data.Status)
 	}
 	assertContentCategoriesStatus(t, server, first.Data.Secret, http.StatusUnauthorized)
 	assertContentCategoriesStatus(t, server, rotated.Data.Secret, http.StatusOK)
@@ -1984,19 +1990,6 @@ func TestRevisionContributorsAreScopedOrderedAndImmutable(t *testing.T) {
 		len(published.Data.Contributors) != 1 || published.Data.Contributors[0].Role != "editor" {
 		t.Fatalf("expected immutable attribution in public JSON, got authors=%#v contributors=%#v", published.Data.Authors, published.Data.Contributors)
 	}
-	structuredData, ok := published.Data.SEO.StructuredData.([]any)
-	if !ok || len(structuredData) != 2 {
-		t.Fatalf("expected generated article and breadcrumb schemas, got %#v", published.Data.SEO.StructuredData)
-	}
-	articleSchema, ok := structuredData[0].(map[string]any)
-	if !ok {
-		t.Fatalf("expected an article schema object, got %#v", structuredData[0])
-	}
-	schemaAuthors, ok := articleSchema["author"].([]any)
-	if !ok || len(schemaAuthors) != 2 || schemaAuthors[0].(map[string]any)["name"] != "Primary Author" ||
-		schemaAuthors[1].(map[string]any)["name"] != "Co Author" {
-		t.Fatalf("expected separate immutable author schema objects, got %#v", articleSchema["author"])
-	}
 
 	filteredRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts?author=primary-author", nil)
 	filteredRequest.Header.Set("X-Dev-Project-ID", project.ID)
@@ -2899,6 +2892,18 @@ func TestExpiredProjectAPIKeyCannotBeCreatedOrRotated(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
 	project := createTestProject(t, server, login, `{"slug":"expired-key","name":"Expired Key"}`)
+
+	longName := newAPIKeyMutationRequest(
+		t,
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/api-keys",
+		`{"environment":"production","name":"`+strings.Repeat("k", 101)+`"}`,
+		login,
+	)
+	longNameResponse := mustTest(t, server, longName)
+	if longNameResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected an overlong key name to fail with 400, got %d: %s", longNameResponse.StatusCode, readBody(t, longNameResponse))
+	}
 
 	expiredCreate := newAPIKeyMutationRequest(
 		t,

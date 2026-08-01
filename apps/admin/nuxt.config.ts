@@ -48,7 +48,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     apiBaseUrl,
     public: {
-      appName: 'SEO Blog CMS'
+      appName: 'Article Content Hub'
     }
   }
 })
