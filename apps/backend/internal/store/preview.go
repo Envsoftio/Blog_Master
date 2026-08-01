@@ -192,6 +192,9 @@ func (s *Store) GetPreviewPost(ctx context.Context, projectID, articleID, revisi
 	post.Claims = decodeJSON(claimSnapshot, []any{})
 	post.SEO.Robots = "noindex,nofollow"
 	post.SEO.Index = false
+	if err := s.hydratePublishedRelationships(ctx, projectID, &post); err != nil {
+		return PublishedPost{}, err
+	}
 	return post, nil
 }
 

@@ -1985,8 +1985,8 @@ func TestRevisionContributorsAreScopedOrderedAndImmutable(t *testing.T) {
 		t.Fatalf("expected immutable attribution in public JSON, got authors=%#v contributors=%#v", published.Data.Authors, published.Data.Contributors)
 	}
 	structuredData, ok := published.Data.SEO.StructuredData.([]any)
-	if !ok || len(structuredData) != 1 {
-		t.Fatalf("expected one generated article schema, got %#v", published.Data.SEO.StructuredData)
+	if !ok || len(structuredData) != 2 {
+		t.Fatalf("expected generated article and breadcrumb schemas, got %#v", published.Data.SEO.StructuredData)
 	}
 	articleSchema, ok := structuredData[0].(map[string]any)
 	if !ok {

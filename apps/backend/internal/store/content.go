@@ -178,7 +178,18 @@ func (s *Store) ListPublishedPosts(
 		}
 		posts = append(posts, post)
 	}
-	return posts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range posts {
+		if err := s.hydratePublishedRelationships(ctx, projectID, &posts[index]); err != nil {
+			return nil, err
+		}
+	}
+	return posts, nil
 }
 
 func (s *Store) GetPublishedPostBySlug(ctx context.Context, projectID, slug string) (PublishedPost, error) {
@@ -194,7 +205,12 @@ func (s *Store) GetPublishedPostBySlug(ctx context.Context, projectID, slug stri
 		  AND pp.slug = ?
 		  AND pp.publication_state = 'published'
 	`, projectID, slug)
-	return scanPost(row, nil)
+	post, err := scanPost(row, nil)
+	if err != nil {
+		return PublishedPost{}, err
+	}
+	err = s.hydratePublishedRelationships(ctx, projectID, &post)
+	return post, err
 }
 
 func (s *Store) GetPublishedPostByID(ctx context.Context, projectID, contentID string) (PublishedPost, error) {
@@ -210,7 +226,12 @@ func (s *Store) GetPublishedPostByID(ctx context.Context, projectID, contentID s
 		  AND pp.content_id = ?
 		  AND pp.publication_state = 'published'
 	`, projectID, contentID)
-	return scanPost(row, nil)
+	post, err := scanPost(row, nil)
+	if err != nil {
+		return PublishedPost{}, err
+	}
+	err = s.hydratePublishedRelationships(ctx, projectID, &post)
+	return post, err
 }
 
 func (s *Store) ListRelatedPosts(ctx context.Context, projectID, slug string, limit int) ([]RelatedPost, error) {
@@ -251,7 +272,18 @@ func (s *Store) ListRelatedPosts(ctx context.Context, projectID, slug string, li
 		}
 		related = append(related, RelatedPost{Post: post, Origin: origin})
 	}
-	return related, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range related {
+		if err := s.hydratePublishedRelationships(ctx, projectID, &related[index].Post); err != nil {
+			return nil, err
+		}
+	}
+	return related, nil
 }
 
 type rowScanner interface {
@@ -302,13 +334,134 @@ func scanPost(row rowScanner, relationshipOrigin *string) (PublishedPost, error)
 	decodeInto(contributorsJSON, &post.Contributors)
 	post.Sources = decodeJSON(sourcesJSON, []any{})
 	post.Claims = decodeJSON(claimsJSON, []any{})
-	post.Media = decodeJSON(mediaJSON, map[string]any{})
+	post.Media = publishedMediaFromSnapshot(mediaJSON)
 	post.Disclosures = decodeJSON(disclosuresJSON, []any{})
 	post.Corrections = decodeJSON(correctionsJSON, []any{})
+	post.RelatedArticles = []PublishedArticleLink{}
+	post.TopicRelationships = []PublishedArticleLink{}
 	if structuredData := publishedArticleStructuredData(post); len(structuredData) > 0 {
 		post.SEO.StructuredData = structuredData
 	}
 	return post, nil
+}
+
+func (s *Store) hydratePublishedRelationships(ctx context.Context, projectID string, post *PublishedPost) error {
+	if post == nil {
+		return nil
+	}
+	series, err := s.publishedSeriesMembership(ctx, projectID, post.ID)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == nil {
+		post.Taxonomy.Series = &series
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT target.id, target_publication.slug, target_revision.title,
+		       COALESCE(target_revision.excerpt, ''), target_publication.canonical_url,
+		       relationship.relationship_type, relationship.origin, relationship.position
+		FROM content_relationships relationship
+		JOIN project_publications target_publication
+		  ON target_publication.project_id = relationship.project_id
+		 AND target_publication.content_id = relationship.target_content_id
+		 AND target_publication.publication_state = 'published'
+		JOIN content_items target
+		  ON target.project_id = target_publication.project_id
+		 AND target.id = target_publication.content_id
+		JOIN content_revisions target_revision
+		  ON target_revision.project_id = target_publication.project_id
+		 AND target_revision.content_id = target_publication.content_id
+		 AND target_revision.id = target_publication.published_revision_id
+		WHERE relationship.project_id = ? AND relationship.source_content_id = ?
+		  AND relationship.relationship_type IN ('related', 'pillar', 'cluster')
+		ORDER BY relationship.position, target.id
+	`, projectID, post.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var link PublishedArticleLink
+		if err := rows.Scan(
+			&link.Article.ID, &link.Article.Slug, &link.Article.Title,
+			&link.Article.Excerpt, &link.Article.CanonicalURL,
+			&link.RelationshipType, &link.Origin, &link.Position,
+		); err != nil {
+			return err
+		}
+		if link.RelationshipType == "related" {
+			post.RelatedArticles = append(post.RelatedArticles, link)
+		} else {
+			post.TopicRelationships = append(post.TopicRelationships, link)
+		}
+	}
+	return rows.Err()
+}
+
+func (s *Store) publishedSeriesMembership(ctx context.Context, projectID, contentID string) (Series, error) {
+	var series Series
+	var indexability string
+	var previousID, previousSlug, previousTitle, previousExcerpt, previousCanonical string
+	var nextID, nextSlug, nextTitle, nextExcerpt, nextCanonical string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT series.id, series.slug, series.name, COALESCE(series.description, ''), series.indexability,
+		       membership.position,
+		       COALESCE(previous_item.id, ''), COALESCE(previous_publication.slug, ''),
+		       COALESCE(previous_revision.title, ''), COALESCE(previous_revision.excerpt, ''),
+		       COALESCE(previous_publication.canonical_url, ''),
+		       COALESCE(next_item.id, ''), COALESCE(next_publication.slug, ''),
+		       COALESCE(next_revision.title, ''), COALESCE(next_revision.excerpt, ''),
+		       COALESCE(next_publication.canonical_url, '')
+		FROM series_articles membership
+		JOIN series ON series.project_id = membership.project_id AND series.id = membership.series_id
+		LEFT JOIN series_articles previous_membership
+		  ON previous_membership.project_id = membership.project_id
+		 AND previous_membership.series_id = membership.series_id
+		 AND previous_membership.position = membership.position - 1
+		LEFT JOIN project_publications previous_publication
+		  ON previous_publication.project_id = previous_membership.project_id
+		 AND previous_publication.content_id = previous_membership.content_id
+		 AND previous_publication.publication_state = 'published'
+		LEFT JOIN content_items previous_item
+		  ON previous_item.project_id = previous_publication.project_id AND previous_item.id = previous_publication.content_id
+		LEFT JOIN content_revisions previous_revision
+		  ON previous_revision.project_id = previous_publication.project_id
+		 AND previous_revision.content_id = previous_publication.content_id
+		 AND previous_revision.id = previous_publication.published_revision_id
+		LEFT JOIN series_articles next_membership
+		  ON next_membership.project_id = membership.project_id
+		 AND next_membership.series_id = membership.series_id
+		 AND next_membership.position = membership.position + 1
+		LEFT JOIN project_publications next_publication
+		  ON next_publication.project_id = next_membership.project_id
+		 AND next_publication.content_id = next_membership.content_id
+		 AND next_publication.publication_state = 'published'
+		LEFT JOIN content_items next_item
+		  ON next_item.project_id = next_publication.project_id AND next_item.id = next_publication.content_id
+		LEFT JOIN content_revisions next_revision
+		  ON next_revision.project_id = next_publication.project_id
+		 AND next_revision.content_id = next_publication.content_id
+		 AND next_revision.id = next_publication.published_revision_id
+		WHERE membership.project_id = ? AND membership.content_id = ?
+		ORDER BY series.id
+		LIMIT 1
+	`, projectID, contentID).Scan(
+		&series.ID, &series.Slug, &series.Name, &series.Description, &indexability, &series.Position,
+		&previousID, &previousSlug, &previousTitle, &previousExcerpt, &previousCanonical,
+		&nextID, &nextSlug, &nextTitle, &nextExcerpt, &nextCanonical,
+	)
+	if err != nil {
+		return Series{}, err
+	}
+	series.Indexable = indexability == "index"
+	if previousID != "" {
+		series.Previous = &PublishedArticleSummary{ID: previousID, Slug: previousSlug, Title: previousTitle, Excerpt: previousExcerpt, CanonicalURL: previousCanonical}
+	}
+	if nextID != "" {
+		series.Next = &PublishedArticleSummary{ID: nextID, Slug: nextSlug, Title: nextTitle, Excerpt: nextExcerpt, CanonicalURL: nextCanonical}
+	}
+	return series, nil
 }
 
 func (s *Store) ListTerms(ctx context.Context, projectID, termType string) ([]TaxonomyTerm, error) {

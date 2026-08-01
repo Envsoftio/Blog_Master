@@ -1,30 +1,32 @@
 package store
 
 type PublishedPost struct {
-	ID            string            `json:"id"`
-	ArticleType   string            `json:"articleType"`
-	Slug          string            `json:"slug"`
-	Revision      int64             `json:"revision"`
-	Title         string            `json:"title"`
-	Deck          string            `json:"deck,omitempty"`
-	Excerpt       string            `json:"excerpt,omitempty"`
-	ShortAnswer   string            `json:"shortAnswer,omitempty"`
-	Content       PublishedContent  `json:"content"`
-	Taxonomy      PublishedTaxonomy `json:"taxonomy"`
-	Authors       []Author          `json:"authors"`
-	Contributors  []Contributor     `json:"contributors"`
-	Media         any               `json:"media"`
-	Sources       any               `json:"sources"`
-	Claims        any               `json:"claims"`
-	Disclosures   any               `json:"disclosures"`
-	Corrections   any               `json:"corrections"`
-	SEO           PublishedSEO      `json:"seo"`
-	PublishedAt   string            `json:"publishedAt,omitempty"`
-	ModifiedAt    string            `json:"modifiedAt,omitempty"`
-	ContentHash   string            `json:"-"`
-	PaginationKey string            `json:"-"`
-	PublisherName string            `json:"-"`
-	PublisherURL  string            `json:"-"`
+	ID                 string                 `json:"id"`
+	ArticleType        string                 `json:"articleType"`
+	Slug               string                 `json:"slug"`
+	Revision           int64                  `json:"revision"`
+	Title              string                 `json:"title"`
+	Deck               string                 `json:"deck,omitempty"`
+	Excerpt            string                 `json:"excerpt,omitempty"`
+	ShortAnswer        string                 `json:"shortAnswer,omitempty"`
+	Content            PublishedContent       `json:"content"`
+	Taxonomy           PublishedTaxonomy      `json:"taxonomy"`
+	Authors            []Author               `json:"authors"`
+	Contributors       []Contributor          `json:"contributors"`
+	Media              PublishedMedia         `json:"media"`
+	Sources            any                    `json:"sources"`
+	Claims             any                    `json:"claims"`
+	Disclosures        any                    `json:"disclosures"`
+	Corrections        any                    `json:"corrections"`
+	SEO                PublishedSEO           `json:"seo"`
+	RelatedArticles    []PublishedArticleLink `json:"relatedArticles"`
+	TopicRelationships []PublishedArticleLink `json:"topicRelationships"`
+	PublishedAt        string                 `json:"publishedAt,omitempty"`
+	ModifiedAt         string                 `json:"modifiedAt,omitempty"`
+	ContentHash        string                 `json:"-"`
+	PaginationKey      string                 `json:"-"`
+	PublisherName      string                 `json:"-"`
+	PublisherURL       string                 `json:"-"`
 }
 
 type PublishedContent struct {
@@ -40,6 +42,32 @@ type PublishedTaxonomy struct {
 	Tags            []TaxonomyTerm `json:"tags"`
 	Series          *Series        `json:"series,omitempty"`
 	Topics          []TaxonomyTerm `json:"topics"`
+}
+
+type PublishedMedia struct {
+	Hero *PublishedMediaAsset `json:"hero"`
+}
+
+type PublishedMediaAsset struct {
+	ID         string                  `json:"id"`
+	URL        string                  `json:"url"`
+	MIMEType   string                  `json:"mimeType"`
+	Width      int64                   `json:"width"`
+	Height     int64                   `json:"height"`
+	AltText    string                  `json:"altText,omitempty"`
+	Decorative bool                    `json:"decorative"`
+	Caption    string                  `json:"caption,omitempty"`
+	Credit     string                  `json:"credit,omitempty"`
+	License    string                  `json:"license,omitempty"`
+	Variants   []PublishedMediaVariant `json:"variants"`
+}
+
+type PublishedMediaVariant struct {
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	MIMEType string `json:"mimeType"`
+	Width    int64  `json:"width"`
+	Height   int64  `json:"height"`
 }
 
 type PublishedSEO struct {
@@ -94,11 +122,29 @@ type Contributor struct {
 }
 
 type Series struct {
-	ID          string `json:"id"`
-	Slug        string `json:"slug"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Indexable   bool   `json:"indexable"`
+	ID          string                   `json:"id"`
+	Slug        string                   `json:"slug"`
+	Name        string                   `json:"name"`
+	Description string                   `json:"description,omitempty"`
+	Indexable   bool                     `json:"indexable"`
+	Position    int                      `json:"position"`
+	Previous    *PublishedArticleSummary `json:"previous,omitempty"`
+	Next        *PublishedArticleSummary `json:"next,omitempty"`
+}
+
+type PublishedArticleSummary struct {
+	ID           string `json:"id"`
+	Slug         string `json:"slug"`
+	Title        string `json:"title"`
+	Excerpt      string `json:"excerpt,omitempty"`
+	CanonicalURL string `json:"canonicalUrl"`
+}
+
+type PublishedArticleLink struct {
+	Article          PublishedArticleSummary `json:"article"`
+	RelationshipType string                  `json:"relationshipType"`
+	Origin           string                  `json:"origin"`
+	Position         int                     `json:"position"`
 }
 
 type RelatedPost struct {

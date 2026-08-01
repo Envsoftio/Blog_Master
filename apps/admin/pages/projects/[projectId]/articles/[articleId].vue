@@ -1,5 +1,5 @@
 <template>
-  <section class="min-h-screen">
+  <section class="article-detail min-h-screen">
     <header class="border-b border-[#d7ded8] bg-white px-6 py-4 dark:border-[#343a38] dark:bg-[#202422]">
       <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
         <div class="flex min-w-0 items-center gap-3">
@@ -55,8 +55,8 @@
           Loading article
         </div>
 
-        <div v-else-if="article" class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-          <div class="space-y-5">
+        <div v-else-if="article" class="grid gap-6">
+          <div class="order-2 space-y-5">
             <article class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div class="min-w-0">
@@ -577,7 +577,7 @@
             </section>
           </div>
 
-          <div class="space-y-5">
+          <div class="order-1 space-y-5">
             <form v-if="canWriteArticles" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="createRevision">
               <div class="flex items-start gap-3">
                 <FilePenLine class="mt-1 h-4 w-4 text-[#3162a3]" />
@@ -640,6 +640,13 @@
                 :authors="authors"
                 @update:model-value="updateRevisionContributors"
               />
+              <ArticleStructuredEditor
+                v-model:html="revisionForm.html"
+                v-model:body-document="revisionBodyDocument"
+                label="Revision body"
+                :media-assets="mediaAssets"
+                :sources="sources"
+              />
               <label class="block space-y-2">
                 <span class="text-sm font-medium">Deck</span>
                 <textarea v-model.trim="revisionForm.deck" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
@@ -684,14 +691,6 @@
                   <textarea v-model.trim="revisionForm.openGraphDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
                 </label>
               </fieldset>
-              <ArticleStructuredEditor
-                v-model:html="revisionForm.html"
-                v-model:body-document="revisionBodyDocument"
-                label="Revision body"
-                :media-assets="mediaAssets"
-                :sources="sources"
-              />
-
               <button
                 class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
                 type="submit"
@@ -3120,3 +3119,230 @@ function apiErrorStatus(error: unknown) {
   return value.response?.status || value.status || value.statusCode || 0
 }
 </script>
+
+<style scoped>
+.article-detail {
+  min-height: 100%;
+  color: var(--text);
+}
+
+.article-detail > header {
+  display: none;
+}
+
+.article-detail > .mx-auto {
+  display: block;
+  max-width: none;
+  padding: 0;
+}
+
+.article-detail > .mx-auto > :first-child {
+  display: none;
+}
+
+.article-detail > .mx-auto > :last-child {
+  width: 100%;
+}
+
+.article-detail .grid { display: grid; }
+.article-detail .flex { display: flex; }
+.article-detail .inline-flex { display: inline-flex; }
+.article-detail .block { display: block; }
+.article-detail .hidden { display: none; }
+.article-detail .min-w-0 { min-width: 0; }
+.article-detail .flex-1 { flex: 1 1 0%; }
+.article-detail .flex-wrap { flex-wrap: wrap; }
+.article-detail .items-center { align-items: center; }
+.article-detail .items-start { align-items: flex-start; }
+.article-detail .justify-between { justify-content: space-between; }
+.article-detail .justify-end { justify-content: flex-end; }
+.article-detail .justify-center { justify-content: center; }
+.article-detail .self-end { align-self: flex-end; }
+.article-detail .order-1 { order: 1; }
+.article-detail .order-2 { order: 2; }
+
+.article-detail .gap-2 { gap: 8px; }
+.article-detail .gap-3 { gap: 12px; }
+.article-detail .gap-4 { gap: 16px; }
+.article-detail .gap-5 { gap: 20px; }
+.article-detail .gap-6 { gap: 24px; }
+.article-detail .space-y-1 > * + * { margin-top: 4px; }
+.article-detail .space-y-2 > * + * { margin-top: 8px; }
+.article-detail .space-y-3 > * + * { margin-top: 12px; }
+.article-detail .space-y-4 > * + * { margin-top: 16px; }
+.article-detail .space-y-5 > * + * { margin-top: 20px; }
+
+.article-detail .mt-1 { margin-top: 4px; }
+.article-detail .mt-2 { margin-top: 8px; }
+.article-detail .mt-3 { margin-top: 12px; }
+.article-detail .mt-4 { margin-top: 16px; }
+.article-detail .mt-5 { margin-top: 20px; }
+.article-detail .mb-1 { margin-bottom: 4px; }
+.article-detail .p-3 { padding: 12px; }
+.article-detail .p-4 { padding: 16px; }
+.article-detail .p-5 { padding: 20px; }
+.article-detail .p-6 { padding: 24px; }
+.article-detail .px-2 { padding-right: 8px; padding-left: 8px; }
+.article-detail .px-2\.5 { padding-right: 10px; padding-left: 10px; }
+.article-detail .px-3 { padding-right: 12px; padding-left: 12px; }
+.article-detail .px-4 { padding-right: 16px; padding-left: 16px; }
+.article-detail .py-1 { padding-top: 4px; padding-bottom: 4px; }
+.article-detail .py-1\.5 { padding-top: 6px; padding-bottom: 6px; }
+.article-detail .py-2 { padding-top: 8px; padding-bottom: 8px; }
+.article-detail .py-3 { padding-top: 12px; padding-bottom: 12px; }
+.article-detail .pt-4 { padding-top: 16px; }
+
+.article-detail .rounded-md { border-radius: 6px; }
+.article-detail .rounded-lg { border-radius: 8px; }
+.article-detail .rounded-full { border-radius: 999px; }
+.article-detail .border { border: 1px solid var(--border); }
+.article-detail .border-t { border-top: 1px solid var(--border); }
+.article-detail .border-b { border-bottom: 1px solid var(--border); }
+.article-detail .border-dashed { border-style: dashed; }
+.article-detail .bg-white { background: var(--surface); }
+.article-detail .shadow-sm { box-shadow: var(--shadow-sm); }
+
+.article-detail article.rounded-lg,
+.article-detail section.rounded-lg,
+.article-detail form.rounded-lg,
+.article-detail .empty-state,
+.article-detail .rounded-lg.border {
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.article-detail article:first-of-type {
+  border-top: 3px solid var(--primary);
+}
+
+.article-detail h2,
+.article-detail h3,
+.article-detail p,
+.article-detail dl,
+.article-detail ol,
+.article-detail ul {
+  margin-bottom: 0;
+}
+
+.article-detail h2 {
+  color: var(--text);
+}
+
+.article-detail .text-xs { font-size: 12px; line-height: 1.4; }
+.article-detail .text-sm { font-size: 14px; line-height: 1.45; }
+.article-detail .text-lg { font-size: 18px; line-height: 1.3; }
+.article-detail .text-xl { font-size: 22px; line-height: 1.25; }
+.article-detail .text-2xl { font-size: 26px; line-height: 1.2; }
+.article-detail .font-medium { font-weight: 600; }
+.article-detail .font-semibold { font-weight: 700; }
+.article-detail .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+.article-detail .uppercase { text-transform: uppercase; }
+.article-detail .tracking-normal { letter-spacing: 0; }
+.article-detail .text-center { text-align: center; }
+
+.article-detail .truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.article-detail .line-clamp-2 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.article-detail .rounded-full {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.article-detail dl {
+  display: grid;
+  gap: 12px;
+}
+
+.article-detail dt {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.article-detail dd {
+  margin: 3px 0 0;
+  color: var(--text);
+}
+
+.article-detail svg {
+  flex: 0 0 auto;
+}
+
+.article-detail button,
+.article-detail input,
+.article-detail textarea,
+.article-detail select {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.article-detail button {
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.article-detail button:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
+.article-detail input,
+.article-detail textarea,
+.article-detail select {
+  width: 100%;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.article-detail textarea {
+  resize: vertical;
+}
+
+.article-detail pre {
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+}
+
+.article-detail .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+@media (min-width: 640px) {
+  .article-detail .sm\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .article-detail .sm\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .article-detail .sm\:col-span-2 { grid-column: span 2 / span 2; }
+}
+
+@media (min-width: 768px) {
+  .article-detail .md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .article-detail .md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .article-detail .md\:grid-cols-\[1fr_1fr_auto\] { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+}
+
+@media (min-width: 1024px) {
+  .article-detail .lg\:grid-cols-\[minmax\(0\,1fr\)_150px_190px_auto\] {
+    grid-template-columns: minmax(0, 1fr) 150px 190px auto;
+  }
+}
+</style>

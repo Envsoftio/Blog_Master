@@ -2170,7 +2170,26 @@ func loadCategory(ctx context.Context, tx *sql.Tx, projectID, categoryID string)
 		FROM taxonomy_terms
 		WHERE project_id = ? AND id = ? AND type = 'category' AND status = 'active'
 	`, projectID, categoryID)
-	return scanTerm(row)
+	category, err := scanTerm(row)
+	if err != nil {
+		return TaxonomyTerm{}, err
+	}
+	currentParentID := category.ParentID
+	seen := map[string]bool{}
+	for currentParentID != "" && !seen[currentParentID] {
+		seen[currentParentID] = true
+		parent, err := scanTerm(tx.QueryRowContext(ctx, `
+			SELECT id, type, slug, name, COALESCE(description, ''), COALESCE(parent_id, ''), indexability
+			FROM taxonomy_terms
+			WHERE project_id = ? AND id = ? AND type = 'category' AND status = 'active'
+		`, projectID, currentParentID))
+		if err != nil {
+			return TaxonomyTerm{}, err
+		}
+		category.Ancestors = append([]TaxonomyTerm{withoutRelations(parent)}, category.Ancestors...)
+		currentParentID = parent.ParentID
+	}
+	return category, nil
 }
 
 func loadPrimaryCategoryID(ctx context.Context, tx *sql.Tx, projectID, articleID string) (string, error) {

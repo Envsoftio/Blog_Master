@@ -2,6 +2,7 @@ package store
 
 import (
 	"net/url"
+	"path"
 	"strings"
 	"time"
 )
@@ -35,8 +36,8 @@ func publishedArticleStructuredData(post PublishedPost) []any {
 	if publisher := structuredDataPublisher(post.PublisherName, post.PublisherURL); publisher != nil {
 		article["publisher"] = publisher
 	}
-	if image := structuredDataImage(canonical, openGraphImage(post.SEO.OpenGraph)); image != "" {
-		article["image"] = []string{image}
+	if images := structuredDataImages(post, canonical); len(images) > 0 {
+		article["image"] = images
 	}
 	if sections := structuredDataSections(post.Taxonomy); len(sections) > 0 {
 		article["articleSection"] = sections
@@ -45,7 +46,92 @@ func publishedArticleStructuredData(post PublishedPost) []any {
 		article["keywords"] = keywords
 	}
 
-	return []any{article}
+	result := []any{article}
+	if breadcrumbs := structuredDataBreadcrumbs(post, canonical); breadcrumbs != nil {
+		result = append(result, breadcrumbs)
+	}
+	return result
+}
+
+func structuredDataImages(post PublishedPost, canonical string) []string {
+	images := []string{}
+	if image := structuredDataImage(canonical, openGraphImage(post.SEO.OpenGraph)); image != "" {
+		images = appendUniqueString(images, image)
+	}
+	if post.Media.Hero == nil {
+		return images
+	}
+	if image := structuredDataImage(canonical, post.Media.Hero.URL); image != "" {
+		images = appendUniqueString(images, image)
+	}
+	for _, variant := range post.Media.Hero.Variants {
+		if image := structuredDataImage(canonical, variant.URL); image != "" {
+			images = appendUniqueString(images, image)
+		}
+	}
+	return images
+}
+
+func structuredDataBreadcrumbs(post PublishedPost, canonical string) map[string]any {
+	primary := post.Taxonomy.PrimaryCategory
+	if primary == nil || strings.TrimSpace(primary.Name) == "" || strings.TrimSpace(primary.Slug) == "" {
+		return nil
+	}
+	terms := append([]TaxonomyTerm{}, primary.Ancestors...)
+	terms = append(terms, *primary)
+	items := make([]any, 0, len(terms)+1)
+	position := 1
+	for _, term := range terms {
+		name := strings.TrimSpace(term.Name)
+		itemURL := structuredDataCategoryURL(canonical, term.Slug)
+		if name == "" || itemURL == "" {
+			continue
+		}
+		items = append(items, map[string]any{
+			"@type":    "ListItem",
+			"position": position,
+			"name":     name,
+			"item":     itemURL,
+		})
+		position++
+	}
+	if title := strings.TrimSpace(post.Title); title != "" {
+		items = append(items, map[string]any{
+			"@type":    "ListItem",
+			"position": position,
+			"name":     title,
+			"item":     canonical,
+		})
+	}
+	if len(items) < 2 {
+		return nil
+	}
+	return map[string]any{
+		"@context":        "https://schema.org",
+		"@type":           "BreadcrumbList",
+		"@id":             canonical + "#breadcrumbs",
+		"itemListElement": items,
+	}
+}
+
+func structuredDataCategoryURL(canonical, slug string) string {
+	base, err := url.Parse(canonical)
+	if err != nil {
+		return ""
+	}
+	slug = strings.TrimSpace(slug)
+	if slug == "" || strings.ContainsAny(slug, "/\\\x00\r\n") {
+		return ""
+	}
+	base.Path = path.Join("/categories", url.PathEscape(slug))
+	base.RawPath = ""
+	base.RawQuery = ""
+	base.Fragment = ""
+	value, ok := safeStructuredDataURL(base.String(), true)
+	if !ok {
+		return ""
+	}
+	return value
 }
 
 func structuredDataAuthors(authors []Author) []any {

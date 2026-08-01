@@ -79,6 +79,9 @@ export type Series = {
   name: string
   description?: string
   indexable: boolean
+  position?: number
+  previous?: PublishedArticleSummary
+  next?: PublishedArticleSummary
 }
 
 export type PublishedTaxonomy = {
@@ -109,6 +112,47 @@ export type PublishedSEO = {
   structuredData: JSONLDObject[]
 }
 
+export type PublishedMediaVariant = {
+  name: string
+  url: string
+  mimeType: string
+  width: number
+  height: number
+}
+
+export type PublishedMediaAsset = {
+  id: string
+  url: string
+  mimeType: string
+  width: number
+  height: number
+  altText?: string
+  decorative: boolean
+  caption?: string
+  credit?: string
+  license?: string
+  variants: PublishedMediaVariant[]
+}
+
+export type PublishedMedia = {
+  hero: PublishedMediaAsset | null
+}
+
+export type PublishedArticleSummary = {
+  id: string
+  slug: string
+  title: string
+  excerpt?: string
+  canonicalUrl: string
+}
+
+export type PublishedArticleLink = {
+  article: PublishedArticleSummary
+  relationshipType: 'related' | 'pillar' | 'cluster'
+  origin: 'manual' | 'deterministic' | 'imported'
+  position: number
+}
+
 export type PublishedPost = {
   id: string
   articleType: string
@@ -127,12 +171,14 @@ export type PublishedPost = {
   taxonomy: PublishedTaxonomy
   authors: Author[]
   contributors: Contributor[]
-  media: unknown
+  media: PublishedMedia
   sources: unknown
   claims: unknown
   disclosures: unknown
   corrections: unknown
   seo: PublishedSEO
+  relatedArticles: PublishedArticleLink[]
+  topicRelationships: PublishedArticleLink[]
   publishedAt?: string
   modifiedAt?: string
 }

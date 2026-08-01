@@ -41,7 +41,11 @@ func TestPublishedArticleStructuredDataUsesApprovedInputs(t *testing.T) {
 			{DisplayName: "Ravi Singh"},
 		},
 		Taxonomy: PublishedTaxonomy{
-			PrimaryCategory: &TaxonomyTerm{Name: "Engineering"},
+			PrimaryCategory: &TaxonomyTerm{
+				Name:      "Engineering",
+				Slug:      "engineering",
+				Ancestors: []TaxonomyTerm{{Name: "Technology", Slug: "technology"}},
+			},
 			Categories: []TaxonomyTerm{
 				{Name: "Engineering"},
 				{Name: "Search"},
@@ -54,8 +58,8 @@ func TestPublishedArticleStructuredDataUsesApprovedInputs(t *testing.T) {
 	}
 
 	structuredData := publishedArticleStructuredData(post)
-	if len(structuredData) != 1 {
-		t.Fatalf("expected one article schema, got %#v", structuredData)
+	if len(structuredData) != 2 {
+		t.Fatalf("expected article and breadcrumb schemas, got %#v", structuredData)
 	}
 	article, ok := structuredData[0].(map[string]any)
 	if !ok {
@@ -93,6 +97,43 @@ func TestPublishedArticleStructuredDataUsesApprovedInputs(t *testing.T) {
 	publisher, ok := article["publisher"].(map[string]any)
 	if !ok || publisher["name"] != "Example Publisher" || publisher["url"] != "https://publisher.example/about" {
 		t.Fatalf("unexpected publisher: %#v", article["publisher"])
+	}
+	breadcrumbs, ok := structuredData[1].(map[string]any)
+	if !ok || breadcrumbs["@type"] != "BreadcrumbList" {
+		t.Fatalf("expected breadcrumb schema, got %#v", structuredData[1])
+	}
+	items, ok := breadcrumbs["itemListElement"].([]any)
+	if !ok || len(items) != 3 {
+		t.Fatalf("expected ancestor, category and article breadcrumb items, got %#v", breadcrumbs["itemListElement"])
+	}
+	category := items[1].(map[string]any)
+	if category["item"] != "https://example.test/categories/engineering" || category["position"] != 2 {
+		t.Fatalf("unexpected category breadcrumb: %#v", category)
+	}
+}
+
+func TestPublishedMediaSnapshotRequiresResponsiveDimensionsAndSafeURLs(t *testing.T) {
+	media := publishedMediaFromSnapshot(`{
+		"hero": {
+			"id": "asset-1", "url": "/media/hero.webp", "mimeType": "image/webp",
+			"width": 1600, "height": 900, "altText": "A useful diagram", "decorative": false,
+			"variants": [
+				{"name":"square_1x1","url":"https://assets.example.test/square.webp","mimeType":"image/webp","width":800,"height":800},
+				{"name":"unsafe","url":"javascript:alert(1)","mimeType":"image/webp","width":800,"height":600},
+				{"name":"missing-dimensions","url":"/media/no-size.webp","mimeType":"image/webp","width":0,"height":0}
+			]
+		}
+	}`)
+	if media.Hero == nil || media.Hero.Width != 1600 || media.Hero.Height != 900 {
+		t.Fatalf("expected typed hero with explicit dimensions, got %#v", media.Hero)
+	}
+	if len(media.Hero.Variants) != 1 || media.Hero.Variants[0].Name != "square_1x1" {
+		t.Fatalf("expected only complete safe responsive variants, got %#v", media.Hero.Variants)
+	}
+
+	invalid := publishedMediaFromSnapshot(`{"hero":{"id":"asset-2","url":"/media/no-size.webp","mimeType":"image/webp"}}`)
+	if invalid.Hero != nil {
+		t.Fatalf("expected incomplete hero to be omitted, got %#v", invalid.Hero)
 	}
 }
 
