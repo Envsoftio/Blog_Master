@@ -709,6 +709,17 @@
                   </option>
                 </select>
               </label>
+              <fieldset v-if="copySourceContributors.length" class="space-y-3 rounded-md border border-[#d8d0e8] p-3 dark:border-[#4f4565]">
+                <legend class="px-1 text-sm font-medium">Destination contributors</legend>
+                <p class="text-xs text-[#5d6a61] dark:text-[#aeb8b0]">Explicitly map every credited source profile to an active profile owned by the destination project.</p>
+                <label v-for="contributor in copySourceContributors" :key="contributor.authorId" class="block space-y-1">
+                  <span class="text-xs font-medium">{{ contributor.name }} · {{ contributor.roles.join(', ') }}</span>
+                  <select v-model="copyContributorMappings[contributor.authorId]" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" required>
+                    <option value="">Select destination author</option>
+                    <option v-for="author in copyDestinationAuthors" :key="author.id" :value="author.id">{{ author.displayName }}</option>
+                  </select>
+                </label>
+              </fieldset>
               <label class="block space-y-2">
                 <span class="text-sm font-medium">Destination category</span>
                 <select
@@ -1109,6 +1120,9 @@ const article = ref<AdminArticle | null>(null)
 const categories = ref<TaxonomyTerm[]>([])
 const authors = ref<AdminAuthor[]>([])
 const copyDestinationCategories = ref<TaxonomyTerm[]>([])
+const copyDestinationAuthors = ref<AdminAuthor[]>([])
+const copySourceRevision = ref<AdminRevisionDetail | null>(null)
+const copyContributorMappings = reactive<Record<string, string>>({})
 const members = ref<AdminProjectMember[]>([])
 const comments = ref<ReviewComment[]>([])
 const assignments = ref<ReviewAssignment[]>([])
@@ -1147,6 +1161,7 @@ const commentPending = reactive<Record<string, string>>({})
 const assignmentPending = reactive<Record<string, string>>({})
 let comparisonRequestVersion = 0
 let copyCategoryRequestVersion = 0
+let copyContextRequestVersion = 0
 let draftPersistenceEnabled = false
 let draftDirty = false
 let draftSaveTimer: ReturnType<typeof setTimeout> | undefined
@@ -1253,7 +1268,10 @@ const canCopyArticle = computed(() => Boolean(
   && copyForm.primaryCategoryId
   && copyForm.slug.trim()
   && ['canonical_original', 'material_adaptation'].includes(copyForm.canonicalDecision)
+  && copySourceRevision.value
+  && copySourceContributors.value.every(contributor => copyContributorMappings[contributor.authorId])
 ))
+const copySourceContributors = computed(() => sourceContributorsFromRevision(copySourceRevision.value))
 const openCommentCount = computed(() => comments.value.filter(comment => comment.status !== 'resolved').length)
 const approvedRevisions = computed(() => revisions.value.filter(revision => revision.editorialState === 'approved'))
 const canCompareRevisions = computed(() => Boolean(
@@ -1330,8 +1348,8 @@ watch(
 )
 
 watch(
-  () => copyForm.destinationProjectId,
-  destinationProjectId => loadCopyDestinationCategories(destinationProjectId)
+  () => [copyForm.destinationProjectId, copyForm.sourceRevisionId] as const,
+  ([destinationProjectId, sourceRevisionId]) => loadCopyContext(destinationProjectId, sourceRevisionId)
 )
 
 watch(
@@ -1571,7 +1589,11 @@ async function copyArticle() {
           sourceRevisionId: copyForm.sourceRevisionId,
           primaryCategoryId: copyForm.primaryCategoryId,
           slug: copyForm.slug,
-          canonicalDecision: copyForm.canonicalDecision
+          canonicalDecision: copyForm.canonicalDecision,
+          contributorMappings: copySourceContributors.value.map(contributor => ({
+            sourceAuthorId: contributor.authorId,
+            destinationAuthorId: copyContributorMappings[contributor.authorId]
+          }))
         }
       }
     )
@@ -1601,6 +1623,73 @@ async function loadCopyDestinationCategories(destinationProjectId: string) {
       loadingCopyCategories.value = false
     }
   }
+}
+
+async function loadCopyContext(destinationProjectId: string, sourceRevisionId: string) {
+  const requestVersion = ++copyContextRequestVersion
+  copyDestinationAuthors.value = []
+  copySourceRevision.value = null
+  for (const key of Object.keys(copyContributorMappings)) delete copyContributorMappings[key]
+  await loadCopyDestinationCategories(destinationProjectId)
+  if (!destinationProjectId || !sourceRevisionId || requestVersion !== copyContextRequestVersion) return
+  try {
+    const [authorResponse, revision] = await Promise.all([
+      fetchAllAuthors(destinationProjectId),
+      fetchRevisionDetail(sourceRevisionId)
+    ])
+    if (requestVersion !== copyContextRequestVersion) return
+    copyDestinationAuthors.value = authorResponse
+      .filter(author => author.status === 'active')
+      .sort((left, right) => left.displayName.localeCompare(right.displayName))
+    copySourceRevision.value = revision
+  } catch (error) {
+    if (requestVersion === copyContextRequestVersion) errorMessage.value = normalizeAPIError(error, 'Could not load contributor mappings.')
+  }
+}
+
+async function fetchAllAuthors(targetProjectID: string) {
+  const allAuthors = new Map<string, AdminAuthor>()
+  const seenCursors = new Set<string>()
+  let cursor = ''
+  do {
+    const response = await $fetch<APIListEnvelope<AdminAuthor>>(`/api/v1/projects/${targetProjectID}/authors`, {
+      credentials: 'include',
+      query: { limit: 100, ...(cursor ? { cursor } : {}) }
+    })
+    for (const author of apiListData(response)) allAuthors.set(author.id, author)
+    const nextCursor = response.meta?.nextCursor || ''
+    if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Author pagination returned a repeated cursor')
+    if (nextCursor) seenCursors.add(nextCursor)
+    cursor = nextCursor
+  } while (cursor)
+  return [...allAuthors.values()]
+}
+
+function sourceContributorsFromRevision(revision: AdminRevisionDetail | null) {
+  if (!revision) return [] as Array<{ authorId: string, name: string, roles: string[] }>
+  const values = new Map<string, { authorId: string, name: string, roles: string[] }>()
+  const authors = Array.isArray(revision.authorSnapshot) ? revision.authorSnapshot : []
+  authors.forEach((value, index) => addSourceContributor(values, value, index === 0 ? 'primary author' : 'co-author'))
+  const contributors = Array.isArray(revision.contributorSnapshot) ? revision.contributorSnapshot : []
+  contributors.forEach((value) => {
+    if (!value || typeof value !== 'object') return
+    const record = value as Record<string, unknown>
+    addSourceContributor(values, record.author, String(record.role || 'contributor').replaceAll('_', ' '))
+  })
+  return [...values.values()]
+}
+
+function addSourceContributor(target: Map<string, { authorId: string, name: string, roles: string[] }>, value: unknown, role: string) {
+  if (!value || typeof value !== 'object') return
+  const author = value as Record<string, unknown>
+  const authorId = typeof author.id === 'string' ? author.id : ''
+  if (!authorId) return
+  const existing = target.get(authorId)
+  if (existing) {
+    if (!existing.roles.includes(role)) existing.roles.push(role)
+    return
+  }
+  target.set(authorId, { authorId, name: typeof author.displayName === 'string' ? author.displayName : authorId, roles: [role] })
 }
 
 async function fetchAllCategories(targetProjectID: string) {

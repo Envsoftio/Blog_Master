@@ -869,6 +869,7 @@ func documentCopyArticleRoute(api huma.API) {
 		"primaryCategoryId",
 		"slug",
 		"canonicalDecision",
+		"contributorMappings",
 	}
 	if decision := resolvedRequestSchema.Properties["canonicalDecision"]; decision != nil {
 		decision.Enum = []any{"canonical_original", "material_adaptation"}
@@ -892,7 +893,7 @@ func documentCopyArticleRoute(api huma.API) {
 		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/copy-to-project",
 		OperationID: "copyArticleToProject",
 		Summary:     "Copy an article to another project",
-		Description: "Creates an independent destination draft from an exact source revision. The caller needs source access and destination content-create permission, and must record a canonical-original or material-adaptation decision. Canonical-original URLs are derived from the selected source revision's publication.",
+		Description: "Creates an independent destination draft from an exact source revision. The caller needs source access and destination content-create permission, must explicitly map every source contributor to an active destination author, and must record a canonical-original or material-adaptation decision. Canonical-original URLs are derived from the selected source revision's publication.",
 		Tags:        []string{"Administration"},
 		Security:    adminSessionSecurityRequirement(),
 		Parameters: []*huma.Param{

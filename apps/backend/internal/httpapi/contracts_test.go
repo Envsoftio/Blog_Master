@@ -431,6 +431,7 @@ func TestCopyArticleOpenAPIContract(t *testing.T) {
 		"slug",
 		"canonicalDecision",
 		"canonicalOriginalUrl",
+		"contributorMappings",
 	} {
 		contractProperty(t, requestSchema, property)
 	}
@@ -440,6 +441,7 @@ func TestCopyArticleOpenAPIContract(t *testing.T) {
 		"primaryCategoryId",
 		"slug",
 		"canonicalDecision",
+		"contributorMappings",
 	} {
 		if !containsString(requestSchema.Required, property) {
 			t.Fatalf("expected copy property %q to be required", property)

@@ -336,6 +336,12 @@ components:
           description: Optional assertion for canonical_original. When supplied, it must match the selected source revision's source canonical URL; the server always derives the stored canonical from the source publication.
           format: uri
           type: string
+        contributorMappings:
+          items:
+            $ref: "#/components/schemas/CopyContributorMappingRequest"
+          type:
+            - array
+            - "null"
         destinationProjectId:
           type: string
         primaryCategoryId:
@@ -350,6 +356,18 @@ components:
         - primaryCategoryId
         - slug
         - canonicalDecision
+        - contributorMappings
+      type: object
+    CopyContributorMappingRequest:
+      additionalProperties: false
+      properties:
+        destinationAuthorId:
+          type: string
+        sourceAuthorId:
+          type: string
+      required:
+        - sourceAuthorId
+        - destinationAuthorId
       type: object
     EnvelopeAdminArticle:
       additionalProperties: false
@@ -2148,7 +2166,7 @@ paths:
         - Administration
   /api/v1/projects/{projectID}/articles/{articleID}/copy-to-project:
     post:
-      description: Creates an independent destination draft from an exact source revision. The caller needs source access and destination content-create permission, and must record a canonical-original or material-adaptation decision. Canonical-original URLs are derived from the selected source revision's publication.
+      description: Creates an independent destination draft from an exact source revision. The caller needs source access and destination content-create permission, must explicitly map every source contributor to an active destination author, and must record a canonical-original or material-adaptation decision. Canonical-original URLs are derived from the selected source revision's publication.
       operationId: copyArticleToProject
       parameters:
         - description: Source project identifier

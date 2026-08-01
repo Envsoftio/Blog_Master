@@ -301,12 +301,18 @@ type rollbackRequest struct {
 }
 
 type copyArticleRequest struct {
-	DestinationProjectID string `json:"destinationProjectId"`
-	SourceRevisionID     string `json:"sourceRevisionId"`
-	PrimaryCategoryID    string `json:"primaryCategoryId"`
-	Slug                 string `json:"slug"`
-	CanonicalDecision    string `json:"canonicalDecision"`
-	CanonicalOriginalURL string `json:"canonicalOriginalUrl,omitempty"`
+	DestinationProjectID string                          `json:"destinationProjectId"`
+	SourceRevisionID     string                          `json:"sourceRevisionId"`
+	PrimaryCategoryID    string                          `json:"primaryCategoryId"`
+	Slug                 string                          `json:"slug"`
+	CanonicalDecision    string                          `json:"canonicalDecision"`
+	CanonicalOriginalURL string                          `json:"canonicalOriginalUrl,omitempty"`
+	ContributorMappings  []copyContributorMappingRequest `json:"contributorMappings"`
+}
+
+type copyContributorMappingRequest struct {
+	SourceAuthorID      string `json:"sourceAuthorId"`
+	DestinationAuthorID string `json:"destinationAuthorId"`
 }
 
 type apiKeyRequest struct {
@@ -2178,6 +2184,12 @@ func (input seoRequest) toStoreInput() store.SEOInput {
 }
 
 func (input copyArticleRequest) toStoreInput() store.CopyArticleInput {
+	mappings := make([]store.CopyContributorMapping, 0, len(input.ContributorMappings))
+	for _, mapping := range input.ContributorMappings {
+		mappings = append(mappings, store.CopyContributorMapping{
+			SourceAuthorID: mapping.SourceAuthorID, DestinationAuthorID: mapping.DestinationAuthorID,
+		})
+	}
 	return store.CopyArticleInput{
 		DestinationProjectID: input.DestinationProjectID,
 		SourceRevisionID:     input.SourceRevisionID,
@@ -2185,6 +2197,7 @@ func (input copyArticleRequest) toStoreInput() store.CopyArticleInput {
 		Slug:                 input.Slug,
 		CanonicalDecision:    input.CanonicalDecision,
 		CanonicalOriginalURL: input.CanonicalOriginalURL,
+		ContributorMappings:  mappings,
 	}
 }
 

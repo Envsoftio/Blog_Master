@@ -624,6 +624,7 @@ export type ArticleCopyPayload = {
   slug: string
   canonicalDecision: 'canonical_original' | 'material_adaptation'
   canonicalOriginalUrl?: string
+  contributorMappings: Array<{ sourceAuthorId: string, destinationAuthorId: string }>
 }
 
 export type ArticleListOptions = {

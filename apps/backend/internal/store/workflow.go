@@ -186,6 +186,12 @@ type CopyArticleInput struct {
 	Slug                 string
 	CanonicalDecision    string
 	CanonicalOriginalURL string
+	ContributorMappings  []CopyContributorMapping
+}
+
+type CopyContributorMapping struct {
+	SourceAuthorID      string
+	DestinationAuthorID string
 }
 
 type TermInput struct {
@@ -610,6 +616,12 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 	if err != nil {
 		return AdminArticle{}, err
 	}
+	attribution, err := buildCopiedRevisionAttribution(
+		ctx, tx, sourceProjectID, input.SourceRevisionID, input.DestinationProjectID, input.ContributorMappings,
+	)
+	if err != nil {
+		return AdminArticle{}, err
+	}
 	if err := validateCopyBodyReferences(source.BodyDocumentJSON, source.SanitizedHTML, source.MarkdownExport); err != nil {
 		return AdminArticle{}, err
 	}
@@ -647,7 +659,8 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 		return AdminArticle{}, err
 	}
 	contentHash, err := revisionContentHash(
-		source.Title, source.SanitizedHTML, source.BodyDocumentJSON, taxonomyJSON, seoJSON, "[]", "[]",
+		source.Title, source.SanitizedHTML, source.BodyDocumentJSON, taxonomyJSON, seoJSON,
+		attribution.AuthorSnapshotJSON, attribution.ContributorSnapshotJSON,
 	)
 	if err != nil {
 		return AdminArticle{}, err
@@ -671,20 +684,25 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 		  id, project_id, content_id, revision_number, created_by_type, created_by_user_id,
 		  title, alternate_title, deck, excerpt, short_answer, body_document_json,
 		  sanitized_html, plain_text, markdown_export, table_of_contents_json,
-		  word_count, reading_time_seconds, taxonomy_snapshot_json, seo_snapshot_json,
+		  word_count, reading_time_seconds, author_snapshot_json, contributor_snapshot_json,
+		  taxonomy_snapshot_json, seo_snapshot_json,
 		  change_summary, content_hash, ai_assistance_level, ai_provenance_summary_json,
 		  editorial_state
 		) VALUES (
-		  ?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft'
+		  ?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft'
 		)
 	`, revisionID, input.DestinationProjectID, articleID, actorUserID,
 		source.Title, nullIfEmpty(source.AlternateTitle), nullIfEmpty(source.Deck),
 		nullIfEmpty(source.Excerpt), nullIfEmpty(source.ShortAnswer), source.BodyDocumentJSON,
 		source.SanitizedHTML, source.PlainText, source.MarkdownExport, source.TableOfContentsJSON,
-		source.WordCount, source.ReadingTimeSeconds, taxonomyJSON, seoJSON,
+		source.WordCount, source.ReadingTimeSeconds, attribution.AuthorSnapshotJSON,
+		attribution.ContributorSnapshotJSON, taxonomyJSON, seoJSON,
 		fmt.Sprintf("Copied from %s/%s revision %s", sourceProjectID, sourceArticleID, input.SourceRevisionID),
 		contentHash, source.AIAssistanceLevel, source.AIProvenanceSummaryJSON,
 	); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := insertRevisionContributors(ctx, tx, input.DestinationProjectID, revisionID, attribution.Records); err != nil {
 		return AdminArticle{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -693,6 +711,10 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 		) VALUES (?, ?, ?, ?, ?, ?, 'unpublished')
 	`, publicationID, input.DestinationProjectID, articleID, input.Slug,
 		destinationCanonicalURL, input.CanonicalDecision); err != nil {
+		return AdminArticle{}, err
+	}
+	mappingJSON, err := json.Marshal(input.ContributorMappings)
+	if err != nil {
 		return AdminArticle{}, err
 	}
 
@@ -704,6 +726,7 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 		"destinationArticleId": articleID,
 		"canonicalDecision":    input.CanonicalDecision,
 		"canonicalUrl":         destinationCanonicalURL,
+		"contributorMappings":  string(mappingJSON),
 	}
 	if err := insertAuditEventTx(
 		ctx, tx, sourceProjectID, "user", actorUserID, "content.copy_from",
@@ -721,6 +744,88 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 		return AdminArticle{}, err
 	}
 	return s.GetArticleForUser(ctx, actorUserID, input.DestinationProjectID, articleID)
+}
+
+func buildCopiedRevisionAttribution(
+	ctx context.Context,
+	tx *sql.Tx,
+	sourceProjectID, sourceRevisionID, destinationProjectID string,
+	mappings []CopyContributorMapping,
+) (revisionAttribution, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT author_id, role, position
+		FROM revision_contributors
+		WHERE project_id = ? AND revision_id = ?
+		ORDER BY role, position, author_id
+	`, sourceProjectID, sourceRevisionID)
+	if err != nil {
+		return revisionAttribution{}, err
+	}
+	defer rows.Close()
+
+	sourceRecords := []revisionContributorRecord{}
+	required := map[string]struct{}{}
+	for rows.Next() {
+		var record revisionContributorRecord
+		if err := rows.Scan(&record.AuthorID, &record.Role, &record.Position); err != nil {
+			return revisionAttribution{}, err
+		}
+		sourceRecords = append(sourceRecords, record)
+		required[record.AuthorID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return revisionAttribution{}, err
+	}
+
+	resolved := make(map[string]string, len(mappings))
+	for _, mapping := range mappings {
+		sourceID := strings.TrimSpace(mapping.SourceAuthorID)
+		destinationID := strings.TrimSpace(mapping.DestinationAuthorID)
+		if sourceID == "" || destinationID == "" {
+			return revisionAttribution{}, fmt.Errorf("%w: contributor mappings require sourceAuthorId and destinationAuthorId", ErrValidation)
+		}
+		if _, exists := resolved[sourceID]; exists {
+			return revisionAttribution{}, fmt.Errorf("%w: contributor mapping for source author %q is duplicated", ErrValidation, sourceID)
+		}
+		if _, exists := required[sourceID]; !exists {
+			return revisionAttribution{}, fmt.Errorf("%w: contributor mapping references author %q outside the selected source revision", ErrValidation, sourceID)
+		}
+		resolved[sourceID] = destinationID
+	}
+	if len(resolved) != len(required) {
+		return revisionAttribution{}, fmt.Errorf("%w: every contributor in the selected source revision must be explicitly mapped", ErrValidation)
+	}
+
+	destinationAuthors := map[string]Author{}
+	for sourceID, destinationID := range resolved {
+		row := tx.QueryRowContext(ctx, `SELECT `+authorColumns+` FROM authors WHERE project_id = ? AND id = ? AND status = 'active'`, destinationProjectID, destinationID)
+		author, err := scanAuthor(row)
+		if errors.Is(err, sql.ErrNoRows) {
+			return revisionAttribution{}, fmt.Errorf("%w: mapped destination author %q for source author %q must be active in the destination project", ErrValidation, destinationID, sourceID)
+		}
+		if err != nil {
+			return revisionAttribution{}, err
+		}
+		destinationAuthors[destinationID] = author
+	}
+	seenAssignments := map[string]struct{}{}
+	for index := range sourceRecords {
+		destinationID := resolved[sourceRecords[index].AuthorID]
+		assignment := destinationID + "\x00" + sourceRecords[index].Role
+		if _, duplicate := seenAssignments[assignment]; duplicate {
+			return revisionAttribution{}, fmt.Errorf("%w: contributor mappings collapse multiple source credits into the same destination author and role", ErrValidation)
+		}
+		seenAssignments[assignment] = struct{}{}
+		author := destinationAuthors[destinationID]
+		snapshot, err := json.Marshal(author)
+		if err != nil {
+			return revisionAttribution{}, err
+		}
+		sourceRecords[index].AuthorID = destinationID
+		sourceRecords[index].Author = author
+		sourceRecords[index].PublicSnapshotJSON = string(snapshot)
+	}
+	return attributionFromRecords(sourceRecords)
 }
 
 func (s *Store) SubmitRevision(ctx context.Context, actorUserID, projectID, revisionID string) (AdminRevision, error) {

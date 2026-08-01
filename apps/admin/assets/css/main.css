@@ -68,7 +68,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -181,7 +181,7 @@ select {
 .brand-mark__text small {
   margin-top: 3px;
   color: var(--sidebar-muted);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .project-switcher {
@@ -197,7 +197,7 @@ select {
   display: block;
   margin: 0 0 7px;
   color: var(--sidebar-muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -219,7 +219,7 @@ select {
   border-radius: 6px;
   background: #e4b85f;
   color: #292114;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 750;
 }
 
@@ -231,7 +231,7 @@ select {
   outline: 0;
   background: transparent;
   color: #f8fafc;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 550;
 }
 
@@ -257,7 +257,7 @@ select {
   padding: 8px 10px;
   border-radius: 6px;
   color: #b7c0ce;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   text-decoration: none;
   transition: background 140ms ease, color 140ms ease;
@@ -313,14 +313,14 @@ select {
 }
 
 .sidebar-user__copy strong {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 .sidebar-user__copy small {
   margin-top: 2px;
   color: var(--sidebar-muted);
-  font-size: 12px;
+  font-size: 13px;
   text-transform: capitalize;
 }
 
@@ -365,13 +365,13 @@ select {
 
 .page-context p {
   color: var(--text-soft);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 550;
 }
 
 .page-context h1 {
   margin-top: 1px;
-  font-size: 20px;
+  font-size: 21px;
   font-weight: 680;
   line-height: 1.25;
 }
@@ -381,6 +381,21 @@ select {
   max-width: 1660px;
   margin: 0 auto;
   padding: 24px 28px 48px;
+}
+
+.app-content .text-xs {
+  font-size: 13px !important;
+  line-height: 1.35rem !important;
+}
+
+.app-content .text-sm {
+  font-size: 15px !important;
+  line-height: 1.5rem !important;
+}
+
+.app-content .text-lg {
+  font-size: 19px !important;
+  line-height: 1.55rem !important;
 }
 
 .icon-button {
@@ -449,7 +464,7 @@ select {
   border-radius: 6px;
   background: var(--surface);
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;
@@ -514,7 +529,7 @@ select {
   max-width: 720px;
   margin: 0;
   color: var(--text-soft);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .metric-grid {
@@ -534,7 +549,7 @@ select {
   justify-content: space-between;
   gap: 10px;
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .metric-card__value {
@@ -568,14 +583,14 @@ select {
 
 .empty-state h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
 }
 
 .empty-state p {
   max-width: 450px;
   margin: 6px auto 0;
   color: var(--text-soft);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .status-pill {
@@ -588,7 +603,7 @@ select {
   border-radius: 999px;
   background: var(--surface-subtle);
   color: var(--text-soft);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
   text-transform: capitalize;
 }
@@ -626,7 +641,7 @@ select {
   border-radius: 6px;
   background: var(--surface);
   color: var(--text-soft);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .ui-alert--success {
@@ -648,7 +663,7 @@ select {
 
 .field > span {
   color: var(--text);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -784,7 +799,7 @@ select {
 
   .page-context h1 {
     max-width: 150px;
-    font-size: 17px;
+    font-size: 18px;
   }
 
   .app-topbar .button--primary span {

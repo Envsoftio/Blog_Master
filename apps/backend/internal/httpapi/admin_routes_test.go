@@ -4678,6 +4678,7 @@ func TestCopyArticleToProjectCreatesIndependentAuditedDraft(t *testing.T) {
 	destinationProject := createTestProject(t, server, login, `{"slug":"copy-destination","name":"Copy Destination","primaryDomain":"destination.example.test"}`)
 	sourceCategory := createTestCategory(t, server, login, sourceProject.ID, `{"slug":"source","name":"Source"}`)
 	destinationCategory := createTestCategory(t, server, login, destinationProject.ID, `{"slug":"destination","name":"Destination"}`)
+	destinationAuthor := createTestAuthor(t, server, login, destinationProject.ID, `{"slug":"destination-author","displayName":"Destination Author"}`)
 	sourceArticle := createTestArticle(t, server, login, sourceProject.ID, `{
 		"articleType":"guide",
 		"title":"Original draft",
@@ -4697,6 +4698,10 @@ func TestCopyArticleToProjectCreatesIndependentAuditedDraft(t *testing.T) {
 		"title":"Newer source revision",
 		"html":"<p>Newer body</p>"
 	}`)
+	var sourceAuthorID string
+	if err := db.QueryRow(`SELECT author_id FROM revision_contributors WHERE project_id = ? AND revision_id = ? AND role = 'primary_author'`, sourceProject.ID, selectedRevision.ID).Scan(&sourceAuthorID); err != nil {
+		t.Fatal(err)
+	}
 
 	copyRequest := newMemberMutationRequest(
 		http.MethodPost,
@@ -4707,7 +4712,8 @@ func TestCopyArticleToProjectCreatesIndependentAuditedDraft(t *testing.T) {
 			"primaryCategoryId":"`+destinationCategory.ID+`",
 			"slug":"copied-guide",
 			"canonicalDecision":"canonical_original",
-			"canonicalOriginalUrl":"https://source.example.test/blog/copy-me"
+			"canonicalOriginalUrl":"https://source.example.test/blog/copy-me",
+			"contributorMappings":[{"sourceAuthorId":"`+sourceAuthorID+`","destinationAuthorId":"`+destinationAuthor.ID+`"}]
 		}`,
 		login,
 	)
@@ -4738,6 +4744,17 @@ func TestCopyArticleToProjectCreatesIndependentAuditedDraft(t *testing.T) {
 	if copied.Data.LatestRevision == nil || copied.Data.LatestRevision.ID == selectedRevision.ID ||
 		copied.Data.LatestRevision.RevisionNumber != 1 {
 		t.Fatalf("expected independent first revision, got %#v", copied.Data.LatestRevision)
+	}
+	var copiedAuthorSnapshot string
+	if err := db.QueryRow(`SELECT author_snapshot_json FROM content_revisions WHERE project_id = ? AND id = ?`, destinationProject.ID, copied.Data.LatestRevision.ID).Scan(&copiedAuthorSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	var copiedAuthors []store.Author
+	if err := json.Unmarshal([]byte(copiedAuthorSnapshot), &copiedAuthors); err != nil {
+		t.Fatal(err)
+	}
+	if len(copiedAuthors) != 1 || copiedAuthors[0].ID != destinationAuthor.ID {
+		t.Fatalf("expected remapped immutable destination attribution, got %#v", copiedAuthors)
 	}
 
 	var copiedBody, copiedDeck, copiedExcerpt, copiedShortAnswer, baseRevisionID string
@@ -4842,7 +4859,8 @@ func TestCopyArticleToProjectCreatesIndependentAuditedDraft(t *testing.T) {
 			"sourceRevisionId":"`+newerRevision.ID+`",
 			"primaryCategoryId":"`+destinationCategory.ID+`",
 			"slug":"adapted-guide",
-			"canonicalDecision":"material_adaptation"
+			"canonicalDecision":"material_adaptation",
+			"contributorMappings":[{"sourceAuthorId":"`+sourceAuthorID+`","destinationAuthorId":"`+destinationAuthor.ID+`"}]
 		}`,
 		login,
 	)
@@ -4865,12 +4883,17 @@ func TestCopyArticleToProjectDerivesCanonicalAndRejectsUnsafeSourceReferences(t 
 	destinationProject := createTestProject(t, server, login, `{"slug":"validation-destination","name":"Validation Destination","primaryDomain":"destination-validation.example.test"}`)
 	sourceCategory := createTestCategory(t, server, login, sourceProject.ID, `{"slug":"source","name":"Source"}`)
 	destinationCategory := createTestCategory(t, server, login, destinationProject.ID, `{"slug":"destination","name":"Destination"}`)
+	destinationAuthor := createTestAuthor(t, server, login, destinationProject.ID, `{"slug":"destination-author","displayName":"Destination Author"}`)
 	sourceArticle := createTestArticle(t, server, login, sourceProject.ID, `{
 		"title":"Canonical source",
 		"slug":"canonical-source",
 		"primaryCategoryId":"`+sourceCategory.ID+`",
 		"html":"<p>Safe body</p>"
 	}`)
+	var sourceAuthorID string
+	if err := db.QueryRow(`SELECT author_id FROM revision_contributors WHERE project_id = ? AND revision_id = ? AND role = 'primary_author'`, sourceProject.ID, sourceArticle.LatestRevision.ID).Scan(&sourceAuthorID); err != nil {
+		t.Fatal(err)
+	}
 	copyPath := "/api/v1/projects/" + sourceProject.ID + "/articles/" + sourceArticle.ID + "/copy-to-project"
 	copyBody := func(revisionID, slug, decision, canonicalField string) string {
 		return `{
@@ -4878,7 +4901,8 @@ func TestCopyArticleToProjectDerivesCanonicalAndRejectsUnsafeSourceReferences(t 
 			"sourceRevisionId":"` + revisionID + `",
 			"primaryCategoryId":"` + destinationCategory.ID + `",
 			"slug":"` + slug + `",
-			"canonicalDecision":"` + decision + `"` + canonicalField + `
+			"canonicalDecision":"` + decision + `",
+			"contributorMappings":[{"sourceAuthorId":"` + sourceAuthorID + `","destinationAuthorId":"` + destinationAuthor.ID + `"}]` + canonicalField + `
 		}`
 	}
 
