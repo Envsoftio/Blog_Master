@@ -46,6 +46,15 @@ func legacyLocaleInitialMigration(t *testing.T) string {
 	return legacy
 }
 
+func legacyProjectApprovalInitialMigration(t *testing.T) string {
+	t.Helper()
+	const approvalColumn = "    solo_owner_approval_enabled INTEGER NOT NULL DEFAULT 0,\n"
+	if strings.Count(initialMigration, approvalColumn) != 1 {
+		t.Fatalf("legacy project approval fixture expected one occurrence of %q", approvalColumn)
+	}
+	return strings.Replace(initialMigration, approvalColumn, "", 1)
+}
+
 func seedLegacyLocalePublication(t *testing.T, db *sql.DB, id, contentID, locale, slug, updatedAt string) {
 	t.Helper()
 	if _, err := db.Exec(`
@@ -56,6 +65,78 @@ func seedLegacyLocalePublication(t *testing.T, db *sql.DB, id, contentID, locale
 		) VALUES (?, 'project-a', ?, ?, ?, ?, 'unpublished', 7, 'noindex,follow', '{"title":"draft"}', '{"image":"draft.png"}', ?)
 	`, id, contentID, locale, slug, "https://example.test/blog/"+slug, updatedAt); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestProjectSoloOwnerApprovalMigrationRepairsLegacyProjectsTable(t *testing.T) {
+	db, err := OpenSQLite(filepath.Join(t.TempDir(), "legacy-project-approval.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigration(db, migration{version: "0001_initial", statements: legacyProjectApprovalInitialMigration(t)}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+
+	var columnCount, applied int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM pragma_table_info('projects')
+		WHERE name = 'solo_owner_approval_enabled'
+	`).Scan(&columnCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM schema_migrations
+		WHERE version = '0024_project_solo_owner_approval'
+	`).Scan(&applied); err != nil {
+		t.Fatal(err)
+	}
+	if columnCount != 1 || applied != 1 {
+		t.Fatalf("expected project approval migration to add one column and be marked applied, columns=%d applied=%d", columnCount, applied)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO users(id, email_normalized, status)
+		VALUES ('owner', 'owner@example.test', 'active')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO projects(id, slug, name, public_project_key, verified_domains_json, solo_owner_approval_enabled, created_by)
+		VALUES ('project-a', 'project-a', 'Project A', 'public-a', '[]', 1, 'owner')
+	`); err != nil {
+		t.Fatalf("expected migrated projects table to accept solo owner approval writes: %v", err)
+	}
+}
+
+func TestProjectSoloOwnerApprovalMigrationIsNoOpForCurrentInitialSchema(t *testing.T) {
+	db := testDatabase(t)
+
+	var columnCount, applied int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM pragma_table_info('projects')
+		WHERE name = 'solo_owner_approval_enabled'
+	`).Scan(&columnCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM schema_migrations
+		WHERE version = '0024_project_solo_owner_approval'
+	`).Scan(&applied); err != nil {
+		t.Fatal(err)
+	}
+	if columnCount != 1 || applied != 1 {
+		t.Fatalf("expected current schema to retain one approval column and mark migration applied, columns=%d applied=%d", columnCount, applied)
 	}
 }
 

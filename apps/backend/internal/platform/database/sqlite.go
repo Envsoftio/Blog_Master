@@ -76,6 +76,9 @@ var articleAutosavesMigration string
 //go:embed migrations/0023_project_publications_locale_removal.sql
 var projectPublicationsLocaleRemovalMigration string
 
+//go:embed migrations/0024_project_solo_owner_approval.sql
+var projectSoloOwnerApprovalMigration string
+
 type migration struct {
 	version    string
 	statements string
@@ -134,6 +137,7 @@ func Migrate(db *sql.DB) error {
 		{version: "0020_ai_execution", statements: aiExecutionMigration},
 		{version: "0021_article_autosaves", statements: articleAutosavesMigration},
 		{version: "0023_project_publications_locale_removal", statements: projectPublicationsLocaleRemovalMigration},
+		{version: "0024_project_solo_owner_approval", statements: projectSoloOwnerApprovalMigration},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {
@@ -164,6 +168,9 @@ func applyMigration(db *sql.DB, item migration) error {
 			continue
 		}
 		if _, err := tx.Exec(stmt); err != nil {
+			if item.version == "0024_project_solo_owner_approval" && strings.Contains(err.Error(), "duplicate column name: solo_owner_approval_enabled") {
+				continue
+			}
 			return fmt.Errorf("migration %s: %w\n%s", item.version, err, stmt)
 		}
 	}
