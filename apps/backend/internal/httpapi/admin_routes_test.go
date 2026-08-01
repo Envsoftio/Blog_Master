@@ -613,8 +613,8 @@ func TestMembershipRoleChangePreservesSessionsAndUsesLiveAuthorization(t *testin
 	otherProjectAfterRemovalRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+otherProject.ID, nil)
 	addCookies(otherProjectAfterRemovalRequest, memberLogin.cookies)
 	otherProjectAfterRemovalResponse := mustTest(t, server, otherProjectAfterRemovalRequest)
-	if otherProjectAfterRemovalResponse.StatusCode != http.StatusOK {
-		t.Fatalf("expected removal from one project to preserve access to another, got %d: %s", otherProjectAfterRemovalResponse.StatusCode, readBody(t, otherProjectAfterRemovalResponse))
+	if otherProjectAfterRemovalResponse.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected shared-directory removal to end access to every project, got %d: %s", otherProjectAfterRemovalResponse.StatusCode, readBody(t, otherProjectAfterRemovalResponse))
 	}
 }
 
@@ -626,13 +626,13 @@ func TestProjectMemberLoginDisableRevokesSessionsAndCanBeReenabled(t *testing.T)
 	project := createTestProject(t, server, ownerLogin, `{"slug":"disable-login","name":"Disable Login"}`)
 	otherProject := createTestProject(t, server, memberLogin, `{"slug":"member-owned","name":"Member Owned"}`)
 	if _, err := db.Exec(`
-		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		INSERT OR REPLACE INTO project_memberships(project_id, user_id, role, status, joined_at)
 		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
 	`, project.ID, memberLogin.userID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`
-		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		INSERT OR REPLACE INTO project_memberships(project_id, user_id, role, status, joined_at)
 		VALUES (?, ?, 'project_owner', 'active', CURRENT_TIMESTAMP)
 	`, otherProject.ID, ownerLogin.userID); err != nil {
 		t.Fatal(err)
@@ -765,12 +765,12 @@ func TestProjectMemberLoginDisableGuardrails(t *testing.T) {
 		ownerLogin,
 	)
 	soloOwnerDisableResponse := mustTest(t, server, soloOwnerDisable)
-	if soloOwnerDisableResponse.StatusCode != http.StatusConflict {
-		t.Fatalf("expected disable-login to protect solo-owned project %s, got %d: %s", memberOwnedProject.ID, soloOwnerDisableResponse.StatusCode, readBody(t, soloOwnerDisableResponse))
+	if soloOwnerDisableResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected shared owners to prevent project %s from being left ownerless, got %d: %s", memberOwnedProject.ID, soloOwnerDisableResponse.StatusCode, readBody(t, soloOwnerDisableResponse))
 	}
 }
 
-func TestMembershipAuthorizationAndCrossProjectScoping(t *testing.T) {
+func TestMembershipAuthorizationAndSharedProjectDirectory(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerALogin := seedAndLogin(t, server, db, "owner-a@example.test", "owner a correct password")
 	ownerBLogin := seedAndLogin(t, server, db, "owner-b@example.test", "owner b correct password")
@@ -809,8 +809,8 @@ func TestMembershipAuthorizationAndCrossProjectScoping(t *testing.T) {
 		ownerALogin,
 	)
 	crossProjectResponse := mustTest(t, server, crossProjectRequest)
-	if crossProjectResponse.StatusCode != http.StatusNotFound {
-		t.Fatalf("expected cross-project member mutation to return 404, got %d: %s", crossProjectResponse.StatusCode, readBody(t, crossProjectResponse))
+	if crossProjectResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected an owner to manage the shared member directory from either project, got %d: %s", crossProjectResponse.StatusCode, readBody(t, crossProjectResponse))
 	}
 }
 
@@ -1853,7 +1853,7 @@ func TestAdminAuthorLifecycleAndPublishedVisibility(t *testing.T) {
 	}
 }
 
-func TestRevisionContributorsAreScopedOrderedAndImmutable(t *testing.T) {
+func TestRevisionContributorsUseSharedAuthorsAndRemainOrderedAndImmutable(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct horse password")
 	otherOwnerLogin := seedAndLogin(t, server, db, "other-owner@example.test", "other owner correct password")
@@ -1872,8 +1872,8 @@ func TestRevisionContributorsAreScopedOrderedAndImmutable(t *testing.T) {
 		ownerLogin,
 	)
 	crossProjectResponse := mustTest(t, server, crossProjectRequest)
-	if crossProjectResponse.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected cross-project author assignment to fail with 400, got %d: %s", crossProjectResponse.StatusCode, readBody(t, crossProjectResponse))
+	if crossProjectResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected a shared author to be assignable from another project, got %d: %s", crossProjectResponse.StatusCode, readBody(t, crossProjectResponse))
 	}
 
 	multiplePrimaryRequest := newMemberMutationRequest(
@@ -2442,7 +2442,7 @@ func TestDisclosuresAndCorrectionsReachPublishedJSON(t *testing.T) {
 	}
 }
 
-func TestAuthorManagementAuthorizationAndCrossProjectScoping(t *testing.T) {
+func TestAuthorManagementAuthorizationAndSharedProjectDirectory(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerALogin := seedAndLogin(t, server, db, "owner-a@example.test", "owner a correct password")
 	ownerBLogin := seedAndLogin(t, server, db, "owner-b@example.test", "owner b correct password")
@@ -2503,8 +2503,8 @@ func TestAuthorManagementAuthorizationAndCrossProjectScoping(t *testing.T) {
 		ownerALogin,
 	)
 	crossProjectLoginResponse := mustTest(t, server, crossProjectLogin)
-	if crossProjectLoginResponse.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected cross-project login link to fail with 400, got %d: %s", crossProjectLoginResponse.StatusCode, readBody(t, crossProjectLoginResponse))
+	if crossProjectLoginResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected a shared author to link to a member from another project, got %d: %s", crossProjectLoginResponse.StatusCode, readBody(t, crossProjectLoginResponse))
 	}
 
 	linkedAuthor := createTestAuthor(t, server, ownerALogin, projectA.ID, `{"displayName":"Linked Author","loginUserId":"`+ownerALogin.userID+`"}`)
@@ -2565,8 +2565,8 @@ func TestAuthorManagementAuthorizationAndCrossProjectScoping(t *testing.T) {
 		ownerALogin,
 	)
 	crossProjectPhotoResponse := mustTest(t, server, crossProjectPhoto)
-	if crossProjectPhotoResponse.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected cross-project photo asset to fail with 400, got %d: %s", crossProjectPhotoResponse.StatusCode, readBody(t, crossProjectPhotoResponse))
+	if crossProjectPhotoResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected a shared author to use a photo asset from another project, got %d: %s", crossProjectPhotoResponse.StatusCode, readBody(t, crossProjectPhotoResponse))
 	}
 
 	crossProjectPatch := newMemberMutationRequest(
@@ -2576,8 +2576,8 @@ func TestAuthorManagementAuthorizationAndCrossProjectScoping(t *testing.T) {
 		ownerALogin,
 	)
 	crossProjectPatchResponse := mustTest(t, server, crossProjectPatch)
-	if crossProjectPatchResponse.StatusCode != http.StatusNotFound {
-		t.Fatalf("expected cross-project author update to return 404, got %d: %s", crossProjectPatchResponse.StatusCode, readBody(t, crossProjectPatchResponse))
+	if crossProjectPatchResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected a shared author to be editable from another project, got %d: %s", crossProjectPatchResponse.StatusCode, readBody(t, crossProjectPatchResponse))
 	}
 }
 

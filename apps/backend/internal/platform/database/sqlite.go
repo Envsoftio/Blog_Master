@@ -82,6 +82,9 @@ var projectSoloOwnerApprovalMigration string
 //go:embed migrations/0025_project_workspace_removal.sql
 var projectWorkspaceRemovalMigration string
 
+//go:embed migrations/0026_global_people_directory.sql
+var globalPeopleDirectoryMigration string
+
 type migration struct {
 	version            string
 	statements         string
@@ -143,6 +146,7 @@ func Migrate(db *sql.DB) error {
 		{version: "0023_project_publications_locale_removal", statements: projectPublicationsLocaleRemovalMigration},
 		{version: "0024_project_solo_owner_approval", statements: projectSoloOwnerApprovalMigration},
 		{version: "0025_project_workspace_removal", statements: projectWorkspaceRemovalMigration, disableForeignKeys: true},
+		{version: "0026_global_people_directory", statements: globalPeopleDirectoryMigration, disableForeignKeys: true},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {

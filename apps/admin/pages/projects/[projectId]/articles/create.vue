@@ -61,7 +61,11 @@
                   <span>{{ tag.name }}</span>
                 </label>
               </div>
-              <small v-else>Create tags from the Tags page to label this article.</small>
+              <small v-else>
+                Create tags from the
+                <NuxtLink :to="`/projects/${projectID}/tags`">Tags page</NuxtLink>
+                to label this article.
+              </small>
             </fieldset>
           </div>
         </section>

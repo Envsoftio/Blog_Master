@@ -551,9 +551,9 @@ func (s *Store) ListAuthors(ctx context.Context, projectID string) ([]Author, er
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+authorColumns+`
 		FROM authors
-		WHERE project_id = ? AND status = 'active'
+		WHERE status = 'active'
 		ORDER BY display_name, id
-	`, projectID)
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -574,8 +574,8 @@ func (s *Store) GetAuthor(ctx context.Context, projectID, slug string) (Author, 
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+authorColumns+`
 		FROM authors
-		WHERE project_id = ? AND slug = ? AND status = 'active'
-	`, projectID, slug)
+		WHERE slug = ? AND status = 'active'
+	`, slug)
 	return scanAuthor(row)
 }
 

@@ -645,10 +645,10 @@ func (s *Store) AssertMediaAssetDeletable(ctx context.Context, userID, projectID
 	err := s.db.QueryRowContext(ctx, `
 		SELECT display_name
 		FROM authors
-		WHERE project_id = ? AND photo_asset_id = ?
+		WHERE photo_asset_id = ?
 		ORDER BY created_at ASC, id ASC
 		LIMIT 1
-	`, projectID, assetID).Scan(&authorName)
+	`, assetID).Scan(&authorName)
 	if err == nil {
 		return fmt.Errorf("%w: media asset is used by author %q; choose a replacement before deleting it", ErrInvalidWorkflow, authorName)
 	}

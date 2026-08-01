@@ -521,6 +521,37 @@ func (s *Store) CreateProject(ctx context.Context, actorUserID string, input Pro
 	`, projectID, actorUserID); err != nil {
 		return AdminProject{}, err
 	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE project_memberships
+		SET role = 'project_owner',
+		    status = 'active',
+		    joined_at = COALESCE(joined_at, CURRENT_TIMESTAMP),
+		    removed_at = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = ?
+	`, actorUserID); err != nil {
+		return AdminProject{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO project_memberships(
+		  project_id, user_id, role, status, invited_by, invited_at, joined_at, updated_at, removed_at
+		)
+		SELECT ?, user_id, role, status, invited_by, invited_at, joined_at, CURRENT_TIMESTAMP, removed_at
+		FROM (
+		  SELECT membership.*,
+		         ROW_NUMBER() OVER (
+		           PARTITION BY membership.user_id
+		           ORDER BY
+		             CASE membership.status WHEN 'active' THEN 1 WHEN 'invited' THEN 2 ELSE 3 END,
+		             CASE membership.role WHEN 'project_owner' THEN 1 WHEN 'project_admin' THEN 2 WHEN 'editor' THEN 3 WHEN 'reviewer' THEN 4 ELSE 5 END
+		         ) AS directory_rank
+		  FROM project_memberships membership
+		  WHERE membership.project_id <> ?
+		)
+		WHERE directory_rank = 1
+	`, projectID, projectID); err != nil {
+		return AdminProject{}, err
+	}
 	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "project.create", "project", projectID, "success", nil); err != nil {
 		return AdminProject{}, err
 	}
@@ -724,6 +755,18 @@ func (s *Store) DeleteProject(ctx context.Context, actorUserID, projectID string
 	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "project.delete", "project", projectID, "success", nil); err != nil {
 		return err
 	}
+	// Authors are shared across projects. Move their storage ownership before the
+	// project row is removed so ON DELETE CASCADE cannot remove shared profiles.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE authors
+		SET project_id = (
+		  SELECT id FROM projects WHERE id <> ? ORDER BY created_at, id LIMIT 1
+		)
+		WHERE project_id = ?
+		  AND EXISTS (SELECT 1 FROM projects WHERE id <> ?)
+	`, projectID, projectID, projectID); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, projectID)
 	if err != nil {
 		return err
@@ -781,11 +824,10 @@ func (s *Store) ListAuthorsForUser(ctx context.Context, actorUserID, projectID s
 		SELECT `+adminAuthorColumns+`
 		FROM authors author
 		LEFT JOIN project_memberships membership
-		  ON membership.project_id = author.project_id
+		  ON membership.project_id = ?
 		 AND membership.user_id = author.login_user_id
 		LEFT JOIN users user
 		  ON user.id = author.login_user_id
-		WHERE author.project_id = ?
 		ORDER BY author.display_name, author.id
 	`, projectID)
 	if err != nil {
@@ -834,6 +876,9 @@ func (s *Store) CreateAuthor(ctx context.Context, actorUserID, projectID string,
 	if err := validateAuthorInput(input); err != nil {
 		return Author{}, err
 	}
+	if err := ensureGlobalAuthorSlugAvailable(ctx, s.db, input.Slug, ""); err != nil {
+		return Author{}, err
+	}
 	if input.LoginUserID != "" && !canManageProjectRole(actorRole) {
 		return Author{}, ErrForbidden
 	}
@@ -877,7 +922,7 @@ func (s *Store) CreateAuthor(ctx context.Context, actorUserID, projectID string,
 		externalProfilesJSON, sameAsJSON, nullIfEmpty(input.LoginUserID), input.Status); err != nil {
 		return Author{}, err
 	}
-	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+	if err := incrementAllProjectGenerations(ctx, tx); err != nil {
 		return Author{}, err
 	}
 	if err := insertAuthorOutbox(ctx, tx, projectID, authorID, "author.created", input); err != nil {
@@ -980,6 +1025,9 @@ func (s *Store) UpdateAuthor(ctx context.Context, actorUserID, projectID, author
 	if err := validateAuthorInput(next); err != nil {
 		return Author{}, err
 	}
+	if err := ensureGlobalAuthorSlugAvailable(ctx, s.db, next.Slug, authorID); err != nil {
+		return Author{}, err
+	}
 	credentialsJSON, expertiseJSON, externalProfilesJSON, sameAsJSON, err := authorJSONFields(next)
 	if err != nil {
 		return Author{}, err
@@ -1025,11 +1073,11 @@ func (s *Store) UpdateAuthor(ctx context.Context, actorUserID, projectID, author
 			    login_user_id = ?,
 			    status = ?,
 			    updated_at = CURRENT_TIMESTAMP
-			WHERE project_id = ? AND id = ?
+			WHERE id = ?
 		`, next.Slug, next.DisplayName, nullIfEmpty(next.ShortBio), nullIfEmpty(next.FullBio),
 			nullIfEmpty(next.PhotoAssetID), nullIfEmpty(next.JobTitle), nullIfEmpty(next.Organization),
 			credentialsJSON, expertiseJSON, nullIfEmpty(next.ProfileURL), externalProfilesJSON,
-			sameAsJSON, nullIfEmpty(next.LoginUserID), next.Status, projectID, authorID)
+			sameAsJSON, nullIfEmpty(next.LoginUserID), next.Status, authorID)
 	} else {
 		result, err = tx.ExecContext(ctx, `
 			UPDATE authors
@@ -1047,11 +1095,11 @@ func (s *Store) UpdateAuthor(ctx context.Context, actorUserID, projectID, author
 			    same_as_json = ?,
 			    status = ?,
 			    updated_at = CURRENT_TIMESTAMP
-			WHERE project_id = ? AND id = ?
+			WHERE id = ?
 		`, next.Slug, next.DisplayName, nullIfEmpty(next.ShortBio), nullIfEmpty(next.FullBio),
 			nullIfEmpty(next.PhotoAssetID), nullIfEmpty(next.JobTitle), nullIfEmpty(next.Organization),
 			credentialsJSON, expertiseJSON, nullIfEmpty(next.ProfileURL), externalProfilesJSON,
-			sameAsJSON, next.Status, projectID, authorID)
+			sameAsJSON, next.Status, authorID)
 	}
 	if err != nil {
 		return Author{}, err
@@ -1061,7 +1109,7 @@ func (s *Store) UpdateAuthor(ctx context.Context, actorUserID, projectID, author
 	} else if changed != 1 {
 		return Author{}, sql.ErrNoRows
 	}
-	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+	if err := incrementAllProjectGenerations(ctx, tx); err != nil {
 		return Author{}, err
 	}
 	if err := insertAuthorOutbox(ctx, tx, projectID, authorID, "author.updated", next); err != nil {
@@ -1109,8 +1157,8 @@ func (s *Store) DeleteAuthor(ctx context.Context, actorUserID, projectID, author
 	if err := tx.QueryRowContext(ctx, `
 		SELECT slug, status
 		FROM authors
-		WHERE project_id = ? AND id = ?
-	`, projectID, authorID).Scan(&slug, &authorStatus); err != nil {
+		WHERE id = ?
+	`, authorID).Scan(&slug, &authorStatus); err != nil {
 		return Author{}, err
 	}
 	if authorStatus == "inactive" {
@@ -1130,8 +1178,8 @@ func (s *Store) DeleteAuthor(ctx context.Context, actorUserID, projectID, author
 		UPDATE authors
 		SET status = 'inactive',
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE project_id = ? AND id = ?
-	`, projectID, authorID)
+		WHERE id = ?
+	`, authorID)
 	if err != nil {
 		return Author{}, err
 	}
@@ -1140,7 +1188,7 @@ func (s *Store) DeleteAuthor(ctx context.Context, actorUserID, projectID, author
 	} else if changed != 1 {
 		return Author{}, sql.ErrNoRows
 	}
-	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
+	if err := incrementAllProjectGenerations(ctx, tx); err != nil {
 		return Author{}, err
 	}
 	if err := insertAuthorOutbox(ctx, tx, projectID, authorID, "author.deleted", AuthorInput{
@@ -1270,8 +1318,9 @@ func (s *Store) InviteProjectMember(ctx context.Context, actorUserID, projectID 
 	case err == sql.ErrNoRows:
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO project_memberships(project_id, user_id, role, status, invited_by, invited_at)
-			VALUES (?, ?, ?, 'invited', ?, CURRENT_TIMESTAMP)
-		`, projectID, userID, input.Role, actorUserID)
+			SELECT id, ?, ?, 'invited', ?, CURRENT_TIMESTAMP
+			FROM projects
+		`, userID, input.Role, actorUserID)
 	case err != nil:
 		return ProjectMemberInvitation{}, err
 	case currentStatus == "active":
@@ -1286,8 +1335,8 @@ func (s *Store) InviteProjectMember(ctx context.Context, actorUserID, projectID 
 			    joined_at = NULL,
 			    updated_at = CURRENT_TIMESTAMP,
 			    removed_at = NULL
-			WHERE project_id = ? AND user_id = ?
-		`, input.Role, actorUserID, projectID, userID)
+			WHERE user_id = ?
+		`, input.Role, actorUserID, userID)
 	}
 	if err != nil {
 		return ProjectMemberInvitation{}, err
@@ -1399,15 +1448,14 @@ func (s *Store) AcceptProjectInvitation(ctx context.Context, token, password str
 		    joined_at = CURRENT_TIMESTAMP,
 		    updated_at = CURRENT_TIMESTAMP,
 		    removed_at = NULL
-		WHERE project_id = ?
-		  AND user_id = ?
+		WHERE user_id = ?
 		  AND role = ?
 		  AND status = 'invited'
-	`, current.ProjectID, current.UserID, current.Role)
+	`, current.UserID, current.Role)
 	if err != nil {
 		return ProjectInvitationAcceptance{}, err
 	}
-	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+	if changed, err := result.RowsAffected(); err != nil || changed < 1 {
 		if err != nil {
 			return ProjectInvitationAcceptance{}, err
 		}
@@ -1509,8 +1557,8 @@ func (s *Store) UpdateProjectMemberRole(ctx context.Context, actorUserID, projec
 		UPDATE project_memberships
 		SET role = ?,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE project_id = ? AND user_id = ? AND status IN ('active', 'invited')
-	`, patch.Role, projectID, targetUserID); err != nil {
+		WHERE user_id = ? AND status IN ('active', 'invited')
+	`, patch.Role, targetUserID); err != nil {
 		return AdminProjectMember{}, err
 	}
 	if currentStatus == "invited" {
@@ -1587,8 +1635,8 @@ func (s *Store) RemoveProjectMember(ctx context.Context, actorUserID, projectID,
 		SET status = 'removed',
 		    updated_at = CURRENT_TIMESTAMP,
 		    removed_at = CURRENT_TIMESTAMP
-		WHERE project_id = ? AND user_id = ? AND status IN ('active', 'invited')
-	`, projectID, targetUserID)
+		WHERE user_id = ? AND status IN ('active', 'invited')
+	`, targetUserID)
 	if err != nil {
 		return err
 	}
@@ -1599,7 +1647,13 @@ func (s *Store) RemoveProjectMember(ctx context.Context, actorUserID, projectID,
 	if changed == 0 {
 		return sql.ErrNoRows
 	}
-	if err := revokePendingInvitationsTx(ctx, tx, projectID, targetEmail); err != nil {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE invitations
+		SET revoked_at = CURRENT_TIMESTAMP
+		WHERE email_normalized = ?
+		  AND accepted_at IS NULL
+		  AND revoked_at IS NULL
+	`, targetEmail); err != nil {
 		return err
 	}
 	if err := insertProjectMemberAudit(ctx, tx, projectID, actorUserID, "member.remove", targetUserID, map[string]string{
@@ -2187,8 +2241,8 @@ func (s *Store) getAuthorByID(ctx context.Context, projectID, authorID string) (
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+authorColumns+`
 		FROM authors
-		WHERE project_id = ? AND id = ?
-	`, projectID, authorID)
+		WHERE id = ?
+	`, authorID)
 	return scanAuthor(row)
 }
 
@@ -2197,11 +2251,11 @@ func (s *Store) getAdminAuthorByID(ctx context.Context, projectID, authorID stri
 		SELECT `+adminAuthorColumns+`
 		FROM authors author
 		LEFT JOIN project_memberships membership
-		  ON membership.project_id = author.project_id
+		  ON membership.project_id = ?
 		 AND membership.user_id = author.login_user_id
 		LEFT JOIN users user
 		  ON user.id = author.login_user_id
-		WHERE author.project_id = ? AND author.id = ?
+		WHERE author.id = ?
 	`, projectID, authorID)
 	return scanAdminAuthor(row)
 }
@@ -2442,10 +2496,10 @@ func validateAuthorPhotoAsset(ctx context.Context, tx *sql.Tx, projectID, photoA
 	err := tx.QueryRowContext(ctx, `
 		SELECT 1
 		FROM assets
-		WHERE project_id = ? AND id = ?
-	`, projectID, photoAssetID).Scan(&exists)
+		WHERE id = ?
+	`, photoAssetID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%w: photoAssetId must reference an asset in this project", ErrValidation)
+		return fmt.Errorf("%w: photoAssetId must reference an existing asset", ErrValidation)
 	}
 	return err
 }
@@ -2459,14 +2513,38 @@ func validateAuthorLoginUser(ctx context.Context, tx *sql.Tx, projectID, loginUs
 		SELECT 1
 		FROM project_memberships membership
 		JOIN users user ON user.id = membership.user_id
-		WHERE membership.project_id = ?
-		  AND membership.user_id = ?
+		WHERE membership.user_id = ?
 		  AND membership.status IN ('active','invited')
 		  AND user.status IN ('active','invited')
-	`, projectID, loginUserID).Scan(&exists)
+		LIMIT 1
+	`, loginUserID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%w: loginUserId must reference an invited or active member of this project", ErrValidation)
+		return fmt.Errorf("%w: loginUserId must reference an invited or active member", ErrValidation)
 	}
+	return err
+}
+
+func ensureGlobalAuthorSlugAvailable(ctx context.Context, db *sql.DB, slug, excludedAuthorID string) error {
+	var exists int
+	err := db.QueryRowContext(ctx, `
+		SELECT 1 FROM authors WHERE slug = ? AND id <> ? LIMIT 1
+	`, slug, excludedAuthorID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: author slug is already used in the shared author directory", ErrValidation)
+}
+
+func incrementAllProjectGenerations(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE projects
+		SET content_generation = content_generation + 1,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE status <> 'pending_deletion'
+	`)
 	return err
 }
 

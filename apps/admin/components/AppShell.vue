@@ -55,9 +55,13 @@
               <CalendarDays :size="18" />
               <span>Calendar</span>
             </NuxtLink>
-            <NuxtLink class="nav-item" :class="{ 'is-active': isProjectSection('categories') || isProjectSection('tags') }" :to="projectPath('categories')">
+            <NuxtLink class="nav-item" :class="{ 'is-active': isProjectSection('categories') }" :to="projectPath('categories')">
+              <FolderTree :size="18" />
+              <span>Categories</span>
+            </NuxtLink>
+            <NuxtLink class="nav-item" :class="{ 'is-active': isProjectSection('tags') }" :to="projectPath('tags')">
               <Tags :size="18" />
-              <span>Taxonomy</span>
+              <span>Tags</span>
             </NuxtLink>
             <NuxtLink class="nav-item" :class="{ 'is-active': isProjectSection('series') }" :to="projectPath('series')">
               <GalleryVerticalEnd :size="18" />
@@ -173,6 +177,7 @@ import {
   CalendarDays,
   ChevronsUpDown,
   Files,
+  FolderTree,
   GalleryVerticalEnd,
   Images,
   KeyRound,
@@ -230,7 +235,7 @@ const pageTitle = computed(() => {
   const titles: Record<string, string> = {
     articles: route.path.endsWith('/create') ? 'Create article' : route.params.articleId ? 'Article editor' : 'Content',
     calendar: 'Publishing calendar',
-    categories: 'Taxonomy',
+    categories: 'Categories',
     tags: 'Tags',
     series: 'Series',
     media: 'Media library',

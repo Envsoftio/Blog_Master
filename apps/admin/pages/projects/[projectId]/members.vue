@@ -2,7 +2,7 @@
   <div class="page-stack">
     <div class="page-heading">
       <div>
-        <p>Control project access, editorial roles, invitations, and account availability.</p>
+        <p>Manage the shared team, roles, invitations, and account availability across all projects.</p>
       </div>
       <div class="member-heading-actions">
         <span class="status-pill member-current-role">Your role: {{ roleLabel(project?.role || '') }}</span>
@@ -23,7 +23,7 @@
         <p class="metric-card__value metric-card__value--warning">{{ memberStats.invited }}</p>
       </article>
       <article class="metric-card surface">
-        <div class="metric-card__top"><span>Project owners</span><ShieldCheck :size="17" /></div>
+        <div class="metric-card__top"><span>Owners</span><ShieldCheck :size="17" /></div>
         <p class="metric-card__value metric-card__value--blue">{{ memberStats.owners }}</p>
       </article>
       <article class="metric-card surface">
@@ -73,8 +73,8 @@
             </select>
           </label>
           <label class="member-filter">
-            <span>Project role</span>
-            <select v-model="roleFilter" aria-label="Project role">
+            <span>Team role</span>
+            <select v-model="roleFilter" aria-label="Team role">
               <option value="all">All roles</option>
               <option v-for="role in roleOptions" :key="role.value" :value="role.value">{{ role.label }}</option>
             </select>
@@ -89,7 +89,7 @@
           <div>
             <span class="empty-state__icon"><Users :size="20" /></span>
             <h3>No members found</h3>
-            <p>Invite a teammate to start collaborating on this project.</p>
+            <p>Invite a teammate once to collaborate across every project.</p>
           </div>
         </div>
         <div v-else-if="filteredMembers.length === 0" class="empty-state">
@@ -160,7 +160,7 @@
         <form v-if="canManageMembers" class="member-panel surface" @submit.prevent="inviteMember">
           <div class="member-panel__header">
             <span class="member-panel__icon"><UserPlus :size="18" /></span>
-            <div><span>Project access</span><h2>Invite a member</h2></div>
+            <div><span>Shared access</span><h2>Invite a member</h2></div>
           </div>
           <div class="member-panel__body">
             <label class="field">
@@ -381,7 +381,7 @@ async function inviteMember() {
     form.email = ''
     form.role = 'writer'
     form.expiresAt = ''
-    successMessage.value = 'Invitation created. Copy the one-time link now.'
+    successMessage.value = 'Invitation created for all projects. Copy the one-time link now.'
   } catch (error) {
     if (queueReauthentication(error, 'invite a project owner', inviteMember)) return
     errorMessage.value = normalizeAPIError(error, 'Could not create invitation.')
@@ -403,7 +403,7 @@ async function saveRole(member: AdminProjectMember) {
   try {
     const response = await api.updateMember(projectID.value, member.userId, role)
     upsertMember(response.data)
-    successMessage.value = `${member.email} is now ${roleLabel(response.data.role)}.`
+    successMessage.value = `${member.email} is now ${roleLabel(response.data.role)} across all projects.`
   } catch (error) {
     if (queueReauthentication(error, `change ${member.email}'s ownership`, () => saveRole(member))) return
     roleDrafts[member.userId] = member.role
@@ -415,8 +415,8 @@ async function saveRole(member: AdminProjectMember) {
 
 async function removeMember(member: AdminProjectMember) {
   if (!canEditMember(member)) return
-  const selfMessage = member.userId === currentUserID.value ? ' You will immediately lose access to this project.' : ''
-  if (!window.confirm(`Remove ${member.email} from this project?${selfMessage}`)) return
+  const selfMessage = member.userId === currentUserID.value ? ' You will immediately lose access to every project.' : ''
+  if (!window.confirm(`Remove ${member.email} from all projects?${selfMessage}`)) return
   await performRemoveMember(member)
 }
 
@@ -427,7 +427,7 @@ async function performRemoveMember(member: AdminProjectMember) {
     await api.removeMember(projectID.value, member.userId)
     const removedAt = new Date().toISOString()
     upsertMember({ ...member, status: 'removed', updatedAt: removedAt, removedAt })
-    successMessage.value = 'Member removed. Historical records were retained.'
+    successMessage.value = 'Member removed from all projects. Historical records were retained.'
     if (member.userId === currentUserID.value) await navigateTo('/projects')
   } catch (error) {
     if (queueReauthentication(error, `remove owner ${member.email}`, () => performRemoveMember(member))) return

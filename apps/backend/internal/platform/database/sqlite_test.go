@@ -1000,7 +1000,7 @@ func TestRevisionBaseMigrationRejectsInvalidExistingLineage(t *testing.T) {
 	}
 }
 
-func TestAuthorPhotoAssetMustBelongToProject(t *testing.T) {
+func TestSharedAuthorPhotoAssetMayBelongToAnyProject(t *testing.T) {
 	db := testDatabase(t)
 	seedProjects(t, db)
 	if _, err := db.Exec(`
@@ -1015,31 +1015,35 @@ func TestAuthorPhotoAssetMustBelongToProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertSQLFails(t, db, `
+	if _, err := db.Exec(`
 		INSERT INTO authors(id, project_id, slug, display_name, photo_asset_id)
 		VALUES ('author-cross-project', 'project-a', 'cross-project', 'Cross Project', 'asset-b')
-	`, "same project")
+	`); err != nil {
+		t.Fatalf("expected a shared author to use an asset from another project: %v", err)
+	}
 	assertSQLFails(t, db, `
 		INSERT INTO authors(id, project_id, slug, display_name, photo_asset_id)
 		VALUES ('author-missing', 'project-a', 'missing', 'Missing', 'asset-missing')
-	`, "same project")
-	assertSQLFails(t, db, `
+	`, "must exist")
+	if _, err := db.Exec(`
 		UPDATE authors
 		SET photo_asset_id = 'asset-b'
 		WHERE id = 'author-a'
-	`, "same project")
+	`); err != nil {
+		t.Fatalf("expected a shared author photo to move across projects: %v", err)
+	}
 	assertSQLFails(t, db, `
 		DELETE FROM assets
-		WHERE id = 'asset-a'
+		WHERE id = 'asset-b'
 	`, "author photo")
 	assertSQLFails(t, db, `
 		UPDATE assets
-		SET id = 'asset-a-renamed'
-		WHERE id = 'asset-a'
+		SET id = 'asset-b-renamed'
+		WHERE id = 'asset-b'
 	`, "author photo")
 }
 
-func TestAuthorLoginUserMustBelongToProject(t *testing.T) {
+func TestSharedAuthorLoginMayUseMemberFromAnyProject(t *testing.T) {
 	db := testDatabase(t)
 	seedProjects(t, db)
 	if _, err := db.Exec(`
@@ -1047,11 +1051,13 @@ func TestAuthorLoginUserMustBelongToProject(t *testing.T) {
 		VALUES
 		  ('member-a', 'member-a@example.test', 'active'),
 		  ('member-b', 'member-b@example.test', 'active'),
+		  ('member-c', 'member-c@example.test', 'active'),
 		  ('disabled-a', 'disabled-a@example.test', 'disabled');
 		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
 		VALUES
 		  ('project-a', 'member-a', 'writer', 'active', CURRENT_TIMESTAMP),
 		  ('project-b', 'member-b', 'writer', 'active', CURRENT_TIMESTAMP),
+		  ('project-b', 'member-c', 'writer', 'active', CURRENT_TIMESTAMP),
 		  ('project-a', 'disabled-a', 'writer', 'active', CURRENT_TIMESTAMP);
 		INSERT INTO authors(id, project_id, slug, display_name, login_user_id)
 		VALUES ('author-a', 'project-a', 'author-a', 'Author A', 'member-a');
@@ -1059,27 +1065,31 @@ func TestAuthorLoginUserMustBelongToProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertSQLFails(t, db, `
+	if _, err := db.Exec(`
 		INSERT INTO authors(id, project_id, slug, display_name, login_user_id)
 		VALUES ('author-cross-project', 'project-a', 'cross-project', 'Cross Project', 'member-b')
-	`, "same project")
+	`); err != nil {
+		t.Fatalf("expected a shared author to link a member from another project: %v", err)
+	}
 	assertSQLFails(t, db, `
 		INSERT INTO authors(id, project_id, slug, display_name, login_user_id)
 		VALUES ('author-missing', 'project-a', 'missing', 'Missing', 'missing-user')
-	`, "same project")
+	`, "active member")
 	assertSQLFails(t, db, `
 		INSERT INTO authors(id, project_id, slug, display_name, login_user_id)
 		VALUES ('author-disabled', 'project-a', 'disabled', 'Disabled', 'disabled-a')
-	`, "same project")
+	`, "active member")
 	assertSQLFails(t, db, `
 		INSERT INTO authors(id, project_id, slug, display_name, login_user_id)
 		VALUES ('author-duplicate', 'project-a', 'duplicate', 'Duplicate', 'member-a')
 	`, "unique")
-	assertSQLFails(t, db, `
+	if _, err := db.Exec(`
 		UPDATE authors
-		SET login_user_id = 'member-b'
+		SET login_user_id = 'member-c'
 		WHERE id = 'author-a'
-	`, "same project")
+	`); err != nil {
+		t.Fatalf("expected a shared author to link a member from another project: %v", err)
+	}
 }
 
 func TestAuditEventsGenerateLegacyIDsAndRemainAppendOnly(t *testing.T) {

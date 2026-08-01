@@ -2,7 +2,7 @@
   <div class="page-stack">
     <div class="page-heading">
       <div>
-        <p>Public byline profiles, credentials, affiliations, and account links for this project.</p>
+        <p>Shared public byline profiles, credentials, affiliations, and account links for every project.</p>
       </div>
       <div class="author-heading-actions">
         <button class="button button--compact" type="button" :disabled="pending" @click="refresh">

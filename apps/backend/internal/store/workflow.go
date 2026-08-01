@@ -866,7 +866,7 @@ func buildCopiedRevisionAttribution(
 
 	destinationAuthors := map[string]Author{}
 	for sourceID, destinationID := range resolved {
-		row := tx.QueryRowContext(ctx, `SELECT `+authorColumns+` FROM authors WHERE project_id = ? AND id = ? AND status = 'active'`, destinationProjectID, destinationID)
+		row := tx.QueryRowContext(ctx, `SELECT `+authorColumns+` FROM authors WHERE id = ? AND status = 'active'`, destinationID)
 		author, err := scanAuthor(row)
 		if errors.Is(err, sql.ErrNoRows) {
 			return revisionAttribution{}, fmt.Errorf("%w: mapped destination author %q for source author %q must be active in the destination project", ErrValidation, destinationID, sourceID)
@@ -2937,11 +2937,11 @@ func buildRevisionAttribution(
 		row := tx.QueryRowContext(ctx, `
 			SELECT `+authorColumns+`
 			FROM authors
-			WHERE project_id = ? AND id = ? AND status = 'active'
-		`, projectID, contributor.AuthorID)
+			WHERE id = ? AND status = 'active'
+		`, contributor.AuthorID)
 		author, err := scanAuthor(row)
 		if errors.Is(err, sql.ErrNoRows) {
-			return revisionAttribution{}, fmt.Errorf("%w: contributor author %q must be active in the selected project", ErrValidation, contributor.AuthorID)
+			return revisionAttribution{}, fmt.Errorf("%w: contributor author %q must be active", ErrValidation, contributor.AuthorID)
 		}
 		if err != nil {
 			return revisionAttribution{}, err

@@ -141,9 +141,9 @@ func (s *Store) SaveArticleAutosave(
 		}
 		var exists int
 		if err := tx.QueryRowContext(ctx, `
-			SELECT 1 FROM authors WHERE project_id = ? AND id = ?
-		`, projectID, authorID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
-			return ArticleAutosave{}, fmt.Errorf("%w: autosave contributor %q must belong to the selected project", ErrValidation, authorID)
+			SELECT 1 FROM authors WHERE id = ?
+		`, authorID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+			return ArticleAutosave{}, fmt.Errorf("%w: autosave contributor %q must exist", ErrValidation, authorID)
 		} else if err != nil {
 			return ArticleAutosave{}, err
 		}

@@ -197,7 +197,11 @@
                     <span>{{ tag.name }}</span>
                   </label>
                 </div>
-                <small v-else>No tags have been created for this project.</small>
+                <small v-else>
+                  No tags have been created for this project.
+                  <NuxtLink :to="`/projects/${projectID}/tags`">Create tags</NuxtLink>
+                  to label this article.
+                </small>
               </fieldset>
               <ArticleContributorsEditor
                 :model-value="articleForm.contributors"
