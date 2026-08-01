@@ -191,6 +191,107 @@ func TestAdminLoginMeAndProjectCreate(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCRUDIsolationAndProjectPlacement(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerA := seedAndLogin(t, server, db, "workspace-a@example.test", "correct horse battery staple")
+	ownerB := seedAndLogin(t, server, db, "workspace-b@example.test", "correct horse battery staple")
+
+	createWorkspace := func(login adminLoginResult, name, slug string, expectedStatus int) Envelope[store.AdminWorkspace] {
+		t.Helper()
+		body, err := json.Marshal(workspaceRequest{Name: name, Slug: slug})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-CSRF-Token", login.csrfToken)
+		addCookies(request, login.cookies)
+		response := mustTest(t, server, request)
+		if response.StatusCode != expectedStatus {
+			t.Fatalf("expected workspace create %d, got %d: %s", expectedStatus, response.StatusCode, readBody(t, response))
+		}
+		var payload Envelope[store.AdminWorkspace]
+		if expectedStatus < 300 {
+			decodeJSONResponse(t, response, &payload)
+		}
+		return payload
+	}
+
+	workspace := createWorkspace(ownerA, "Acme Workspace", "Acme Workspace", http.StatusCreated).Data
+	if workspace.Slug != "acme-workspace" || workspace.Role != "workspace_owner" || workspace.ProjectCount != 0 {
+		t.Fatalf("unexpected created workspace: %#v", workspace)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces", nil)
+	addCookies(listRequest, ownerB.cookies)
+	listResponse := mustTest(t, server, listRequest)
+	var otherList ListEnvelope[store.AdminWorkspace]
+	decodeJSONResponse(t, listResponse, &otherList)
+	if len(otherList.Data) != 0 {
+		t.Fatalf("expected workspace isolation, got %#v", otherList.Data)
+	}
+
+	foreignProjectBody := strings.NewReader(`{"workspaceId":"` + workspace.ID + `","slug":"foreign","name":"Foreign"}`)
+	foreignProjectRequest := httptest.NewRequest(http.MethodPost, "/api/v1/projects", foreignProjectBody)
+	foreignProjectRequest.Header.Set("Content-Type", "application/json")
+	foreignProjectRequest.Header.Set("X-CSRF-Token", ownerB.csrfToken)
+	addCookies(foreignProjectRequest, ownerB.cookies)
+	foreignProjectResponse := mustTest(t, server, foreignProjectRequest)
+	if foreignProjectResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected foreign workspace placement to fail with 403, got %d: %s", foreignProjectResponse.StatusCode, readBody(t, foreignProjectResponse))
+	}
+
+	projectBody := strings.NewReader(`{"workspaceId":"` + workspace.ID + `","slug":"site","name":"Site"}`)
+	projectRequest := httptest.NewRequest(http.MethodPost, "/api/v1/projects", projectBody)
+	projectRequest.Header.Set("Content-Type", "application/json")
+	projectRequest.Header.Set("X-CSRF-Token", ownerA.csrfToken)
+	addCookies(projectRequest, ownerA.cookies)
+	projectResponse := mustTest(t, server, projectRequest)
+	if projectResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected project placement 201, got %d: %s", projectResponse.StatusCode, readBody(t, projectResponse))
+	}
+
+	renameBody := strings.NewReader(`{"name":"Acme Publishing"}`)
+	renameRequest := httptest.NewRequest(http.MethodPatch, "/api/v1/workspaces/"+workspace.ID, renameBody)
+	renameRequest.Header.Set("Content-Type", "application/json")
+	renameRequest.Header.Set("X-CSRF-Token", ownerA.csrfToken)
+	addCookies(renameRequest, ownerA.cookies)
+	renameResponse := mustTest(t, server, renameRequest)
+	if renameResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected workspace rename 200, got %d: %s", renameResponse.StatusCode, readBody(t, renameResponse))
+	}
+	var renamed Envelope[store.AdminWorkspace]
+	decodeJSONResponse(t, renameResponse, &renamed)
+	if renamed.Data.Name != "Acme Publishing" || renamed.Data.ProjectCount != 1 {
+		t.Fatalf("unexpected renamed workspace: %#v", renamed.Data)
+	}
+
+	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/"+workspace.ID, nil)
+	deleteRequest.Header.Set("X-CSRF-Token", ownerA.csrfToken)
+	addCookies(deleteRequest, ownerA.cookies)
+	deleteResponse := mustTest(t, server, deleteRequest)
+	if deleteResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected populated workspace deletion 409, got %d: %s", deleteResponse.StatusCode, readBody(t, deleteResponse))
+	}
+
+	emptyWorkspace := createWorkspace(ownerA, "Empty", "empty", http.StatusCreated).Data
+	emptyDeleteRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/"+emptyWorkspace.ID, nil)
+	emptyDeleteRequest.Header.Set("X-CSRF-Token", ownerA.csrfToken)
+	addCookies(emptyDeleteRequest, ownerA.cookies)
+	emptyDeleteResponse := mustTest(t, server, emptyDeleteRequest)
+	if emptyDeleteResponse.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected empty workspace deletion 204, got %d: %s", emptyDeleteResponse.StatusCode, readBody(t, emptyDeleteResponse))
+	}
+
+	var auditCount int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM audit_events WHERE target_id IN (?, ?) AND action LIKE 'workspace.%'`, workspace.ID, emptyWorkspace.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 4 {
+		t.Fatalf("expected four workspace audit events, got %d", auditCount)
+	}
+}
+
 func TestAdminProjectAccessIsMembershipScoped(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")

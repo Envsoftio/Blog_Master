@@ -18,6 +18,9 @@ type NullableAPIListEnvelope<T> = Omit<APIListEnvelope<T>, 'data'> & {
 
 export type AdminProject = {
   id: string
+  workspaceId: string
+  workspaceSlug: string
+  workspaceName: string
   slug: string
   name: string
   status: string
@@ -32,6 +35,16 @@ export type AdminProject = {
   soloOwnerApprovalEnabled: boolean
   createdAt?: string
   updatedAt?: string
+}
+
+export type AdminWorkspace = {
+  id: string
+  slug: string
+  name: string
+  role: string
+  projectCount: number
+  createdAt: string
+  updatedAt: string
 }
 
 export type AdminUser = {
@@ -538,6 +551,7 @@ export type PreviewToken = {
 }
 
 export type ProjectCreatePayload = {
+  workspaceId?: string
   name: string
   slug: string
   primaryDomain?: string
@@ -747,6 +761,28 @@ export function useAdminApi() {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminProject>>('/api/v1/projects', {
       query: { limit }
     }))
+  }
+
+  async function listWorkspaces() {
+    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminWorkspace>>('/api/v1/workspaces'))
+  }
+
+  async function createWorkspace(payload: { name: string, slug: string }) {
+    return await request<APIEnvelope<AdminWorkspace>>('/api/v1/workspaces', await withCSRF({
+      method: 'POST',
+      body: payload
+    }))
+  }
+
+  async function updateWorkspace(workspaceID: string, name: string) {
+    return await request<APIEnvelope<AdminWorkspace>>(`/api/v1/workspaces/${workspaceID}`, await withCSRF({
+      method: 'PATCH',
+      body: { name }
+    }))
+  }
+
+  async function deleteWorkspace(workspaceID: string) {
+    await request(`/api/v1/workspaces/${workspaceID}`, await withCSRF({ method: 'DELETE' }))
   }
 
   async function getProject(projectID: string) {
@@ -1261,6 +1297,10 @@ export function useAdminApi() {
     forgotPassword,
     resetPassword,
     logout,
+    listWorkspaces,
+    createWorkspace,
+    updateWorkspace,
+    deleteWorkspace,
     listProjects,
     getProject,
     createProject,

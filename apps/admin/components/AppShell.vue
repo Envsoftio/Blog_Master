@@ -42,6 +42,10 @@
             <PanelsTopLeft :size="18" />
             <span>Projects</span>
           </NuxtLink>
+          <NuxtLink class="nav-item" :class="{ 'is-active': route.path === '/workspaces' }" to="/workspaces">
+            <Building2 :size="18" />
+            <span>Workspaces</span>
+          </NuxtLink>
         </div>
 
         <template v-if="activeProjectID">
@@ -174,6 +178,7 @@
 <script setup lang="ts">
 import {
   Activity,
+  Building2,
   CalendarDays,
   ChevronsUpDown,
   Files,
@@ -232,6 +237,7 @@ const section = computed(() => {
 const pageTitle = computed(() => {
   if (route.path === '/dashboard') return 'Dashboard'
   if (route.path === '/projects') return 'Projects'
+  if (route.path === '/workspaces') return 'Workspaces'
   const titles: Record<string, string> = {
     articles: route.path.endsWith('/create') ? 'Create article' : route.params.articleId ? 'Article editor' : 'Content',
     calendar: 'Editorial calendar',
@@ -252,7 +258,7 @@ const pageTitle = computed(() => {
   return titles[section.value] || 'Editorial'
 })
 
-const eyebrow = computed(() => currentProject.value?.name || (route.path === '/projects' ? 'Workspace' : 'Overview'))
+const eyebrow = computed(() => currentProject.value?.name || (['/projects', '/workspaces'].includes(route.path) ? 'Workspace' : 'Overview'))
 const themeOptions = [
   { value: 'system', label: 'System', icon: Laptop },
   { value: 'light', label: 'Light', icon: Sun },

@@ -18,6 +18,14 @@
       </div>
       <div class="project-form__body">
         <label class="field">
+          <span>Workspace</span>
+          <select v-model="form.workspaceId" required>
+            <option disabled value="">Select a workspace</option>
+            <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option>
+          </select>
+          <small v-if="!workspaces.length"><NuxtLink to="/workspaces">Create a workspace first</NuxtLink></small>
+        </label>
+        <label class="field">
           <span>Project name</span>
           <input v-model.trim="form.name" required placeholder="Acme editorial">
         </label>
@@ -123,11 +131,12 @@ import {
   Settings2,
   X
 } from 'lucide-vue-next'
-import type { AdminProject } from '~/composables/useAdminApi'
+import type { AdminProject, AdminWorkspace } from '~/composables/useAdminApi'
 
 const route = useRoute()
 const api = useAdminApi()
 const projects = useAdminProjectsState()
+const workspaces = ref<AdminWorkspace[]>([])
 const pending = ref(true)
 const creating = ref(false)
 const formOpen = ref(false)
@@ -137,19 +146,22 @@ const statusFilter = ref('all')
 const errorMessage = ref('')
 const successMessage = ref('')
 const form = reactive({
+  workspaceId: '',
   name: '',
   slug: '',
   primaryDomain: '',
   blogBasePath: '/blog',
   timezone: 'UTC'
 })
-const canCreate = computed(() => form.name.length >= 2 && form.slug.length >= 2 && Boolean(form.blogBasePath))
+const canCreate = computed(() => Boolean(form.workspaceId) && form.name.length >= 2 && form.slug.length >= 2 && Boolean(form.blogBasePath))
 const filteredProjects = computed(() => {
   const term = search.value.toLowerCase()
+  const workspaceID = String(route.query.workspace || '')
   return projects.value.filter(project => {
+    const workspaceMatches = !workspaceID || project.workspaceId === workspaceID
     const statusMatches = statusFilter.value === 'all' || project.status === statusFilter.value
     const searchMatches = !term || `${project.name} ${project.slug} ${project.primaryDomain || ''}`.toLowerCase().includes(term)
-    return statusMatches && searchMatches
+    return workspaceMatches && statusMatches && searchMatches
   })
 })
 
@@ -166,7 +178,10 @@ async function loadProjects() {
   pending.value = true
   errorMessage.value = ''
   try {
-    projects.value = (await api.listProjects()).data
+    const [projectResponse, workspaceResponse] = await Promise.all([api.listProjects(), api.listWorkspaces()])
+    projects.value = projectResponse.data
+    workspaces.value = workspaceResponse.data
+    if (!form.workspaceId) form.workspaceId = String(route.query.workspace || workspaces.value[0]?.id || '')
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load projects.')
   } finally {
@@ -181,6 +196,7 @@ async function createProject() {
   successMessage.value = ''
   try {
     const response = await api.createProject({
+      workspaceId: form.workspaceId,
       name: form.name,
       slug: form.slug,
       primaryDomain: form.primaryDomain,
