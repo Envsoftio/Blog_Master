@@ -1,6 +1,6 @@
 <template>
-  <section class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-    <div class="flex flex-wrap items-start justify-between gap-3">
+  <section class="trust-panel rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+    <div class="trust-panel__header flex flex-wrap items-start justify-between gap-3">
       <div>
         <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Evidence and public trust</p>
         <h2 class="mt-1 text-lg font-semibold tracking-normal">Claims, notices, and preview</h2>
@@ -28,14 +28,14 @@
       Loading evidence
     </div>
 
-    <div v-else class="mt-5 space-y-6">
-      <div class="grid gap-5 lg:grid-cols-2">
-        <div class="space-y-4">
+    <div v-else class="trust-panel__body mt-5 space-y-6">
+      <div class="trust-panel__primary-grid grid gap-5 lg:grid-cols-2">
+        <div class="trust-panel__column space-y-4">
           <div class="flex items-center justify-between gap-3">
             <h3 class="font-medium">Source library</h3>
             <span class="text-xs text-[#667169] dark:text-[#aeb8b0]">{{ sources.length }} project sources</span>
           </div>
-          <form v-if="canWrite" class="grid gap-3 rounded-md bg-[#f4f7f5] p-4 dark:bg-[#171b18]" @submit.prevent="createSource">
+          <form v-if="canWrite" class="trust-panel__form grid gap-3 rounded-md bg-[#f4f7f5] p-4 dark:bg-[#171b18]" @submit.prevent="createSource">
             <input v-model.trim="sourceForm.title" class="rounded-md border border-[#bfcac3] px-3 py-2 text-sm dark:border-[#4b5650] dark:bg-[#202522]" placeholder="Source title" required />
             <div class="grid gap-3 sm:grid-cols-2">
               <select v-model="sourceForm.sourceType" class="h-10 rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#202522]">
@@ -65,12 +65,12 @@
           </div>
         </div>
 
-        <div class="space-y-4">
+        <div class="trust-panel__column space-y-4">
           <div class="flex items-center justify-between gap-3">
             <h3 class="font-medium">Revision claims</h3>
             <span class="text-xs text-[#667169] dark:text-[#aeb8b0]">{{ claims.length }} on latest revision</span>
           </div>
-          <form v-if="canWrite" class="grid gap-3 rounded-md bg-[#f4f7f5] p-4 dark:bg-[#171b18]" @submit.prevent="createClaim">
+          <form v-if="canWrite" class="trust-panel__form grid gap-3 rounded-md bg-[#f4f7f5] p-4 dark:bg-[#171b18]" @submit.prevent="createClaim">
             <textarea v-model.trim="claimForm.claimText" class="min-h-20 rounded-md border border-[#bfcac3] px-3 py-2 text-sm dark:border-[#4b5650] dark:bg-[#202522]" placeholder="Factual claim to verify" required />
             <div class="grid gap-3 sm:grid-cols-2">
               <select v-model="claimForm.importance" class="h-10 rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#202522]">
@@ -108,10 +108,10 @@
         </div>
       </div>
 
-      <div class="grid gap-5 border-t border-[#d7ded8] pt-6 dark:border-[#3f4843] lg:grid-cols-2">
-        <div class="space-y-4">
+      <div class="trust-panel__secondary-grid grid gap-5 border-t border-[#d7ded8] pt-6 dark:border-[#3f4843] lg:grid-cols-2">
+        <div class="trust-panel__column space-y-4">
           <h3 class="font-medium">Public disclosures</h3>
-          <form v-if="canReview" class="grid gap-3" @submit.prevent="createDisclosure">
+          <form v-if="canReview" class="trust-panel__form grid gap-3" @submit.prevent="createDisclosure">
             <select v-model="disclosureForm.disclosureType" class="h-10 rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]">
               <option v-for="type in disclosureTypes" :key="type" :value="type">{{ labelize(type) }}</option>
             </select>
@@ -126,9 +126,9 @@
           </ul>
         </div>
 
-        <div class="space-y-4">
+        <div class="trust-panel__column space-y-4">
           <h3 class="font-medium">Append-only corrections</h3>
-          <form v-if="canReview" class="grid gap-3" @submit.prevent="createCorrection">
+          <form v-if="canReview" class="trust-panel__form grid gap-3" @submit.prevent="createCorrection">
             <textarea v-model.trim="correctionForm.publicNote" class="min-h-20 rounded-md border border-[#bfcac3] px-3 py-2 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="What was corrected and why" required />
             <select v-model="correctionForm.supersedesNoticeId" class="h-10 rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]">
               <option value="">Does not supersede a prior notice</option>
@@ -145,7 +145,7 @@
         </div>
       </div>
 
-      <div class="border-t border-[#d7ded8] pt-6 dark:border-[#3f4843]">
+      <div class="trust-panel__preview border-t border-[#d7ded8] pt-6 dark:border-[#3f4843]">
         <div class="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h3 class="font-medium">Non-indexable revision preview</h3>
@@ -395,3 +395,339 @@ function clearMessages() {
   successMessage.value = ''
 }
 </script>
+
+<style scoped>
+.trust-panel {
+  overflow: hidden;
+  padding: 0 !important;
+  border: 1px solid var(--border, #dfe4ea);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  color: var(--text, #172033);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgb(15 23 42 / 5%));
+}
+
+.trust-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 19px 22px;
+  border-bottom: 1px solid var(--border, #dfe4ea);
+  background: var(--surface-subtle, #f8fafb);
+}
+
+.trust-panel__header p,
+.trust-panel__header h2,
+.trust-panel h3,
+.trust-panel p {
+  margin: 0;
+}
+
+.trust-panel__header p {
+  margin-bottom: 3px;
+  color: var(--text-faint, #8490a3);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.trust-panel__header h2 {
+  font-size: 19px;
+  line-height: 1.3;
+}
+
+.trust-panel__body {
+  display: grid;
+  gap: 24px;
+  margin: 0 !important;
+  padding: 22px;
+}
+
+.trust-panel__primary-grid,
+.trust-panel__secondary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.trust-panel__secondary-grid {
+  padding-top: 24px;
+  border-top: 1px solid var(--border, #dfe4ea);
+}
+
+.trust-panel__column {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 14px;
+}
+
+.trust-panel__column > .flex:first-child {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trust-panel h3 {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.trust-panel__column > .flex:first-child span,
+.trust-panel .text-xs {
+  color: var(--text-faint, #8490a3);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.trust-panel__form {
+  display: grid;
+  gap: 12px;
+  padding: 15px;
+  border: 1px solid var(--border, #dfe4ea);
+  border-radius: 8px;
+  background: var(--surface-subtle, #f8fafb) !important;
+}
+
+.trust-panel__form > .grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.trust-panel input,
+.trust-panel textarea,
+.trust-panel select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid var(--border-strong, #cbd3dc);
+  border-radius: 6px;
+  outline: none;
+  background: var(--surface, #fff) !important;
+  color: var(--text, #172033) !important;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.trust-panel textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.trust-panel select[multiple] {
+  min-height: 96px;
+}
+
+.trust-panel input:focus,
+.trust-panel textarea:focus,
+.trust-panel select:focus {
+  border-color: var(--primary, #087b65);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary, #087b65) 14%, transparent);
+}
+
+.trust-panel label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-soft, #5c667a);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.trust-panel label.flex {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text, #172033);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.trust-panel input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  flex: 0 0 16px;
+  padding: 0;
+  accent-color: var(--primary, #087b65);
+}
+
+.trust-panel button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong, #cbd3dc);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  color: var(--text, #172033);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.trust-panel button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--primary, #087b65) 42%, var(--border-strong, #cbd3dc));
+  background: var(--primary-soft, #e8f5f1);
+}
+
+.trust-panel button:active:not(:disabled) { transform: translateY(1px); }
+.trust-panel button:disabled { cursor: not-allowed; opacity: .55; }
+.trust-panel svg { width: 16px; height: 16px; flex: 0 0 16px; }
+
+.trust-panel__form > button {
+  width: 100%;
+}
+
+.trust-panel__column > div:not(:first-child) article,
+.trust-panel__column > article {
+  padding: 13px;
+  border: 1px solid var(--border, #dfe4ea);
+  border-radius: 7px;
+  background: var(--surface, #fff);
+}
+
+.trust-panel article + article,
+.trust-panel li + li {
+  margin-top: 8px;
+}
+
+.trust-panel article .flex,
+.trust-panel li .flex {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.trust-panel article .mt-3 {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.trust-panel article .mt-3 select { flex: 1 1 auto; }
+.trust-panel article .mt-1,
+.trust-panel li .mt-1 { margin-top: 4px; }
+.trust-panel article .mt-2 { margin-top: 8px; }
+
+.trust-panel .rounded-full {
+  display: inline-flex;
+  min-height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 999px;
+  background: var(--primary-soft, #e8f5f1);
+  color: var(--primary, #087b65);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.trust-panel ul,
+.trust-panel ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trust-panel li {
+  padding: 12px;
+  border: 1px solid var(--border, #dfe4ea);
+  border-radius: 7px;
+  background: var(--surface-subtle, #f8fafb);
+  font-size: 13px;
+}
+
+.trust-panel__preview {
+  padding-top: 24px;
+  border-top: 1px solid var(--border, #dfe4ea);
+}
+
+.trust-panel__preview > .flex {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.trust-panel__preview > .flex > div {
+  max-width: 690px;
+}
+
+.trust-panel__preview > .flex > div p {
+  margin-top: 5px;
+  color: var(--text-soft, #5c667a);
+  font-size: 13px;
+}
+
+.trust-panel__preview form {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 9px;
+}
+
+.trust-panel__preview form button {
+  border-color: var(--primary, #087b65);
+  background: var(--primary, #087b65);
+  color: white;
+}
+
+.trust-panel__preview form button:hover:not(:disabled) {
+  border-color: var(--primary-hover, #076854);
+  background: var(--primary-hover, #076854);
+}
+
+.trust-panel > .mt-4,
+.trust-panel__body > .mt-4 {
+  margin: 16px 22px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.trust-panel > .mt-5 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 24px 22px;
+  color: var(--text-soft, #5c667a);
+  font-size: 13px;
+}
+
+.trust-panel pre {
+  max-height: 320px;
+  margin: 12px 0 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border, #dfe4ea);
+  border-radius: 6px;
+  background: var(--surface-subtle, #f8fafb);
+  color: var(--text, #172033);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 900px) {
+  .trust-panel__primary-grid,
+  .trust-panel__secondary-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 620px) {
+  .trust-panel__header,
+  .trust-panel__preview > .flex { align-items: stretch; flex-direction: column; }
+  .trust-panel__body { padding: 18px; }
+  .trust-panel__form > .grid { grid-template-columns: 1fr; }
+  .trust-panel__preview form { width: 100%; align-items: stretch; flex-direction: column; }
+  .trust-panel__preview form button { width: 100%; }
+}
+</style>

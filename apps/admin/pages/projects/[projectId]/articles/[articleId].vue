@@ -96,7 +96,7 @@
           </nav>
 
           <div v-show="workspaceTab !== 'write' && workspaceTab !== 'publish'" class="article-workspace__panel-stack">
-            <article v-show="workspaceTab === 'overview'" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <article v-show="workspaceTab === 'overview'" class="article-overview__summary rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div class="min-w-0">
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">{{ labelize(article.articleType) }}</p>
@@ -138,7 +138,7 @@
               </div>
             </article>
 
-            <article v-show="workspaceTab === 'review'" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <article v-show="workspaceTab === 'review'" class="article-review__revision rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Latest immutable revision</p>
@@ -210,7 +210,7 @@
               :role="project?.role || ''"
             />
 
-            <section v-show="workspaceTab === 'history'" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <section v-show="workspaceTab === 'history'" class="article-history rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Immutable history</p>
@@ -406,7 +406,7 @@
               </div>
             </section>
 
-            <section v-show="workspaceTab === 'review'" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <section v-show="workspaceTab === 'review'" class="article-review__assignments rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Review ownership</p>
@@ -517,7 +517,7 @@
               </button>
             </section>
 
-            <section v-show="workspaceTab === 'review'" class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
+            <section v-show="workspaceTab === 'review'" class="article-review__comments rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Review thread</p>
@@ -3488,6 +3488,99 @@ function apiErrorStatus(error: unknown) {
 .article-publish__details[open] > summary { border-bottom: 1px solid var(--border); }
 .article-publish__details[open] > summary svg { transform: rotate(180deg); }
 
+/* Shared treatment across every workspace tab. */
+.article-workspace__panel-stack > article,
+.article-workspace__panel-stack > section,
+.article-workspace__panel-stack > form {
+  overflow: hidden;
+  border-radius: 10px !important;
+}
+
+.article-overview__summary > dl > div,
+.article-review__revision > dl > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+}
+
+.article-overview__summary > dl svg {
+  width: 18px;
+  height: 18px;
+}
+
+.article-review__revision > dl {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.article-review__revision > dl > div:nth-child(2) {
+  grid-column: span 2;
+}
+
+.article-review__revision > .mt-5.flex {
+  padding-top: 17px;
+  border-top: 1px solid var(--border);
+}
+
+.article-review__assignments > form,
+.article-review__comments > form {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+
+.article-review__assignments > .rounded-lg.border-dashed,
+.article-review__comments > .rounded-lg.border-dashed {
+  display: grid;
+  min-height: 104px;
+  place-content: center;
+  background:
+    radial-gradient(circle at center, color-mix(in srgb, var(--primary-soft) 45%, transparent), transparent 65%),
+    var(--surface-subtle) !important;
+  color: var(--text-soft);
+  box-shadow: none !important;
+}
+
+.article-review__assignments > .rounded-lg.border-dashed h3,
+.article-review__comments > .rounded-lg.border-dashed h3 {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.article-history > ol > li {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
+}
+
+.article-history > ol > li:hover {
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+  background: var(--surface);
+  transform: translateY(-1px);
+}
+
+.article-detail button.text-white {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: white;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 15%, transparent);
+}
+
+.article-detail button.text-white:hover:not(:disabled) {
+  border-color: var(--primary-hover);
+  background: var(--primary-hover);
+}
+
+.article-compose > button:last-child {
+  min-height: 44px;
+  font-weight: 700;
+}
+
 .article-detail > header {
   display: none;
 }
@@ -3745,6 +3838,14 @@ function apiErrorStatus(error: unknown) {
   .article-compose__summaries,
   .article-publish-grid {
     grid-template-columns: 1fr;
+  }
+
+  .article-review__revision > dl {
+    grid-template-columns: 1fr;
+  }
+
+  .article-review__revision > dl > div:nth-child(2) {
+    grid-column: auto;
   }
 
   .article-publish__primary,
