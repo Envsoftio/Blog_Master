@@ -244,9 +244,6 @@ type APIEnvelope<T> = {
 
 type AdminProject = {
   id: string
-  workspaceId: string
-  workspaceSlug: string
-  workspaceName: string
   slug: string
   name: string
   status: string

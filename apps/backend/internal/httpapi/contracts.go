@@ -18,11 +18,6 @@ var operationIDPart = regexp.MustCompile(`[^A-Za-z0-9]+`)
 const adminSessionSecuritySchemeName = "adminSession"
 
 var implementedAdminRouteStatuses = map[string]string{
-	"GET /api/v1/workspaces":                                                   "200",
-	"POST /api/v1/workspaces":                                                  "201",
-	"GET /api/v1/workspaces/{workspaceID}":                                     "200",
-	"PATCH /api/v1/workspaces/{workspaceID}":                                   "200",
-	"DELETE /api/v1/workspaces/{workspaceID}":                                  "204",
 	"POST /api/v1/auth/login":                                                  "200",
 	"POST /api/v1/auth/forgot-password":                                        "202",
 	"POST /api/v1/auth/reset-password":                                         "200",

@@ -42,10 +42,9 @@ func TestAIExecutionLeaseCompletionAndQualityIngestion(t *testing.T) {
 	inputHashBytes := sha256.Sum256(inputJSON)
 	inputHash := fmt.Sprintf("%x", inputHashBytes)
 	_, err = db.Exec(`
-		INSERT INTO workspaces(id, slug, name) VALUES ('workspace', 'workspace', 'Workspace');
 		INSERT INTO users(id, email_normalized, status) VALUES ('user', 'user@example.test', 'active');
-		INSERT INTO projects(id, workspace_id, slug, name, public_project_key)
-		VALUES ('project', 'workspace', 'project', 'Project', 'public');
+		INSERT INTO projects(id, slug, name, public_project_key)
+		VALUES ('project', 'project', 'Project', 'public');
 		INSERT INTO content_items(id, project_id, article_type, created_by)
 		VALUES ('article', 'project', 'standard', 'user');
 		INSERT INTO content_revisions(

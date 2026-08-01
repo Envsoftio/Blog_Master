@@ -49,12 +49,6 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/auth/reauthenticate", s.requireAdminSession, s.requireAdminCSRF, s.reauthenticate)
 	api.Post("/auth/logout", s.requireAdminSession, s.requireAdminCSRF, s.logout)
 
-	api.Get("/workspaces", s.requireAdminSession, s.listWorkspaces)
-	api.Post("/workspaces", s.requireAdminSession, s.requireAdminCSRF, s.createWorkspace)
-	api.Get("/workspaces/:workspaceID", s.requireAdminSession, s.getWorkspace)
-	api.Patch("/workspaces/:workspaceID", s.requireAdminSession, s.requireAdminCSRF, s.updateWorkspace)
-	api.Delete("/workspaces/:workspaceID", s.requireAdminSession, s.requireAdminCSRF, s.deleteWorkspace)
-
 	api.Get("/projects", s.requireAdminSession, s.listProjects)
 	api.Post("/projects", s.requireAdminSession, s.requireAdminCSRF, s.createProject)
 	api.Get("/projects/:projectID", s.requireAdminSession, s.getProject)
@@ -205,9 +199,6 @@ type csrfResponse struct {
 }
 
 type projectRequest struct {
-	WorkspaceID              string   `json:"workspaceId"`
-	WorkspaceSlug            string   `json:"workspaceSlug"`
-	WorkspaceName            string   `json:"workspaceName"`
 	Slug                     string   `json:"slug"`
 	Name                     string   `json:"name"`
 	PrimaryDomain            string   `json:"primaryDomain"`
@@ -218,15 +209,6 @@ type projectRequest struct {
 	PublisherURL             string   `json:"publisherUrl"`
 	DefaultRobotsPolicy      string   `json:"defaultRobotsPolicy"`
 	SoloOwnerApprovalEnabled *bool    `json:"soloOwnerApprovalEnabled,omitempty"`
-}
-
-type workspaceRequest struct {
-	Slug string `json:"slug"`
-	Name string `json:"name"`
-}
-
-type workspacePatchRequest struct {
-	Name *string `json:"name"`
 }
 
 type projectPatchRequest struct {
@@ -695,77 +677,6 @@ func (s *Server) logout(c fiber.Ctx) error {
 		}
 	}
 	s.clearAuthCookies(c)
-	return c.SendStatus(fiber.StatusNoContent)
-}
-
-func (s *Server) listWorkspaces(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	workspaces, err := s.store.ListWorkspacesForUser(c.Context(), user.ID)
-	if err != nil {
-		s.logger.Error("list workspaces", "user_id", user.ID, "error", err)
-		return problem(c, fiber.StatusInternalServerError, "Could not list workspaces", "")
-	}
-	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.AdminWorkspace]{
-		Data: workspaces,
-		Meta: PageMeta{Limit: len(workspaces)},
-	})
-}
-
-func (s *Server) createWorkspace(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input workspaceRequest
-	if err := decodeStrictRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-	}
-	workspace, err := s.store.CreateWorkspace(c.Context(), user.ID, store.WorkspaceInput{Slug: input.Slug, Name: input.Name})
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not create workspace")
-	}
-	return writeJSON(c, fiber.StatusCreated, Envelope[store.AdminWorkspace]{Data: workspace})
-}
-
-func (s *Server) getWorkspace(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	workspace, err := s.store.GetWorkspaceForUser(c.Context(), user.ID, c.Params("workspaceID"))
-	if err != nil {
-		return s.adminReadError(c, err, "Workspace not found", "Could not load workspace")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminWorkspace]{Data: workspace})
-}
-
-func (s *Server) updateWorkspace(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input workspacePatchRequest
-	if err := decodeStrictRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-	}
-	workspace, err := s.store.UpdateWorkspace(c.Context(), user.ID, c.Params("workspaceID"), store.WorkspacePatch{Name: input.Name})
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not update workspace")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminWorkspace]{Data: workspace})
-}
-
-func (s *Server) deleteWorkspace(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	if err := s.store.DeleteWorkspace(c.Context(), user.ID, c.Params("workspaceID")); err != nil {
-		return s.adminMutationError(c, err, "Could not delete workspace")
-	}
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
@@ -2053,8 +1964,6 @@ func (s *Server) adminMutationError(c fiber.Ctx, err error, internalTitle string
 		return problem(c, fiber.StatusForbidden, "Recent reauthentication required", "Confirm your current password to continue")
 	case errors.Is(err, store.ErrProjectHasContent):
 		return problem(c, fiber.StatusConflict, "Project cannot be deleted", "Resolve retained content before deleting this project")
-	case errors.Is(err, store.ErrWorkspaceHasProjects):
-		return problem(c, fiber.StatusConflict, "Workspace cannot be deleted", "Move or delete every project before deleting this workspace")
 	default:
 		message := strings.ToLower(err.Error())
 		if strings.Contains(message, "required") || strings.Contains(message, "cannot contain") || strings.Contains(message, "unique") {
@@ -2172,9 +2081,6 @@ const sqliteUTCFormat = "2006-01-02 15:04:05"
 
 func (input projectRequest) toStoreInput() store.ProjectInput {
 	return store.ProjectInput{
-		WorkspaceID:              input.WorkspaceID,
-		WorkspaceSlug:            input.WorkspaceSlug,
-		WorkspaceName:            input.WorkspaceName,
 		Slug:                     input.Slug,
 		Name:                     input.Name,
 		PrimaryDomain:            input.PrimaryDomain,

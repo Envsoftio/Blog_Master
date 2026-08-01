@@ -19,9 +19,8 @@ func TestPublishedPostQueryAndSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = db.Exec(`
-		INSERT INTO workspaces(id, slug, name) VALUES ('workspace', 'workspace', 'Workspace');
-		INSERT INTO projects(id, workspace_id, slug, name, public_project_key)
-		VALUES ('project', 'workspace', 'project', 'Project', 'public');
+		INSERT INTO projects(id, slug, name, public_project_key)
+		VALUES ('project', 'project', 'Project', 'public');
 		INSERT INTO content_items(id, project_id, article_type, created_by)
 		VALUES ('article', 'project', 'standard', 'user');
 		INSERT INTO taxonomy_terms(id, project_id, type, slug, name)
@@ -95,9 +94,8 @@ func TestPublishedPostHydratesOrderedSeriesAndRelationships(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = db.Exec(`
-		INSERT INTO workspaces(id, slug, name) VALUES ('workspace', 'workspace', 'Workspace');
-		INSERT INTO projects(id, workspace_id, slug, name, public_project_key)
-		VALUES ('project', 'workspace', 'project', 'Project', 'public');
+		INSERT INTO projects(id, slug, name, public_project_key)
+		VALUES ('project', 'project', 'Project', 'public');
 		INSERT INTO taxonomy_terms(id, project_id, type, slug, name)
 		VALUES ('category', 'project', 'category', 'guides', 'Guides');
 		INSERT INTO series(id, project_id, slug, name, description)

@@ -2,7 +2,7 @@
   <div class="page-stack">
     <div class="page-heading">
       <div>
-        <p>Tenant workspaces, domains, access roles, and lifecycle state.</p>
+        <p>Projects, domains, access roles, and lifecycle state.</p>
       </div>
       <button class="button button--primary button--compact" type="button" @click="formOpen = !formOpen">
         <Plus :size="16" />
@@ -17,14 +17,6 @@
         <button class="icon-button" type="button" title="Close" aria-label="Close" @click="formOpen = false"><X :size="17" /></button>
       </div>
       <div class="project-form__body">
-        <label class="field">
-          <span>Workspace</span>
-          <select v-model="form.workspaceId" required>
-            <option disabled value="">Select a workspace</option>
-            <option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id">{{ workspace.name }}</option>
-          </select>
-          <small v-if="!workspaces.length"><NuxtLink to="/workspaces">Create a workspace first</NuxtLink></small>
-        </label>
         <label class="field">
           <span>Project name</span>
           <input v-model.trim="form.name" required placeholder="Acme editorial">
@@ -83,7 +75,7 @@
       <div>
         <span class="empty-state__icon"><PanelsTopLeft :size="20" /></span>
         <h3>{{ projects.length ? 'No matching projects' : 'No projects yet' }}</h3>
-        <p>{{ projects.length ? 'Try another search or status.' : 'Create the first project in this workspace.' }}</p>
+        <p>{{ projects.length ? 'Try another search or status.' : 'Create your first project.' }}</p>
       </div>
     </div>
 
@@ -131,12 +123,11 @@ import {
   Settings2,
   X
 } from 'lucide-vue-next'
-import type { AdminProject, AdminWorkspace } from '~/composables/useAdminApi'
+import type { AdminProject } from '~/composables/useAdminApi'
 
 const route = useRoute()
 const api = useAdminApi()
 const projects = useAdminProjectsState()
-const workspaces = ref<AdminWorkspace[]>([])
 const pending = ref(true)
 const creating = ref(false)
 const formOpen = ref(false)
@@ -146,22 +137,19 @@ const statusFilter = ref('all')
 const errorMessage = ref('')
 const successMessage = ref('')
 const form = reactive({
-  workspaceId: '',
   name: '',
   slug: '',
   primaryDomain: '',
   blogBasePath: '/blog',
   timezone: 'UTC'
 })
-const canCreate = computed(() => Boolean(form.workspaceId) && form.name.length >= 2 && form.slug.length >= 2 && Boolean(form.blogBasePath))
+const canCreate = computed(() => form.name.length >= 2 && form.slug.length >= 2 && Boolean(form.blogBasePath))
 const filteredProjects = computed(() => {
   const term = search.value.toLowerCase()
-  const workspaceID = String(route.query.workspace || '')
   return projects.value.filter(project => {
-    const workspaceMatches = !workspaceID || project.workspaceId === workspaceID
     const statusMatches = statusFilter.value === 'all' || project.status === statusFilter.value
     const searchMatches = !term || `${project.name} ${project.slug} ${project.primaryDomain || ''}`.toLowerCase().includes(term)
-    return workspaceMatches && statusMatches && searchMatches
+    return statusMatches && searchMatches
   })
 })
 
@@ -178,10 +166,8 @@ async function loadProjects() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, workspaceResponse] = await Promise.all([api.listProjects(), api.listWorkspaces()])
+    const projectResponse = await api.listProjects()
     projects.value = projectResponse.data
-    workspaces.value = workspaceResponse.data
-    if (!form.workspaceId) form.workspaceId = String(route.query.workspace || workspaces.value[0]?.id || '')
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load projects.')
   } finally {
@@ -196,7 +182,6 @@ async function createProject() {
   successMessage.value = ''
   try {
     const response = await api.createProject({
-      workspaceId: form.workspaceId,
       name: form.name,
       slug: form.slug,
       primaryDomain: form.primaryDomain,

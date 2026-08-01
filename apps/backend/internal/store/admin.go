@@ -20,7 +20,6 @@ var (
 	ErrForbidden               = errors.New("forbidden")
 	ErrInvalidInvitation       = errors.New("invalid or expired invitation")
 	ErrProjectHasContent       = errors.New("project has retained content")
-	ErrWorkspaceHasProjects    = errors.New("workspace has projects")
 	ErrRecentReauthentication  = errors.New("recent reauthentication required")
 )
 
@@ -63,9 +62,6 @@ type Session struct {
 
 type AdminProject struct {
 	ID                       string   `json:"id"`
-	WorkspaceID              string   `json:"workspaceId"`
-	WorkspaceSlug            string   `json:"workspaceSlug"`
-	WorkspaceName            string   `json:"workspaceName"`
 	Slug                     string   `json:"slug"`
 	Name                     string   `json:"name"`
 	Status                   string   `json:"status"`
@@ -81,25 +77,6 @@ type AdminProject struct {
 	Role                     string   `json:"role,omitempty"`
 	CreatedAt                string   `json:"createdAt"`
 	UpdatedAt                string   `json:"updatedAt"`
-}
-
-type AdminWorkspace struct {
-	ID           string `json:"id"`
-	Slug         string `json:"slug"`
-	Name         string `json:"name"`
-	Role         string `json:"role"`
-	ProjectCount int64  `json:"projectCount"`
-	CreatedAt    string `json:"createdAt"`
-	UpdatedAt    string `json:"updatedAt"`
-}
-
-type WorkspaceInput struct {
-	Slug string
-	Name string
-}
-
-type WorkspacePatch struct {
-	Name *string
 }
 
 type AdminProjectMember struct {
@@ -139,9 +116,6 @@ type invitationAcceptanceCandidate struct {
 }
 
 type ProjectInput struct {
-	WorkspaceID              string
-	WorkspaceSlug            string
-	WorkspaceName            string
 	Slug                     string
 	Name                     string
 	PrimaryDomain            string
@@ -460,161 +434,10 @@ func (s *Store) RevokeSession(ctx context.Context, tokenHash string) error {
 	return err
 }
 
-func (s *Store) ListWorkspacesForUser(ctx context.Context, userID string) ([]AdminWorkspace, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT workspace.id, workspace.slug, workspace.name, membership.role,
-		       COUNT(project.id), workspace.created_at, workspace.updated_at
-		FROM workspaces workspace
-		JOIN workspace_memberships membership
-		  ON membership.workspace_id = workspace.id
-		 AND membership.user_id = ?
-		 AND membership.status = 'active'
-		LEFT JOIN projects project ON project.workspace_id = workspace.id
-		GROUP BY workspace.id, workspace.slug, workspace.name, membership.role,
-		         workspace.created_at, workspace.updated_at
-		ORDER BY workspace.name, workspace.id
-	`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var workspaces []AdminWorkspace
-	for rows.Next() {
-		var workspace AdminWorkspace
-		if err := rows.Scan(&workspace.ID, &workspace.Slug, &workspace.Name, &workspace.Role,
-			&workspace.ProjectCount, &workspace.CreatedAt, &workspace.UpdatedAt); err != nil {
-			return nil, err
-		}
-		workspaces = append(workspaces, workspace)
-	}
-	return workspaces, rows.Err()
-}
-
-func (s *Store) GetWorkspaceForUser(ctx context.Context, userID, workspaceID string) (AdminWorkspace, error) {
-	var workspace AdminWorkspace
-	err := s.db.QueryRowContext(ctx, `
-		SELECT workspace.id, workspace.slug, workspace.name, membership.role,
-		       COUNT(project.id), workspace.created_at, workspace.updated_at
-		FROM workspaces workspace
-		JOIN workspace_memberships membership
-		  ON membership.workspace_id = workspace.id
-		 AND membership.user_id = ?
-		 AND membership.status = 'active'
-		LEFT JOIN projects project ON project.workspace_id = workspace.id
-		WHERE workspace.id = ?
-		GROUP BY workspace.id, workspace.slug, workspace.name, membership.role,
-		         workspace.created_at, workspace.updated_at
-	`, userID, workspaceID).Scan(&workspace.ID, &workspace.Slug, &workspace.Name, &workspace.Role,
-		&workspace.ProjectCount, &workspace.CreatedAt, &workspace.UpdatedAt)
-	return workspace, err
-}
-
-func (s *Store) CreateWorkspace(ctx context.Context, actorUserID string, input WorkspaceInput) (AdminWorkspace, error) {
-	input.Slug = slugify(input.Slug)
-	input.Name = strings.TrimSpace(input.Name)
-	if input.Slug == "" {
-		return AdminWorkspace{}, fmt.Errorf("%w: workspace slug is required", ErrValidation)
-	}
-	if input.Name == "" {
-		return AdminWorkspace{}, fmt.Errorf("%w: workspace name is required", ErrValidation)
-	}
-	workspaceID, err := security.RandomID("wrk")
-	if err != nil {
-		return AdminWorkspace{}, err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return AdminWorkspace{}, err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO workspaces(id, slug, name) VALUES (?, ?, ?)`, workspaceID, input.Slug, input.Name); err != nil {
-		return AdminWorkspace{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO workspace_memberships(workspace_id, user_id, role, status)
-		VALUES (?, ?, 'workspace_owner', 'active')
-	`, workspaceID, actorUserID); err != nil {
-		return AdminWorkspace{}, err
-	}
-	if err := insertAuditEventTx(ctx, tx, "", "user", actorUserID, "workspace.create", "workspace", workspaceID, "success", nil); err != nil {
-		return AdminWorkspace{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return AdminWorkspace{}, err
-	}
-	return s.GetWorkspaceForUser(ctx, actorUserID, workspaceID)
-}
-
-func (s *Store) UpdateWorkspace(ctx context.Context, actorUserID, workspaceID string, patch WorkspacePatch) (AdminWorkspace, error) {
-	if err := s.requireWorkspaceOwner(ctx, actorUserID, workspaceID); err != nil {
-		return AdminWorkspace{}, err
-	}
-	if patch.Name == nil {
-		return s.GetWorkspaceForUser(ctx, actorUserID, workspaceID)
-	}
-	name := strings.TrimSpace(*patch.Name)
-	if name == "" {
-		return AdminWorkspace{}, fmt.Errorf("%w: workspace name is required", ErrValidation)
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return AdminWorkspace{}, err
-	}
-	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, name, workspaceID)
-	if err != nil {
-		return AdminWorkspace{}, err
-	}
-	if changed, err := result.RowsAffected(); err != nil {
-		return AdminWorkspace{}, err
-	} else if changed != 1 {
-		return AdminWorkspace{}, sql.ErrNoRows
-	}
-	if err := insertAuditEventTx(ctx, tx, "", "user", actorUserID, "workspace.update", "workspace", workspaceID, "success", nil); err != nil {
-		return AdminWorkspace{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return AdminWorkspace{}, err
-	}
-	return s.GetWorkspaceForUser(ctx, actorUserID, workspaceID)
-}
-
-func (s *Store) DeleteWorkspace(ctx context.Context, actorUserID, workspaceID string) error {
-	if err := s.requireWorkspaceOwner(ctx, actorUserID, workspaceID); err != nil {
-		return err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var projectCount int64
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM projects WHERE workspace_id = ?`, workspaceID).Scan(&projectCount); err != nil {
-		return err
-	}
-	if projectCount != 0 {
-		return ErrWorkspaceHasProjects
-	}
-	if err := insertAuditEventTx(ctx, tx, "", "user", actorUserID, "workspace.delete", "workspace", workspaceID, "success", nil); err != nil {
-		return err
-	}
-	result, err := tx.ExecContext(ctx, `DELETE FROM workspaces WHERE id = ?`, workspaceID)
-	if err != nil {
-		return err
-	}
-	if changed, err := result.RowsAffected(); err != nil {
-		return err
-	} else if changed != 1 {
-		return sql.ErrNoRows
-	}
-	return tx.Commit()
-}
-
 func (s *Store) ListProjectsForUser(ctx context.Context, userID string, cursor string, limit int) ([]AdminProject, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+adminProjectColumns+`
 		FROM projects project
-		JOIN workspaces workspace ON workspace.id = project.workspace_id
 		JOIN project_memberships membership
 		  ON membership.project_id = project.id
 		 AND membership.user_id = ?
@@ -627,7 +450,6 @@ func (s *Store) ListProjectsForUser(ctx context.Context, userID string, cursor s
 		return nil, err
 	}
 	defer rows.Close()
-
 	var projects []AdminProject
 	for rows.Next() {
 		project, err := scanAdminProject(rows)
@@ -643,7 +465,6 @@ func (s *Store) GetProjectForUser(ctx context.Context, userID, projectID string)
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+adminProjectColumns+`
 		FROM projects project
-		JOIN workspaces workspace ON workspace.id = project.workspace_id
 		JOIN project_memberships membership
 		  ON membership.project_id = project.id
 		 AND membership.user_id = ?
@@ -674,56 +495,19 @@ func (s *Store) CreateProject(ctx context.Context, actorUserID string, input Pro
 	}
 	defer tx.Rollback()
 
-	workspaceID := strings.TrimSpace(input.WorkspaceID)
-	if workspaceID == "" {
-		if input.WorkspaceSlug == "" {
-			err = tx.QueryRowContext(ctx, `
-				SELECT workspace_id FROM workspace_memberships
-				WHERE user_id = ? AND role = 'workspace_owner' AND status = 'active'
-				ORDER BY created_at, workspace_id LIMIT 1
-			`, actorUserID).Scan(&workspaceID)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return AdminProject{}, err
-			}
-		}
-		if workspaceID == "" {
-			workspaceSlug := input.WorkspaceSlug
-			if workspaceSlug == "" {
-				workspaceSlug = "workspace-" + actorUserID
-			}
-			var created bool
-			workspaceID, created, err = ensureWorkspace(ctx, tx, workspaceSlug, input.WorkspaceName)
-			if err != nil {
-				return AdminProject{}, err
-			}
-			if created {
-				if _, err := tx.ExecContext(ctx, `
-					INSERT INTO workspace_memberships(workspace_id, user_id, role, status)
-					VALUES (?, ?, 'workspace_owner', 'active')
-				`, workspaceID, actorUserID); err != nil {
-					return AdminProject{}, err
-				}
-			} else if err := requireWorkspaceOwnerTx(ctx, tx, actorUserID, workspaceID); err != nil {
-				return AdminProject{}, err
-			}
-		}
-	} else if err := requireWorkspaceOwnerTx(ctx, tx, actorUserID, workspaceID); err != nil {
-		return AdminProject{}, err
-	}
-
 	verifiedDomainsJSON, err := jsonString(input.VerifiedDomains)
 	if err != nil {
 		return AdminProject{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO projects(
-		  id, workspace_id, slug, name, public_project_key, primary_domain,
+		  id, slug, name, public_project_key, primary_domain,
 		  verified_domains_json, blog_base_path,
 		  timezone, publisher_name, publisher_url, default_robots_policy,
 		  solo_owner_approval_enabled, created_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		projectID, workspaceID, input.Slug, input.Name, publicProjectKey, nullIfEmpty(input.PrimaryDomain),
+		projectID, input.Slug, input.Name, publicProjectKey, nullIfEmpty(input.PrimaryDomain),
 		verifiedDomainsJSON, input.BlogBasePath, input.Timezone, nullIfEmpty(input.PublisherName), nullIfEmpty(input.PublisherURL),
 		input.DefaultRobotsPolicy, input.SoloOwnerApprovalEnabled, actorUserID,
 	); err != nil {
@@ -759,9 +543,6 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 		return AdminProject{}, err
 	}
 	next := ProjectInput{
-		WorkspaceID:              current.WorkspaceID,
-		WorkspaceSlug:            current.WorkspaceSlug,
-		WorkspaceName:            current.WorkspaceName,
 		Slug:                     current.Slug,
 		Name:                     current.Name,
 		PrimaryDomain:            current.PrimaryDomain,
@@ -2214,42 +1995,6 @@ func (s *Store) requireProjectManagement(ctx context.Context, userID, projectID 
 	return ErrForbidden
 }
 
-func (s *Store) requireWorkspaceOwner(ctx context.Context, userID, workspaceID string) error {
-	var role string
-	err := s.db.QueryRowContext(ctx, `
-		SELECT role FROM workspace_memberships
-		WHERE workspace_id = ? AND user_id = ? AND status = 'active'
-	`, workspaceID, userID).Scan(&role)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrForbidden
-	}
-	if err != nil {
-		return err
-	}
-	if role != "workspace_owner" {
-		return ErrForbidden
-	}
-	return nil
-}
-
-func requireWorkspaceOwnerTx(ctx context.Context, tx *sql.Tx, userID, workspaceID string) error {
-	var role string
-	err := tx.QueryRowContext(ctx, `
-		SELECT role FROM workspace_memberships
-		WHERE workspace_id = ? AND user_id = ? AND status = 'active'
-	`, workspaceID, userID).Scan(&role)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrForbidden
-	}
-	if err != nil {
-		return err
-	}
-	if role != "workspace_owner" {
-		return ErrForbidden
-	}
-	return nil
-}
-
 func (s *Store) requireAuthorManage(ctx context.Context, userID, projectID string) error {
 	role, err := s.projectRole(ctx, userID, projectID)
 	if err != nil {
@@ -2291,8 +2036,7 @@ func (s *Store) projectRole(ctx context.Context, userID, projectID string) (stri
 }
 
 const adminProjectColumns = `
-	project.id, project.workspace_id, workspace.slug, workspace.name,
-	project.slug, project.name, project.status, project.public_project_key,
+	project.id, project.slug, project.name, project.status, project.public_project_key,
 	COALESCE(project.primary_domain, ''), project.verified_domains_json,
 	project.blog_base_path, project.timezone, COALESCE(project.publisher_name, ''),
 	COALESCE(project.publisher_url, ''), project.default_robots_policy,
@@ -2314,9 +2058,6 @@ func scanAdminProject(row rowScanner) (AdminProject, error) {
 	var verifiedDomainsJSON string
 	err := row.Scan(
 		&project.ID,
-		&project.WorkspaceID,
-		&project.WorkspaceSlug,
-		&project.WorkspaceName,
 		&project.Slug,
 		&project.Name,
 		&project.Status,
@@ -2493,36 +2234,7 @@ func clearAuthorLoginMetadata(author *Author) {
 	author.LoginStatus = ""
 }
 
-func ensureWorkspace(ctx context.Context, tx *sql.Tx, slug, name string) (string, bool, error) {
-	if slug == "" {
-		slug = "default"
-	}
-	if name == "" {
-		name = "Default workspace"
-	}
-	var existingID string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE slug = ?`, slug).Scan(&existingID)
-	if err == nil {
-		return existingID, false, nil
-	}
-	if err != sql.ErrNoRows {
-		return "", false, err
-	}
-	workspaceID, err := security.RandomID("wrk")
-	if err != nil {
-		return "", false, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO workspaces(id, slug, name)
-		VALUES (?, ?, ?)
-	`, workspaceID, slug, name); err != nil {
-		return "", false, err
-	}
-	return workspaceID, true, nil
-}
-
 func applyProjectDefaults(input ProjectInput) ProjectInput {
-	input.WorkspaceSlug = slugify(input.WorkspaceSlug)
 	input.Slug = slugify(input.Slug)
 	input.Name = strings.TrimSpace(input.Name)
 	input.PrimaryDomain = strings.TrimSpace(input.PrimaryDomain)
@@ -2540,9 +2252,6 @@ func applyProjectDefaults(input ProjectInput) ProjectInput {
 	}
 	if input.DefaultRobotsPolicy == "" {
 		input.DefaultRobotsPolicy = "index,follow"
-	}
-	if input.WorkspaceName == "" {
-		input.WorkspaceName = "Default workspace"
 	}
 	return input
 }

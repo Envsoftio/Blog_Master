@@ -2,15 +2,15 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft v1.9, ready for implementation alignment review |
-| Version | 1.9 |
-| Date | 2026-07-30 |
+| Status | Draft v1.15, active implementation alignment |
+| Version | 1.15 |
+| Date | 2026-08-01 |
 | Product | Headless blog CMS and versioned JSON content API |
-| Primary users | Workspace owner, project owner/administrator, editor, reviewer, writer, landing-page developer |
+| Primary users | Project owner/administrator, editor, reviewer, writer, landing-page developer |
 | Direct consumers | Landing-project build, SSR, ISR and backend services |
 | Indirect consumers | Visitors, search crawlers and answer engines through landing-project HTML |
 | Object storage decision | Backblaze B2 Cloud Storage for media and SQLite backup data |
-| Revision note | Aligned repository, command, Docker Compose and OpenAPI contract conventions with the checked-in monorepo; added implementation drift controls for Fiber, migrations and generated client artifacts |
+| Revision note | Clarified the headless SEO boundary; removed workspace grouping and CMS-side domain verification, webmaster imports, IndexNow reporting, landing/CDN acknowledgements and automated internal-link/cannibalization analysis from committed scope |
 
 ## 1. Executive summary
 
@@ -20,16 +20,17 @@ Each landing-page project receives one or more project-scoped API keys. The proj
 
 ### Product terminology
 
-- **Workspace:** the optional top-level account/organization that owns projects and global operators.
 - **Project:** the tenant and authorization boundary inside this product. In MVP, one project normally represents one landing-page website, brand and canonical blog namespace.
 - **Landing application:** the independently deployed external application that consumes a project’s published JSON and renders public pages.
-- **Site/domain:** the public website and verified production/staging domains configured on a project; it is not a separate CMS tenant.
+- **Site/domain:** the public website and production/staging domains configured on a project; it is not a separate CMS tenant.
 - **Project membership:** the many-to-many assignment connecting a human user to a project with a project-scoped role.
 - **Project API key:** a project-owned service credential used by a trusted landing build, server, SSR or ISR process. It is not a human login or a database credential.
 
 Implementation tables, cache keys, events and authorization checks shall use `project_id` for the tenant boundary. References to the public “site” mean the landing website/domain belonging to that project.
 
-Every Article belongs to exactly one Project. There are no workspace-owned, unscoped or multi-project Article records. An Article’s `project_id` is required and immutable from creation through deletion.
+Every Article belongs to exactly one Project. There are no unscoped or multi-project Article records. An Article’s `project_id` is required and immutable from creation through deletion.
+
+The product supports English content only. Language is implicit and is not stored or configured per project, article, revision or publication.
 
 ### Hard product boundary
 
@@ -53,7 +54,6 @@ Each landing project owns:
 - `robots.txt`, XML sitemap, RSS/Atom and optional `llms.txt`.
 - Redirect execution.
 - Its public CDN/page cache.
-- IndexNow submission after its changed route is live.
 - Visitor analytics, comments, newsletter capture and other site experiences.
 
 Except for the Nuxt administration application, media delivery and health/documentation endpoints, content-provider responses are JSON. The Go API may include sanitized HTML as a JSON string and structured editor blocks as JSON, but it does not return a complete public blog webpage.
@@ -100,7 +100,7 @@ Direct database access from landing projects is rejected because it would:
 - Bypass publication status, approval, cache invalidation and rate limits.
 - Couple every landing page to internal tables and migrations.
 - Make key revocation, audit, API versioning and response compatibility difficult.
-- Prevent the backend from enforcing canonical URLs, locales and published revision selection.
+- Prevent the backend from enforcing canonical URLs and published revision selection.
 
 A project may issue multiple named API keys per environment and consumer, for example `project-a-production-build`, `project-a-production-runtime` and `project-a-staging`. Every key maps to exactly one `project_id` and a published-read scope set. The backend derives the project from the key; it does not trust a client-supplied tenant identifier. Multiple keys permit independent revocation, usage tracking and overlapping rotation without interrupting every consumer.
 
@@ -116,7 +116,6 @@ Representative article response:
     "id": "post_123",
     "articleType": "guide",
     "slug": "example-post",
-    "locale": "en",
     "revision": 7,
     "title": "Example title",
     "deck": "A concise description.",
@@ -146,7 +145,17 @@ Representative article response:
       "canonicalUrl": "https://project.example/blog/example-post",
       "index": true,
       "openGraph": {},
-      "structuredData": {}
+      "structuredData": [
+        {
+          "@context": "https://schema.org",
+          "@type": "BlogPosting",
+          "@id": "https://project.example/blog/example-post#article",
+          "url": "https://project.example/blog/example-post",
+          "mainEntityOfPage": "https://project.example/blog/example-post",
+          "headline": "Example title",
+          "datePublished": "2026-07-28T10:00:00Z"
+        }
+      ]
     },
     "trust": {
       "sources": [],
@@ -173,9 +182,9 @@ The cache uses immutable revision bodies, versioned slug pointers and generation
 
 ```text
 blog:v1:body:{projectID}:{contentID}:{revisionID}
-blog:v1:slug:{projectID}:{locale}:{slug}
+blog:v1:slug:{projectID}:{slug}
 blog:v1:list:{projectID}:{contentGeneration}:{normalizedQueryHash}
-blog:v1:negative:{projectID}:{locale}:{slug}
+blog:v1:negative:{projectID}:{slug}
 ```
 
 Required behavior:
@@ -209,7 +218,7 @@ Publishing is handled with a transactional outbox:
 2. Commit the transaction.
 3. Perform best-effort immediate Redis pointer updates and warming.
 4. The durable worker retries Redis invalidation/warming and landing-page revalidation.
-5. The landing project acknowledges when the canonical route is live, then refreshes its own sitemap/RSS and submits relevant URL changes to IndexNow.
+5. The landing project processes the signed event and independently refreshes its route, page cache and sitemap/RSS output.
 
 Redis Pub/Sub may be used as a fast notification, but not as the reliable event source because it provides at-most-once delivery. The durable outbox is responsible for retries, ordering and idempotency.
 
@@ -273,7 +282,7 @@ The provider supplies the structured JSON needed for the landing project to impl
 - Honest publication, modification and correction history.
 - Useful tables, FAQs, media and transcripts where appropriate.
 - Topic clusters, internal links and consistent entities.
-- JSON discovery and redirect manifests from which the landing project produces XML sitemaps, RSS/Atom, redirects and IndexNow events.
+- JSON discovery and redirect manifests from which the landing project produces XML sitemaps, RSS/Atom and redirects.
 - Accurate structured data that matches visible content.
 
 There is no special guaranteed “LLM schema.” A landing project may generate `llms.txt` as an optional derivative for systems that choose to use it, but it is not a source of truth and Google currently says it ignores it. Conventional technical SEO, evidence and useful public pages remain the foundation. The JSON provider enables these outputs but does not serve the public crawler-facing files itself.
@@ -307,7 +316,7 @@ users 1---* project_memberships *---1 projects
 - One project may have many writers, editors, reviewers and administrators.
 - One user may belong to many projects.
 - The same user may hold a different role in each project.
-- A workspace owner may administer all projects, but normal project access is deny-by-default and comes from an active membership.
+- Project access is deny-by-default and comes from an active project membership.
 - Public author profiles remain separate from login accounts so disabling a login does not erase historical bylines.
 
 A project API key belongs to the project rather than to an individual user. Each project may create multiple keys for production, staging, build, SSR or rotation. The complete secret is shown once, only a cryptographic verifier is stored, and the key may be named, scoped, expired, revoked and audited independently.
@@ -417,10 +426,6 @@ Section 19 groups implementation work without creating separate releases. Securi
 
 ### 6.1 Personas
 
-**Workspace owner**
-
-Creates the workspace, bootstraps projects and manages workspace-level operators, security policy and destructive operations. A workspace role does not silently grant editorial access unless the documented owner policy allows it.
-
 **Project owner**
 
 Owns one project and manages its settings, memberships, API keys, integrations and destructive operations. Every active project must retain at least one owner.
@@ -497,8 +502,8 @@ A user may hold different roles on different projects. Committed project roles a
 ### 7.1 Bootstrap and project setup
 
 1. An operator creates the first owner using a one-time CLI command or expiring invitation.
-2. The owner configures a workspace and creates its first project; project creation atomically creates the owner membership.
-3. The owner sets domain, blog base path, locale, timezone, publisher, brand voice and SEO defaults.
+2. The owner creates the first project; project creation atomically creates the owner membership.
+3. The owner sets domain, blog base path, timezone, publisher, brand voice and SEO defaults.
 4. The owner invites or assigns writers, editors and reviewers with project-specific roles.
 5. The owner creates a named production API key and copies it once into the landing project’s secret store.
 6. The landing developer validates the connection and configures a signed revalidation endpoint.
@@ -521,7 +526,7 @@ No default password or public bootstrap route is permitted.
 2. AI creates an evidence-aware outline with proposed claims and sources.
 3. A human approves or changes the outline.
 4. AI drafts sections as a new draft revision.
-5. Automated checks identify unsupported claims, broken sources, duplication, filler and policy violations.
+5. Automated checks identify unsupported claims, broken sources, filler and policy violations.
 6. The writer adds original examples and performs an editorial rewrite.
 7. A reviewer verifies claims and approves the exact revision.
 8. An administrator publishes.
@@ -532,7 +537,7 @@ No default password or public bootstrap route is permitted.
 2. The revision includes a material change note and may preserve prior sources.
 3. Review and approval run again.
 4. Publishing atomically changes the public revision pointer.
-5. The provider updates its JSON cache/manifests and notifies the landing project; the landing project updates its route, CDN, sitemap, feed and IndexNow state.
+5. The provider updates its JSON cache/manifests and notifies the landing project; the landing project updates its route, page cache, sitemap and feed.
 
 ### 7.5 Slug change, unpublish and rollback
 
@@ -543,11 +548,10 @@ No default password or public bootstrap route is permitted.
 
 ## 8. Functional requirements
 
-### 8.1 Workspace and project management
+### 8.1 Project management
 
-- **FR-PROJECT-001:** The system shall support an optional workspace grouping and multiple projects within a workspace.
-- **FR-PROJECT-002:** Each project shall have a stable internal ID, a unique workspace-scoped slug and a separate non-secret public identifier.
-- **FR-PROJECT-003:** Each project shall configure its project name, primary domain, blog base path, locale, timezone and default language.
+- **FR-PROJECT-002:** Each project shall have a stable internal ID, a globally unique slug and a separate non-secret public identifier.
+- **FR-PROJECT-003:** Each project shall configure its project name, primary domain, blog base path and timezone. The content language is fixed to English.
 - **FR-PROJECT-004:** Each project shall configure publisher name, logo, URL and verified external identities.
 - **FR-PROJECT-005:** Each project shall configure default SEO title patterns, social images and robots behavior.
 - **FR-PROJECT-006:** Each project shall have a voice profile, topic boundaries, approved product facts, terminology and prohibited claims.
@@ -555,13 +559,12 @@ No default password or public bootstrap route is permitted.
 - **FR-PROJECT-008:** Staging and preview JSON shall default to `index: false` and shall never enter the production discovery manifest consumed for public sitemaps.
 - **FR-PROJECT-009:** Authorized users shall be able to create, list, view, update, suspend, archive and, subject to dependency checks and retention, delete projects.
 - **FR-PROJECT-010:** A project is the tenant/security boundary and shall own its articles, revisions, publications, taxonomy, authors, assets, sources, AI jobs, integrations and audit records.
-- **FR-PROJECT-011:** In MVP, one project shall normally represent one landing-page website or brand with exactly one verified primary canonical domain and optional verified staging/alias domains.
+- **FR-PROJECT-011:** In MVP, one project shall normally represent one landing-page website or brand with exactly one configured primary canonical domain and optional staging/alias domains.
 - **FR-PROJECT-012:** Project creation and the creator’s `project_owner` membership shall commit atomically.
 - **FR-PROJECT-013:** Suspending a project shall immediately deny its human sessions within that project, reject its API keys and stop new schedules/webhook deliveries without destroying published history.
 - **FR-PROJECT-014:** Project archival or deletion shall produce a dependency report covering active keys, members, publications, schedules, redirects, assets, webhooks and pending jobs.
 - **FR-PROJECT-015:** The Nuxt admin shall provide a project selector showing only projects the current user is authorized to access, and every screen shall retain an explicit selected-project context.
-- **FR-PROJECT-016:** Workspace grouping shall not permit data access across projects unless an explicit workspace-level operator permission is checked and audited.
-- **FR-PROJECT-017:** A project with retained Articles shall not be hard-deleted; Article archival/export/retention requirements must be resolved before project deletion can proceed.
+- **FR-PROJECT-017:** A project with retained Articles shall not be hard-deleted until its dependent records satisfy the guarded deletion rules.
 
 ### 8.2 Project memberships and roles
 
@@ -569,7 +572,7 @@ No default password or public bootstrap route is permitted.
 - **FR-MEMBER-002:** A user may hold a different role in each project.
 - **FR-MEMBER-003:** Project roles shall include `project_owner`, `project_admin`, `editor`, `reviewer` and `writer`; a `viewer` role remains an uncommitted future consideration that shall not require changing the membership model.
 - **FR-MEMBER-004:** A project owner or authorized administrator shall be able to invite a new user or assign an existing user to a project role.
-- **FR-MEMBER-005:** Users shall list and access only projects for which they hold an active membership, except for explicitly authorized and audited workspace operators.
+- **FR-MEMBER-005:** Users shall list and access only projects for which they hold an active membership.
 - **FR-MEMBER-006:** Role changes and removals shall take effect immediately, revoke now-invalid access and create audit events.
 - **FR-MEMBER-007:** Removing a user from one project shall not change their access to other projects or erase historical authorship, reviews, approvals or audit records.
 - **FR-MEMBER-008:** The final active project owner shall not be removed or demoted until ownership is transferred.
@@ -589,11 +592,9 @@ No default password or public bootstrap route is permitted.
 - **FR-AUTH-009:** Invite and reset tokens shall be random, hash-only, single-use and expiring.
 - **FR-AUTH-010:** Password changes, resets, user disabling and material permission changes shall revoke relevant sessions.
 - **FR-AUTH-011:** Login, reset and invite operations shall be rate-limited by both source and account identity.
-- **FR-AUTH-012:** The system shall support optional TOTP MFA for owners and administrators in the committed delivery.
-- **FR-AUTH-013:** Single-factor passwords shall permit at least 64 characters and use a minimum length of 15 characters; arbitrary composition rules and scheduled password rotation are prohibited.
-- **FR-AUTH-014:** New passwords should be checked against an offline or privacy-preserving breached/common-password list.
-- **FR-AUTH-015:** Creating project API keys, changing credentials, transferring ownership and permanently deleting a project shall require recent reauthentication.
-- **FR-AUTH-016:** Disabling a user shall immediately revoke their active sessions without deleting their historical authorship, comments, approvals or audit records.
+- **FR-AUTH-012:** Passwords shall permit at least 64 characters and use a minimum length of 15 characters; arbitrary composition rules and scheduled password rotation are prohibited.
+- **FR-AUTH-013:** Creating project API keys, changing credentials, transferring ownership and permanently deleting a project shall require recent reauthentication.
+- **FR-AUTH-014:** Disabling a user shall immediately revoke their active sessions without deleting their historical authorship, comments, approvals or audit records.
 
 ### 8.4 Project API keys
 
@@ -675,23 +676,22 @@ Supported body blocks shall include:
 - **FR-CONTENT-003:** The editor shall autosave working changes and recover from interruption.
 - **FR-CONTENT-004:** The editor shall warn about concurrent edits; real-time multi-user merging is not required in MVP.
 - **FR-CONTENT-005:** The canonical editable document shall use a versioned structured format such as TipTap/ProseMirror JSON.
-- **FR-CONTENT-006:** Approval shall generate sanitized HTML, plain text, Markdown export, heading table of contents, word count, reading time and a content hash.
+- **FR-CONTENT-006:** Approval shall generate sanitized HTML, plain text, a derived Markdown rendering, heading table of contents, word count, reading time and a content hash.
 - **FR-CONTENT-007:** The renderer shall sanitize all rich content using an explicit allowlist.
 - **FR-CONTENT-008:** A published content item may have an unpublished newer draft without changing the public output.
-- **FR-CONTENT-009:** Import and export shall preserve content, metadata, media references, authors and redirects in documented formats.
-- **FR-CONTENT-010:** The article title is the public page H1; the body schema shall reject an H1 block.
-- **FR-CONTENT-011:** Raw HTML blocks shall be disabled by default. Any later exception requires a separately reviewed sanitizer and project policy.
-- **FR-CONTENT-012:** Meaningful images shall require alt text; decorative images shall carry an explicit decorative flag and empty alt value.
-- **FR-CONTENT-013:** Tables shall support header semantics and a landing rendering contract that remains usable on narrow screens.
-- **FR-CONTENT-014:** FAQ questions and answers used in structured-data inputs shall also be visible in the article body.
-- **FR-CONTENT-015:** Heading IDs shall remain stable across normal text edits and shall change only through an explicit anchor-edit action with collision checking.
-- **FR-CONTENT-016:** The admin shall provide revision history and accessible side-by-side or inline diff for public fields and structured body changes.
-- **FR-CONTENT-017:** Every Article shall have exactly one non-null `project_id`, assigned at creation and immutable afterward.
-- **FR-CONTENT-018:** Article creation shall occur through an explicitly selected project and require an active membership with `content.create` for that project.
-- **FR-CONTENT-019:** Every Article list, lookup, mutation, revision, publication and delete operation shall require an explicit authorized `project_id`; unscoped repository methods such as `GetArticle(id)` are prohibited.
-- **FR-CONTENT-020:** Authors, taxonomy terms, media, sources, revisions, approvals, relationships and publications attached to an Article shall belong to the same project. Cross-project references shall fail validation and database constraints.
-- **FR-CONTENT-021:** Copying an Article to another project shall create a new destination Article ID and independent revisions/publication state, record its origin and require access to both projects plus a new canonical/adaptation decision.
-- **FR-CONTENT-022:** SQLite foreign keys and unique/composite constraints shall prevent a revision or publication under Project B from referencing an Article or revision owned by Project A.
+- **FR-CONTENT-009:** The article title is the public page H1; the body schema shall reject an H1 block.
+- **FR-CONTENT-010:** Raw HTML blocks shall be disabled by default. Any later exception requires a separately reviewed sanitizer and project policy.
+- **FR-CONTENT-011:** Meaningful images shall require alt text; decorative images shall carry an explicit decorative flag and empty alt value.
+- **FR-CONTENT-012:** Tables shall support header semantics and a landing rendering contract that remains usable on narrow screens.
+- **FR-CONTENT-013:** FAQ questions and answers used in structured-data inputs shall also be visible in the article body.
+- **FR-CONTENT-014:** Heading IDs shall remain stable across normal text edits and shall change only through an explicit anchor-edit action with collision checking.
+- **FR-CONTENT-015:** The admin shall provide revision history and accessible side-by-side or inline diff for public fields and structured body changes.
+- **FR-CONTENT-016:** Every Article shall have exactly one non-null `project_id`, assigned at creation and immutable afterward.
+- **FR-CONTENT-017:** Article creation shall occur through an explicitly selected project and require an active membership with `content.create` for that project.
+- **FR-CONTENT-018:** Every Article list, lookup, mutation, revision, publication and delete operation shall require an explicit authorized `project_id`; unscoped repository methods such as `GetArticle(id)` are prohibited.
+- **FR-CONTENT-019:** Authors, taxonomy terms, media, sources, revisions, approvals, relationships and publications attached to an Article shall belong to the same project. Cross-project references shall fail validation and database constraints.
+- **FR-CONTENT-020:** Copying an Article to another project shall create a new destination Article ID and independent revisions/publication state, record its origin and require access to both projects plus a new canonical/adaptation decision.
+- **FR-CONTENT-021:** SQLite foreign keys and unique/composite constraints shall prevent a revision or publication under Project B from referencing an Article or revision owned by Project A.
 
 ### 8.7 Taxonomy, organization and discovery
 
@@ -699,14 +699,12 @@ Supported body blocks shall include:
 - **FR-TAX-002:** Every published post shall have exactly one primary category; it may have secondary categories and multiple tags.
 - **FR-TAX-003:** Taxonomy terms shall have project-specific slugs, descriptions, SEO fields and archive indexability.
 - **FR-TAX-004:** The system shall support explicit pillar-to-cluster relationships.
-- **FR-TAX-005:** The system shall detect likely topic duplication and keyword cannibalization before publication.
 - **FR-TAX-006:** SQLite FTS5 shall support admin content search and may support public search for initial scale.
-- **FR-TAX-007:** Search results shall respect project, locale, publication state and permission scope.
+- **FR-TAX-007:** Search results shall respect project, publication state and permission scope.
 - **FR-TAX-008:** The system shall support project-scoped series with a stable slug, ordered article positions and pillar/supporting topic-cluster relationships.
 - **FR-TAX-009:** Tags and categories shall support aliases and controlled merge operations with redirect/canonical handling where a public archive URL exists.
 - **FR-TAX-010:** The admin shall report duplicate, near-duplicate and unused taxonomy terms.
-- **FR-TAX-011:** Related articles shall support manual editorial selection in MVP with deterministic taxonomy-based suggestions; embedding-based recommendations are not required.
-- **FR-TAX-012:** The system shall report orphaned published articles that have no inbound relationship from another article, category, series or landing navigation source known to the provider.
+- **FR-TAX-011:** Related articles shall support manual editorial selection in MVP.
 - **FR-TAX-013:** MVP categories shall support a parent/child hierarchy of no more than three levels, including the root category, so a project can organize articles into categories and subcategories. Each category may have at most one parent, and tags shall remain flat.
 - **FR-TAX-014:** A category and its parent shall belong to the same project. Self-parenting, hierarchy cycles and cross-project parent references shall be rejected by service validation and database constraints where practical.
 - **FR-TAX-015:** The admin shall provide a category-tree browser and hierarchical category selector, showing the full ancestor path when assigning or moving a category.
@@ -724,7 +722,7 @@ Supported body blocks shall include:
 - **FR-WORKFLOW-007:** A writer shall not approve or publish their own submitted work.
 - **FR-WORKFLOW-008:** A project owner may self-approve only when the project’s explicit solo-owner mode is enabled. Project administrators and other roles shall not gain self-approval through this mode, and every self-approval shall preserve an explicit audit record.
 - **FR-WORKFLOW-009:** Publication shall record approver, publisher, exact revision, timestamps and a change note.
-- **FR-WORKFLOW-010:** The system shall display propagation status for Redis, CDN, webhook and landing-site revalidation.
+- **FR-WORKFLOW-010:** The system shall display provider publication, Redis/outbox and webhook-delivery status without claiming visibility into landing-site or CDN propagation.
 - **FR-WORKFLOW-011:** Content shall support assignment, due dates, reviewer/SME assignment and notifications.
 - **FR-WORKFLOW-012:** Comments shall support mentions without exposing users from projects the commenter cannot access.
 - **FR-WORKFLOW-013:** Approval shall cover every public field—body, title, byline, sources, taxonomy, media, SEO, social and structured-data inputs. Changing any approved public field requires a new approval-bound revision or publication-metadata revision.
@@ -764,11 +762,11 @@ Supported body blocks shall include:
 
 The provider returns SEO and discovery data as JSON. The landing project is responsible for converting that contract into public HTML, headers, crawler files and redirects.
 
-- **FR-SEO-001:** Every publication JSON object shall include its intended stable canonical URL on the landing project’s verified domain.
+- **FR-SEO-001:** Every publication JSON object shall include its intended stable canonical URL on the landing project’s configured primary domain.
 - **FR-SEO-002:** The API shall return title, description, canonical URL, robots intent, social metadata and publication dates.
 - **FR-SEO-003:** The API shall return verified inputs for `BlogPosting`/`Article`, `BreadcrumbList`, author profile and organization structured data.
 - **FR-SEO-004:** Returned structured-data inputs shall never contain unsupported ratings, FAQs, claims or entities.
-- **FR-SEO-005:** The JSON contract shall include canonical, locale, translation-group and hreflang relationships for the landing renderer.
+- **FR-SEO-005:** The JSON contract shall include canonical and English-language metadata for the landing renderer.
 - **FR-SEO-006:** The provider shall return a JSON discovery manifest containing the canonical indexable URLs and material `lastmod` data from which each landing project builds XML sitemap files.
 - **FR-SEO-007:** The provider shall return ordered JSON feed data from which a landing project may build RSS and/or Atom.
 - **FR-SEO-008:** Discovery-manifest `lastmod` and returned modification dates shall reflect material changes only.
@@ -776,10 +774,8 @@ The provider returns SEO and discovery data as JSON. The landing project is resp
 - **FR-SEO-010:** Duplicate publication across project domains shall require either one declared canonical original or a materially distinct adaptation.
 - **FR-SEO-011:** The provider shall return project crawler-policy configuration; the landing project owns its public `robots.txt`.
 - **FR-SEO-012:** The provider may return optional JSON data for a landing project to produce `llms.txt`, but shall not serve or treat it as a ranking requirement.
-- **FR-SEO-013:** The CMS shall notify the landing project of a change; the landing project shall submit IndexNow only after its changed URL is live or intentionally removed.
 - **FR-SEO-014:** Preview and staging JSON shall be explicitly flagged non-indexable and shall not enter the production discovery manifest.
 - **FR-SEO-015:** The JSON contract shall not include obsolete `meta keywords`.
-- **FR-SEO-016:** Domain ownership shall be verified before it is returned as the production canonical domain.
 - **FR-SEO-017:** Empty or thin taxonomy/archive entries shall be excluded from the discovery manifest or flagged `index: false`.
 - **FR-SEO-018:** A link checker shall detect broken links, redirected internal links, redirect chains and loops and expose results to editors and landing integrations.
 - **FR-SEO-019:** The landing integration guide and reference tests shall verify that returned SEO fields are rendered consistently in HTML, JSON-LD, sitemap/feed output and HTTP status/redirect behavior.
@@ -802,10 +798,10 @@ The provider returns SEO and discovery data as JSON. The landing project is resp
 - **FR-API-012:** The JSON contract shall expose both versioned structured body blocks and derived sanitized HTML unless a project policy disables one representation.
 - **FR-API-013:** The API shall provide a changes cursor so landing projects can incrementally revalidate changed, redirected and removed routes.
 - **FR-API-014:** Browser-facing access using a secret project API key is prohibited; landing projects shall call the API from a trusted server/build environment.
-- **FR-API-015:** Article listing shall support allowlisted filters for category, tag, author, locale, article type, series when enabled, and publication date bounds with deterministic sorting.
+- **FR-API-015:** Article listing shall support allowlisted filters for category, tag, author, article type, series when enabled, and publication date bounds with deterministic sorting.
 - **FR-API-016:** Category, tag and author detail responses shall include or link to cursor-paginated published articles within the credential’s project.
 - **FR-API-017:** The API shall support stable retrieval by slug and by non-secret article ID.
-- **FR-API-018:** Related-article results shall identify whether a relationship is manually curated or deterministically suggested.
+- **FR-API-018:** Related-article results shall expose their recorded relationship type, origin and editorial order.
 - **FR-API-019:** API key scope shall be resolved before cache lookup, and the selected project shall be part of every cache/database query even when an identifier is globally unique.
 
 Initial protected integration routes:
@@ -874,7 +870,7 @@ There is no browser-public content route in MVP. A landing project may expose it
 - **FR-AUDIT-002:** Audit events shall include actor, project, action, target, revision, outcome, request ID and timestamp.
 - **FR-AUDIT-003:** Audit records shall never contain passwords, session secrets, reset tokens, project API-key secrets, preview credentials or provider credentials.
 - **FR-AUDIT-004:** Login success/failure, authorization failures, membership changes, API-key operations, approvals, publication, rollback and deletion shall be audited.
-- **FR-AUDIT-005:** Owners shall be able to inspect and export audit records within the retention policy.
+- **FR-AUDIT-005:** Owners shall be able to inspect project-scoped audit records.
 
 ## 9. Detailed content and blog model
 
@@ -901,10 +897,10 @@ Product-facing article field groups are:
 
 | Group | Representative fields |
 |---|---|
-| Identity | Article ID, project ID, article type, locale, translation group, origin |
+| Identity | Article ID, project ID, article type, origin |
 | Routing | Slug, canonical URL, prior slugs, retirement/replacement target |
 | Presentation | Title, alternate title, deck, excerpt, short answer, hero media |
-| Content | TipTap document, sanitized HTML, plain text, Markdown export, table of contents |
+| Content | TipTap document, sanitized HTML, plain text, derived Markdown rendering, table of contents |
 | Contributors | Primary author, ordered co-authors, editor, expert reviewer, other credits |
 | Taxonomy | Primary category, secondary categories, tags, optional series/position, topic relationships |
 | Publishing | Editorial state, publication state, schedule, approved/published revision |
@@ -920,16 +916,13 @@ Required `projects` fields:
 
 ```text
 id
-workspace_id
 slug
 name
 status
 public_project_key
 primary_domain
-verified_domains_json
+alias_domains_json
 blog_base_path
-default_locale
-supported_locales
 timezone
 publisher_name
 publisher_logo_asset_id
@@ -960,7 +953,6 @@ Stable `content_items` identity fields:
 id
 project_id
 article_type
-translation_group_id
 origin_project_id
 origin_content_id
 created_by
@@ -1000,13 +992,14 @@ CREATE TABLE project_publications (
     id                    TEXT PRIMARY KEY,
     project_id            TEXT NOT NULL,
     content_id            TEXT NOT NULL,
-    locale                TEXT NOT NULL,
+    slug                  TEXT NOT NULL,
     published_revision_id TEXT,
     FOREIGN KEY (project_id, content_id)
       REFERENCES content_items(project_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (project_id, content_id, published_revision_id)
       REFERENCES content_revisions(project_id, content_id, id),
-    UNIQUE (project_id, content_id, locale)
+    UNIQUE (project_id, content_id),
+    UNIQUE (project_id, slug)
 );
 
 CREATE TRIGGER content_items_project_immutable
@@ -1048,7 +1041,6 @@ markdown_export
 table_of_contents_json
 word_count
 reading_time_seconds
-locale
 author_snapshot_json
 contributor_snapshot_json
 taxonomy_snapshot_json
@@ -1070,13 +1062,16 @@ created_at
 
 Derived render fields are generated before approval so the reviewer sees the exact JSON/HTML representation that can become public.
 
+### 9.3.1 Article working autosave
+
+Working autosaves are mutable, user-scoped recovery records and are not immutable editorial revisions. Each record is keyed by `project_id`, `content_id` and `user_id`, references the exact immutable base revision, stores the recoverable structured draft, and increments an optimistic version on every accepted write. A stale base revision or version returns a conflict; the editor preserves its browser backup and requires explicit reconciliation rather than overwriting newer work. Creating an immutable revision clears only the creating user’s autosave.
+
 ### 9.4 Project publication
 
 ```text
 id
 project_id
 content_id
-locale
 slug
 canonical_url
 canonical_policy
@@ -1270,6 +1265,7 @@ Minimum editorial and operational tables:
 ```text
 authors
 revision_contributors
+article_autosaves
 taxonomy_terms
 article_taxonomy
 series
@@ -1315,11 +1311,9 @@ Raw session, invitation, reset, API-key and preview secrets are never stored. Ha
 - Human-managed sources, citations, claims, disclosures and correction notices.
 - Project voice profiles, evidence packets and provider-neutral AI assistance for outlining, section drafting, rewriting, critique and metadata.
 - AI quality gates, claim/source extraction, provenance, progress, cancellation, quotas, evaluation and mandatory human approval.
-- Full multilingual editorial and translation workflow.
-- Series, topic clusters and advanced cannibalization/orphan analysis.
-- Search Console/Bing Webmaster imports, landing-delivery acknowledgements and optional IndexNow status reporting.
+- Series and manually curated topic-cluster relationships.
 - Advanced stale-content/correction workflows, provider-side editorial analytics and landing-integration diagnostics.
-- Optional TOTP MFA and refined editor/reviewer capabilities.
+- Refined editor/reviewer capabilities.
 - SEO/social/structured-data inputs, redirect history, discovery/feed JSON and webhooks.
 - Versioned published JSON, cursor pagination, ETag and Redis cache behavior.
 
@@ -1392,7 +1386,7 @@ Each project shall own a versioned voice profile containing:
 - Style requirements by content type.
 - Three or more owned, approved writing examples.
 - Rules for introductions, conclusions and calls to action.
-- Regional spelling and locale.
+- English spelling conventions.
 
 The system shall not imitate an unrelated living author or intentionally add errors to appear human.
 
@@ -1439,8 +1433,6 @@ Blocking or warning checks shall include:
 - Unsupported statistic, superlative or comparative claim.
 - Claim/source mismatch.
 - Contradiction between sections.
-- Cross-project near duplication.
-- Existing-topic cannibalization.
 - Excessive keyword repetition.
 - Generic introduction or conclusion.
 - Repeated article template or phrasing.
@@ -1659,7 +1651,7 @@ Landing-rendered HTML → visitors, search crawlers and answer engines
 
 ### 11.2 Repository and runtime structure
 
-The product shall use one Git monorepo containing independent Go and Nuxt applications. The checked-in v1.9 layout and naming baseline is:
+The product shall use one Git monorepo containing independent Go and Nuxt applications. The checked-in v1.15 layout and naming baseline is:
 
 ```text
 seoblog/
@@ -1733,7 +1725,7 @@ taxonomy        categories, tags, topics and series
 media           assets, variants, credits and storage
 seo             canonical rules, schema inputs, discovery/feed data and redirect manifests
 delivery        published JSON DTOs, ETags and cache behavior
-integrations    project API keys, landing revalidation webhooks and delivery acknowledgements
+integrations    project API keys and landing revalidation webhooks
 ai              providers, evidence, jobs, provenance and evaluations
 audit           security/editorial audit events
 jobs            outbox processing, retries and job status
@@ -2355,9 +2347,9 @@ These artifacts can provide a last-known-good content source through Backblaze B
 
 The transactional email domain shall configure SPF, DKIM and DMARC. The product shall monitor bounces and provider failures and provide a safe invitation/reset resend flow without revealing account existence.
 
-Domain activation shall verify ownership before changing canonical URLs, discovery-manifest data or the crawler policy returned to a landing project. A domain-change workflow shall:
+An authorized project owner may change the configured canonical domain through a guarded workflow that shall:
 
-- Confirm ownership of the new domain.
+- Require explicit confirmation of the new domain and affected public URLs.
 - Generate old-domain/old-path redirect requirements.
 - Update canonical and webhook targets atomically where possible.
 - Prevent redirect loops.
@@ -2391,7 +2383,7 @@ Runbooks are required before production for:
 
 - HTTPS everywhere with HSTS after domain validation.
 - Secure session cookie, CSRF protection and exact admin origins.
-- Argon2id passwords and optional owner/admin MFA.
+- Argon2id passwords.
 - Server-side deny-by-default authorization.
 - Project-scoped repository queries and negative isolation tests.
 - Rate limits for login, reset, invite, AI, uploads and integration API.
@@ -2422,7 +2414,7 @@ Raw secrets shall never be persisted after issuance where a hash is sufficient.
 ### 13.3 Privacy and retention
 
 - Define retention separately for audit events, failed AI inputs, prompt/completion logs, deleted users and soft-deleted content.
-- Allow an administrator to export or delete personal account data subject to audit and legal retention.
+- Allow an administrator to delete or anonymize personal account data subject to audit and legal obligations.
 - Minimize IP and user-agent storage; retain only what is needed for security.
 - Do not send private drafts or personal data to AI providers without an explicit processing policy.
 - Newsletter and comment features require separate consent, unsubscribe, moderation and deletion requirements.
@@ -2456,8 +2448,7 @@ The following are proposed initial targets and should be confirmed after expecte
 
 - **NFR-PUB-001:** The Content API shall expose the new revision within 5 seconds of a successful publish under normal operation.
 - **NFR-PUB-002:** Webhook delivery shall begin within 5 seconds.
-- **NFR-PUB-003:** A compatible SSR/ISR landing project should expose the changed page within 60 seconds; static host build times are measured separately.
-- **NFR-PUB-004:** The admin UI shall show partial failures rather than claiming complete propagation.
+- **NFR-PUB-004:** The admin UI shall show provider outbox and webhook failures without claiming complete landing-site propagation.
 - **NFR-PUB-005:** Ninety-nine percent of retryable outbox/webhook deliveries should complete within 5 minutes.
 - **NFR-PUB-006:** The oldest pending publication outbox event shall alert at 2 minutes and page an operator at an agreed critical threshold.
 
@@ -2524,7 +2515,7 @@ Track:
 - Redis latency, hits, misses, evictions, memory and fallback count.
 - Outbox age, pending events, retries and dead-letter events.
 - Webhook latency, attempts and failure rate.
-- Publish-to-API and publish-to-landing propagation time.
+- Publish-to-API time and webhook dispatch latency.
 - Backup age, success and restore verification.
 - Media processing failures.
 - AI job latency, token use, cost, cancellation, provider error and reviewer acceptance.
@@ -2561,7 +2552,7 @@ The following requirements are explicitly included because they are frequently d
 | Published edit isolation | Live page changes during drafting | New draft while old revision remains live |
 | Scheduling timezone/DST | Posts publish at the wrong time | Store UTC plus project timezone and test DST gaps/duplicates |
 | Cache race after publish | Old content reappears | Monotonic version guards and immutable body keys |
-| Partial propagation | CMS says “published” while site is stale | Destination-level status and retry UI |
+| Failed revalidation webhook | CMS publishes but the landing site is not notified | Webhook attempt status and safe retry UI |
 | Webhook replay/order | Duplicate or stale builds | HMAC, timestamps, event IDs and publication versions |
 | Preview indexing | Draft leaks into search | `no-store`, `noindex`, short-lived revision token |
 | Staging indexing | Test domain competes with production | `index: false` and exclusion from production discovery manifest |
@@ -2602,7 +2593,6 @@ The following requirements are explicitly included because they are frequently d
 | Media backup mismatch | DB restores with missing images | B2 file-version history and database-to-object consistency checks |
 | Storage exhaustion | SQLite and uploads fail | Disk alerts, quotas and cleanup policy |
 | Reserved URL collisions | Blog route conflicts | Reserved-slug registry and pre-publish validation |
-| Orphaned articles | Valuable pages are undiscoverable | Inbound relationship report and landing-navigation verification |
 | Taxonomy sprawl | Duplicate/thin archives | Aliases, merge workflow and unused-term reporting |
 | H1/raw HTML body blocks | Broken semantics or stored XSS | Title-only H1 and raw HTML disabled by default |
 | FAQ/schema mismatch | Misleading structured data | FAQ answers must be visible in the rendered article |
@@ -2610,14 +2600,11 @@ The following requirements are explicitly included because they are frequently d
 | Contributor ordering | Incorrect byline/credit | Primary author plus ordered co-authors and explicit roles |
 | Series ordering | Unstable navigation | Persistent unique position within a project series |
 | Pagination stability | Duplicate/missing list results | Cursor pagination with deterministic sort |
-| Locale/hreflang mistakes | Wrong regional pages | Translation group validation and reciprocal hreflang |
 | API deprecation | Landing projects break | Versioning, changelog and migration window |
-| Data portability | Vendor lock-in and project exit risk | Full documented export including redirects/media metadata |
-| Audit retention | No incident evidence or privacy excess | Defined retention and protected export |
 | Analytics consent | Privacy/compliance exposure | Project/landing-site consent and minimal default tracking |
 | Accessibility | Editor and output exclude users | WCAG AA and semantic-output validation |
 | Dependency lifecycle | Known vulnerabilities | Automated scanning and regular upgrade policy |
-| Domain ownership | Bad canonical or webhook target | Verify domains and restrict redirect/webhook URLs |
+| Canonical domain misconfiguration | Bad canonical URLs | Owner confirmation, HTTPS validation, audit history and guarded domain changes |
 | SSRF through webhooks | Backend reaches private services | URL validation, private-network blocks and allowlists |
 | Content security policy | Rich content enables XSS | Sanitization plus CSP and safe embeds |
 | Search crawler vs training crawler | Unintended crawler policy | Separate, documented robots controls |
@@ -2635,7 +2622,7 @@ The following requirements are explicitly included because they are frequently d
 | Email DNS | Invites/resets land in spam | SPF, DKIM, DMARC and bounce monitoring |
 | Upload decompression bomb | Worker memory/disk exhaustion | Pixel/frame/archive expansion limits |
 | SVG active content | Stored XSS through media | Reject or dedicated sanitization |
-| Domain change | Canonicals, redirects and feeds diverge | Verified migration workflow and one-hop redirects |
+| Domain change | Canonicals, redirects and feeds diverge | Guarded migration workflow and one-hop redirects |
 | Backup credentials | App compromise deletes recovery data | Separate least-privilege/locked backup storage |
 
 ### 16.1 Mandatory edge-case test matrix
@@ -2644,7 +2631,7 @@ Implementation test plans shall include:
 
 - A Project-B route receives an Article ID, revision ID, author ID, taxonomy ID, source ID or asset ID that belongs to Project A.
 - A database write attempts to attach a Project-A revision to a Project-B publication.
-- An import or background job omits `project_id` or tries to change an existing Article’s project.
+- A background job omits `project_id` or tries to change an existing Article’s project.
 - A cross-project copy is requested by a user who can read the source but cannot create in the destination, and vice versa.
 - Two editors save changes based on the same draft version.
 - Two administrators attempt to publish different revisions simultaneously.
@@ -2725,6 +2712,9 @@ GET    /api/v1/projects/{projectID}/articles/{articleID}
 GET    /api/v1/projects/{projectID}/articles/{articleID}/revisions
 GET    /api/v1/projects/{projectID}/articles/{articleID}/revisions/{revisionID}
 POST   /api/v1/projects/{projectID}/articles/{articleID}/revisions
+GET    /api/v1/projects/{projectID}/articles/{articleID}/autosave
+PUT    /api/v1/projects/{projectID}/articles/{articleID}/autosave
+DELETE /api/v1/projects/{projectID}/articles/{articleID}/autosave
 POST   /api/v1/projects/{projectID}/revisions/{revisionID}/submit
 POST   /api/v1/projects/{projectID}/revisions/{revisionID}/request-changes
 POST   /api/v1/projects/{projectID}/revisions/{revisionID}/approve
@@ -2738,6 +2728,8 @@ POST   /api/v1/projects/{projectID}/articles/{articleID}/copy-to-project
 Every handler resolves the membership/permission for `{projectID}` first and calls a project-scoped service/repository method. If `{articleID}` exists under another project, the response is the same not-found result as a nonexistent ID; it shall not reveal the other project’s existence. `copy-to-project` requires source-read permission, destination-create permission and returns a new destination Article ID.
 
 Revision creation includes the exact `baseRevisionId` loaded by the editor. If a newer revision has already been committed, the API returns a conflict instead of recording false lineage or silently overwriting concurrent work.
+
+Autosave writes include the exact `baseRevisionId` plus an `expectedVersion`. Autosaves are isolated per user and article, retain structured body and editorial form fields, reject stale base/version writes, and are removed for that user when an immutable revision is successfully created.
 
 ### 17.4 AI jobs
 
@@ -2788,6 +2780,7 @@ Each publication event includes `event_id`, `project_id`, `content_id`, `revisio
 ### 18.2 Editorial workflow
 
 - A writer can create, autosave, submit and revise an article.
+- An interrupted writer can recover the newest valid server or browser draft; a stale base or another-tab autosave version produces an explicit reconciliation warning instead of a silent overwrite.
 - Creating an Article under Project A persists a non-null `project_id = A`; no Article can be created without an authorized selected project.
 - Attempts through the API, repository layer or direct migration test to change an Article’s `project_id` are rejected.
 - SQLite rejects a Project-B revision, publication, author, taxonomy, source, media or relationship reference to a Project-A Article.
@@ -2856,7 +2849,7 @@ Production launch requires evidence that:
 - Article ownership tests prove non-null/immutable `project_id`, project-scoped repository signatures and composite foreign-key rejection of cross-project revisions, publications and dependencies.
 - Publication/cache failure tests always converge on the latest committed revision.
 - Preview and draft content cannot enter project-key results, production feed-data or discovery manifests.
-- Representative structured data, canonicals, dates, redirects and locales validate against rendered pages.
+- Representative structured data, canonicals, dates, redirects and English-language metadata validate against rendered pages.
 - Redis loss produces slower service rather than incorrect or unavailable authoritative content.
 - A clean-host backup restoration meets the declared RPO/RTO or has a formally accepted exception.
 - Jobs/outbox delivery is retryable, idempotent, lease-safe and safe when processed out of order.
@@ -2878,9 +2871,34 @@ The product shall be implemented and accepted as one complete delivery. The work
 
 ### Current implementation checkpoint
 
-As of PRD v1.9, the checked-in foundation includes root Taskfile orchestration, Docker Compose services for Nginx, Nuxt, Go API, Go worker, Redis and Mailpit, an `admincli` for migrations/bootstrap/OpenAPI generation, embedded SQLite migrations, a Nuxt admin shell with project-scoped pages, invite/session/member/API-key/audit flows, article/category/author/series workflow slices, scheduled publication worker behavior, project-scoped revision history and comparison, article rollback, audited cross-project article copying with an explicit canonical/adaptation decision through the admin API and admin UI, protected Content API routes and a server-only TypeScript content client. This checkpoint is implementation evidence, not a scope reduction.
+As of PRD v1.15, the checked-in foundation includes root Taskfile orchestration; Docker Compose services for Nginx, Nuxt, Go API, Go worker, Redis and Mailpit; an `admincli` for migrations/bootstrap/OpenAPI generation; embedded SQLite migrations; Fiber v3 with Huma; a Nuxt admin shell with project-scoped pages; invite/session/member/API-key/audit flows; article/category/author/series workflows; a TipTap visual editing foundation on article creation and revision editing; versioned per-user structured article autosaves with browser fallback and conflict recovery; scheduled publication behavior; revision history and comparison; rollback; audited cross-project article copying; preview tokens; source/claim/disclosure/correction workflows; media/B2 processing; AI evidence/jobs/provenance; webhook delivery/replay; Redis cache-aside reads; protected English-only Content API routes with generated Article JSON-LD; production release automation; and a server-only TypeScript client. This checkpoint is implementation evidence, not a scope reduction.
 
-Still-required committed scope includes richer structured editing, autosave conflict handling, media/B2 processing, source/claim/disclosure/correction workflows, AI evidence/jobs/provenance, preview tokens, webhook delivery/replay, Redis cache-aside behavior, full SEO/discovery polish, production release automation, backup/restore automation, observability and the Fiber v3 alignment gate unless an approved architecture decision changes it.
+Still-required committed scope includes specialized semantic editor blocks, explicit collision-checked anchor editing, media/citation pickers and an accessible structured diff, BreadcrumbList output, responsive relationship/media output, advanced taxonomy, guarded domain configuration changes, lifecycle automation, mutation idempotency, backup/restore automation, observability, alerts and recovery runbooks.
+
+### Implementation status snapshot (2026-08-01)
+
+`Fully implemented` means the named bounded requirement slice is present and verified in the checked-in repository. `Partially implemented` means useful production code exists but one or more committed requirements in that area remain. `Not started` means no material implementation evidence was found during the v1.15 alignment review.
+
+| Status | Requirement area | Checked-in evidence or remaining boundary |
+|---|---|---|
+| Fully implemented | HTTP stack and contract foundation | Fiber v3, Huma registration, OpenAPI generation and the server-only TypeScript content client are aligned. |
+| Fully implemented | Password and exact-revision self-approval policy | The 15-character minimum, creator restrictions, owner-only solo-owner opt-in, approval hash and self-approval audit fields are enforced. |
+| Fully implemented | Article autosave and conflict-recovery slice | User/project/article-scoped structured drafts use optimistic versions and immutable base-revision guards; the admin retains browser fallback, restores interruption-safe drafts, warns on stale/another-tab work and clears the actor’s autosave after revision creation. |
+| Fully implemented | TipTap editor foundation slice | Article creation and revision editing use a shared TipTap visual editor for paragraphs, H2–H4, common inline formatting, safe links, lists, quotes, code, tables, figures/images, dividers and undo/redo; it emits versioned structured JSON plus HTML, preserves heading IDs during normal text edits and keeps structured documents in browser/server recovery. |
+| Fully implemented | Published Article JSON-LD slice | The Content API generates one safe `BlogPosting` or `NewsArticle` object from the approved publication snapshot, including canonical identity, normalized dates, separate immutable author objects, publisher organization, approved taxonomy and a safe absolute Open Graph image when present. Publisher-setting updates advance the project content generation, and the TypeScript client exposes typed JSON-LD objects. |
+| Fully implemented | Authors and contributors | Native article creation and revision editing support ordered multi-role contributors; immutable snapshots populate public JSON; approval requires exactly one accountable primary author; cross-project copies require complete remapping to active destination profiles. |
+| Partially implemented | Projects and domains | Project CRUD, settings, memberships and selection exist; guarded domain-change workflows remain. |
+| Partially implemented | Structured editing and autosave | The TipTap visual surface, structured conversion, allowlist rendering, derived fields, heading-ID preservation, local/server recovery and conflict reconciliation exist; specialized semantic blocks, explicit anchor-edit controls, project media/citation pickers and accessible structured diff remain. |
+| Partially implemented | Review, trust and publication | Review states, assignments, comments, quality/source gates, scheduling, publication, rollback, disclosures and corrections exist; full public-field approval coverage and mentions remain. |
+| Partially implemented | Taxonomy, series and discovery | Hierarchical categories, tags, primary category, series routes, redirects and manifests exist; relationship editing, aliases/merges, FTS and quality analysis remain. |
+| Partially implemented | Media and AI | B2 upload/processing and core evidence-backed AI jobs exist; attachment/output completion, malware scanning, expanded tasks, provider fallback, quotas and evaluations remain. |
+| Partially implemented | Content API, Redis and webhooks | Versioned protected English-only JSON routes, previews, validators, generated Article JSON-LD, cache-aside reads and signed retryable webhooks exist; BreadcrumbList, responsive media/relationships and pointer cache semantics remain. |
+| Partially implemented | Release and audit operations | CI, checksummed artifacts, PM2/Nginx deployment, migrations, health checks, rollback and project audit views exist; backup gates, recovery rehearsals and metrics/alerts remain. |
+| Not started | Dedicated editorial templates | Dedicated briefs, prompts, structures and checklists for `standard`, `guide`, `tutorial` and `comparison` remain unimplemented. |
+| Not started | Landing SEO verification | Link checking and reference-renderer contract tests remain unimplemented. |
+| Not started | Lifecycle automation and analytics | Review/expiry reminders, stale reports, retention/hard deletion and provider analytics remain unimplemented. |
+| Not started | HTTP mutation idempotency | `Idempotency-Key` handling and the compatibility/deprecation policy remain unimplemented. |
+| Not started | Backup, disaster recovery and observability | Litestream/B2 replication, verified snapshots/restores, clean-host drills, metrics, dashboards, alerts and declarative infrastructure remain unimplemented. |
 
 ### Foundation workstream
 
@@ -2888,7 +2906,7 @@ Still-required committed scope includes richer structured editing, autosave conf
 - Docker Compose development stack with Nginx, Nuxt, API, worker, Redis, Mailpit, health checks and a persistent local SQLite volume.
 - Nuxt Nitro SSR shell and design system with light/dark themes.
 - SQLite, migrations, `sqlc` and backups.
-- Project tenant/workspace grouping model.
+- Project tenant model.
 - Project-owned Article keys, immutable ownership constraints and cross-project negative test harness.
 - Invite-only accounts, sessions, CSRF, project memberships and project-scoped roles.
 - Audit framework.
@@ -2906,18 +2924,13 @@ Still-required committed scope includes richer structured editing, autosave conf
 - AI outline, section draft, rewrite, critique and metadata assistance.
 - Automated claim/source extraction, quality gates and internal provenance.
 - AI job progress, cancellation, project quotas, budget controls and evaluation.
-- Internal-link and content-cannibalization suggestions.
 - Multiple named project API keys and the protected Content API.
 - Landing revalidation webhook.
 - Redis cache-aside and durable outbox.
 - Versioned article JSON, canonical/JSON-LD inputs, redirect records, discovery manifest and feed data.
-- Search Console/Bing Webmaster data imports.
-- Landing delivery acknowledgements and optional IndexNow status reporting.
 - Advanced stale-content and correction workflows.
-- Multilingual editorial UI and translation workflow.
 - Series, topic clusters and advanced relationship analysis.
 - Configurable editor/reviewer permission refinements.
-- Optional MFA.
 - More advanced provider-side editorial analytics and landing integration diagnostics.
 
 ## 20. Success metrics
@@ -2928,7 +2941,6 @@ Product metrics:
 - Percentage of drafts approved without a second major rewrite.
 - Percentage of published articles with complete author, source and structured-data fields.
 - Stale-content review completion rate.
-- Cross-project duplication/cannibalization warnings resolved before publication.
 - Organic impressions, indexed canonical pages and search conversions by project.
 - Bing/other available citation metrics and referral traffic from answer engines.
 
@@ -2936,7 +2948,7 @@ Reliability metrics:
 
 - Content API availability and latency.
 - Cache hit rate.
-- Publish-to-landing propagation time.
+- Publish-to-API time and webhook dispatch latency.
 - Outbox and webhook failure rate.
 - Backup freshness and restoration success.
 - Authentication abuse and cross-project authorization test results.
@@ -2964,11 +2976,11 @@ Rankings and LLM citations are observed outcomes, not guaranteed product accepta
 | Landing build fails after CMS publish | Propagation status, retries, CDN stale content and manual replay |
 | Same content appears on several domains | Required canonical-original or material-adaptation decision |
 | Media copyright complaint | Source/license/credit metadata and takedown workflow |
-| Admin account takeover | Secure sessions, rate limits, strong passwords, optional MFA and audit |
+| Admin account takeover | Secure sessions, rate limits, strong passwords and audit |
 | Nuxt SSR becomes a second source of business logic | Strict presentation/BFF boundary, no DB credential and contract tests against the Go API |
 | PM2 restarts the wrong or stale release | Dedicated user, versioned ecosystem file, atomic `current` link, health checks and saved-list verification |
 | Release migration leaves application incompatible | Expand-compatible migrations, verified B2 recovery point and previous-release/forward-fix runbook |
-| Provider or infrastructure lock-in | Service interfaces, portable content export and provider-independent AI jobs |
+| Provider or infrastructure lock-in | Service interfaces and provider-independent AI jobs |
 | Unexpected AI spend | Project budgets, estimates, hard caps and alerts |
 | Backup exists but is unusable | Quarterly restore drill and recorded recovery outcome |
 
@@ -2976,14 +2988,12 @@ Rankings and LLM citations are observed outcomes, not guaranteed product accepta
 
 The following require business or deployment input before implementation:
 
-- Whether the initial product supports one workspace containing many projects or multiple independent customer workspaces.
 - Expected number of projects, articles, monthly publishes and Content API requests.
 - Production hosting provider and primary region.
 - Whether Redis is managed or self-hosted.
 - Image-transformation and media-CDN implementation; Backblaze B2 is selected as authoritative media storage.
 - Transactional email provider and sender domain.
 - Initial AI providers, data-retention requirements and monthly budget.
-- Required locales and translation workflow.
 - Default public AI-assistance disclosure policy.
 - Audit, deleted-content and AI-log retention periods.
 - Which landing frameworks need maintained reference adapters or examples.
@@ -3075,5 +3085,4 @@ Unless an open decision changes the constraints, the implementation should proce
 - [Google spam policies](https://developers.google.com/search/docs/essentials/spam-policies)
 - [Google Article structured data](https://developers.google.com/search/docs/appearance/structured-data/article)
 - [Google sitemap guidance](https://developers.google.com/search/docs/crawling-indexing/sitemaps/overview)
-- [IndexNow documentation](https://www.indexnow.org/documentation)
 - [Bing AI Performance announcement](https://blogs.bing.com/webmaster/February-2026/Introducing-AI-Performance-in-Bing-Webmaster-Tools-Public-Preview)

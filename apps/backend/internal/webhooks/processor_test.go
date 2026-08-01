@@ -264,10 +264,8 @@ func newWebhookTestStore(t *testing.T) (*store.Store, *sql.DB, string) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`
-		INSERT INTO workspaces(id, slug, name)
-		VALUES ('workspace', 'workspace', 'Workspace');
-		INSERT INTO projects(id, workspace_id, slug, name, public_project_key)
-		VALUES ('project', 'workspace', 'project', 'Project', 'public-project');
+		INSERT INTO projects(id, slug, name, public_project_key)
+		VALUES ('project', 'project', 'Project', 'public-project');
 		INSERT INTO users(id, email_normalized, status)
 		VALUES ('owner', 'owner@example.test', 'active');
 		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)

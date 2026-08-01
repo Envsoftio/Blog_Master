@@ -1,11 +1,3 @@
-CREATE TABLE workspaces (
-    id TEXT PRIMARY KEY,
-    slug TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
--- statement
 CREATE TABLE users (
     id TEXT PRIMARY KEY,
     email_normalized TEXT NOT NULL UNIQUE,
@@ -19,8 +11,7 @@ CREATE TABLE users (
 -- statement
 CREATE TABLE projects (
     id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    slug TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended','archived','pending_deletion')),
     public_project_key TEXT NOT NULL UNIQUE,
@@ -45,9 +36,7 @@ CREATE TABLE projects (
     created_by TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    archived_at TEXT,
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE RESTRICT,
-    UNIQUE(workspace_id, slug)
+    archived_at TEXT
 );
 -- statement
 CREATE TABLE project_memberships (
@@ -885,8 +874,6 @@ CREATE TABLE audit_events (
     metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
--- statement
-CREATE INDEX idx_projects_workspace ON projects(workspace_id, slug);
 -- statement
 CREATE INDEX idx_memberships_user ON project_memberships(user_id, status);
 -- statement

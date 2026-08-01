@@ -23,14 +23,28 @@ func testDatabase(t *testing.T) *sql.DB {
 func seedProjects(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec(`
-		INSERT INTO workspaces(id, slug, name) VALUES ('workspace', 'workspace', 'Workspace');
-		INSERT INTO projects(id, workspace_id, slug, name, public_project_key)
+		INSERT INTO projects(id, slug, name, public_project_key)
 		VALUES
-		  ('project-a', 'workspace', 'a', 'Project A', 'public-a'),
-		  ('project-b', 'workspace', 'b', 'Project B', 'public-b');
+		  ('project-a', 'a', 'Project A', 'public-a'),
+		  ('project-b', 'b', 'Project B', 'public-b');
 	`); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestProjectsAreTopLevelTenants(t *testing.T) {
+	db := testDatabase(t)
+	var workspaceTables int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'workspaces'`).Scan(&workspaceTables); err != nil {
+		t.Fatal(err)
+	}
+	if workspaceTables != 0 {
+		t.Fatal("workspace persistence must not exist")
+	}
+	if _, err := db.Exec(`INSERT INTO projects(id, slug, name, public_project_key) VALUES ('one', 'shared', 'One', 'public-one')`); err != nil {
+		t.Fatal(err)
+	}
+	assertSQLFails(t, db, `INSERT INTO projects(id, slug, name, public_project_key) VALUES ('two', 'shared', 'Two', 'public-two')`, "unique")
 }
 
 func TestTaxonomyHierarchyGuardsInsertAndMove(t *testing.T) {

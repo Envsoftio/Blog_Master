@@ -33,7 +33,7 @@
 
       <nav class="app-navigation" aria-label="Primary navigation" @click="mobileOpen = false">
         <div class="nav-group">
-          <p class="nav-group__label">Workspace</p>
+          <p class="nav-group__label">Overview</p>
           <NuxtLink class="nav-item" :class="{ 'is-active': route.path === '/dashboard' }" to="/dashboard">
             <LayoutDashboard :size="18" />
             <span>Dashboard</span>
@@ -41,10 +41,6 @@
           <NuxtLink class="nav-item" :class="{ 'is-active': route.path === '/projects' }" to="/projects">
             <PanelsTopLeft :size="18" />
             <span>Projects</span>
-          </NuxtLink>
-          <NuxtLink class="nav-item" :class="{ 'is-active': route.path === '/workspaces' }" to="/workspaces">
-            <Building2 :size="18" />
-            <span>Workspaces</span>
           </NuxtLink>
         </div>
 
@@ -124,7 +120,7 @@
           <span class="sidebar-user__avatar">{{ userInitials }}</span>
           <span class="sidebar-user__copy">
             <strong>{{ currentUser?.email || 'Signed in' }}</strong>
-            <small>{{ currentProject?.role ? labelize(currentProject.role) : 'Workspace access' }}</small>
+            <small>{{ currentProject?.role ? labelize(currentProject.role) : 'Project access' }}</small>
           </span>
           <button class="icon-button" type="button" title="Log out" aria-label="Log out" @click="logout">
             <LogOut :size="17" />
@@ -178,7 +174,6 @@
 <script setup lang="ts">
 import {
   Activity,
-  Building2,
   CalendarDays,
   ChevronsUpDown,
   Files,
@@ -237,7 +232,6 @@ const section = computed(() => {
 const pageTitle = computed(() => {
   if (route.path === '/dashboard') return 'Dashboard'
   if (route.path === '/projects') return 'Projects'
-  if (route.path === '/workspaces') return 'Workspaces'
   const titles: Record<string, string> = {
     articles: route.path.endsWith('/create') ? 'Create article' : route.params.articleId ? 'Article editor' : 'Content',
     calendar: 'Editorial calendar',
@@ -258,7 +252,7 @@ const pageTitle = computed(() => {
   return titles[section.value] || 'Editorial'
 })
 
-const eyebrow = computed(() => currentProject.value?.name || (['/projects', '/workspaces'].includes(route.path) ? 'Workspace' : 'Overview'))
+const eyebrow = computed(() => currentProject.value?.name || 'Overview')
 const themeOptions = [
   { value: 'system', label: 'System', icon: Laptop },
   { value: 'light', label: 'Light', icon: Sun },
