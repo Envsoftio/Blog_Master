@@ -62,7 +62,7 @@ const publishedCorrectionsJSON = `
 `
 
 const publishedPostColumns = `
-	ci.id, ci.article_type, pp.slug, pp.locale, cr.revision_number, cr.title,
+	ci.id, ci.article_type, pp.slug, cr.revision_number, cr.title,
 	COALESCE(cr.deck, ''), COALESCE(cr.excerpt, ''), COALESCE(cr.short_answer, ''),
 	cr.body_document_json, cr.sanitized_html, cr.table_of_contents_json,
 	cr.seo_snapshot_json, cr.taxonomy_snapshot_json, cr.author_snapshot_json,
@@ -76,7 +76,7 @@ const publishedPostColumns = `
 
 func (s *Store) ListPublishedPosts(
 	ctx context.Context,
-	projectID, locale, category, tag, author, articleType, seriesSlug string,
+	projectID, category, tag, author, articleType, seriesSlug string,
 	exactCategory bool,
 	publishedFrom, publishedTo string,
 	cursor PublishedCursor,
@@ -102,7 +102,6 @@ func (s *Store) ListPublishedPosts(
 		  ON cr.project_id = pp.project_id AND cr.content_id = pp.content_id AND cr.id = pp.published_revision_id
 		WHERE pp.project_id = ?
 		  AND pp.publication_state = 'published'
-		  AND (? = '' OR pp.locale = ?)
 		  AND (? = '' OR ci.article_type = ?)
 		  AND (? = '' OR EXISTS (
 		      SELECT 1
@@ -156,7 +155,6 @@ func (s *Store) ListPublishedPosts(
 	`,
 		projectID, category, projectID,
 		projectID,
-		locale, locale,
 		articleType, articleType,
 		category, exactCategory, category, exactCategory,
 		tag, tag,
@@ -183,7 +181,7 @@ func (s *Store) ListPublishedPosts(
 	return posts, rows.Err()
 }
 
-func (s *Store) GetPublishedPostBySlug(ctx context.Context, projectID, slug, locale string) (PublishedPost, error) {
+func (s *Store) GetPublishedPostBySlug(ctx context.Context, projectID, slug string) (PublishedPost, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+publishedPostColumns+`
 		FROM project_publications pp
@@ -194,13 +192,12 @@ func (s *Store) GetPublishedPostBySlug(ctx context.Context, projectID, slug, loc
 		  ON cr.project_id = pp.project_id AND cr.content_id = pp.content_id AND cr.id = pp.published_revision_id
 		WHERE pp.project_id = ?
 		  AND pp.slug = ?
-		  AND pp.locale = ?
 		  AND pp.publication_state = 'published'
-	`, projectID, slug, locale)
+	`, projectID, slug)
 	return scanPost(row, nil)
 }
 
-func (s *Store) GetPublishedPostByID(ctx context.Context, projectID, contentID, locale string) (PublishedPost, error) {
+func (s *Store) GetPublishedPostByID(ctx context.Context, projectID, contentID string) (PublishedPost, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT `+publishedPostColumns+`
 		FROM project_publications pp
@@ -211,18 +208,17 @@ func (s *Store) GetPublishedPostByID(ctx context.Context, projectID, contentID, 
 		  ON cr.project_id = pp.project_id AND cr.content_id = pp.content_id AND cr.id = pp.published_revision_id
 		WHERE pp.project_id = ?
 		  AND pp.content_id = ?
-		  AND pp.locale = ?
 		  AND pp.publication_state = 'published'
-	`, projectID, contentID, locale)
+	`, projectID, contentID)
 	return scanPost(row, nil)
 }
 
-func (s *Store) ListRelatedPosts(ctx context.Context, projectID, slug, locale string, limit int) ([]RelatedPost, error) {
+func (s *Store) ListRelatedPosts(ctx context.Context, projectID, slug string, limit int) ([]RelatedPost, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		WITH source AS (
-			SELECT content_id, locale
+			SELECT content_id
 			FROM project_publications
-			WHERE project_id = ? AND slug = ? AND locale = ? AND publication_state = 'published'
+			WHERE project_id = ? AND slug = ? AND publication_state = 'published'
 		)
 		SELECT `+publishedPostColumns+`, rel.origin
 		FROM content_relationships rel
@@ -230,7 +226,6 @@ func (s *Store) ListRelatedPosts(ctx context.Context, projectID, slug, locale st
 		JOIN project_publications pp
 		  ON pp.project_id = rel.project_id
 		 AND pp.content_id = rel.target_content_id
-		 AND pp.locale = source.locale
 		JOIN content_items ci
 		  ON ci.project_id = pp.project_id AND ci.id = pp.content_id
 		JOIN projects p ON p.id = pp.project_id
@@ -241,7 +236,7 @@ func (s *Store) ListRelatedPosts(ctx context.Context, projectID, slug, locale st
 		  AND pp.publication_state = 'published'
 		ORDER BY rel.position ASC
 		LIMIT ?
-	`, projectID, slug, locale, projectID, limit)
+	`, projectID, slug, projectID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +263,7 @@ func scanPost(row rowScanner, relationshipOrigin *string) (PublishedPost, error)
 	var bodyJSON, tocJSON, seoJSON, taxonomyJSON, authorsJSON, contributorsJSON string
 	var sourcesJSON, claimsJSON, mediaJSON, disclosuresJSON, correctionsJSON string
 	dest := []any{
-		&post.ID, &post.ArticleType, &post.Slug, &post.Locale, &post.Revision,
+		&post.ID, &post.ArticleType, &post.Slug, &post.Revision,
 		&post.Title, &post.Deck, &post.Excerpt, &post.ShortAnswer,
 		&bodyJSON, &post.Content.HTML, &tocJSON,
 		&seoJSON, &taxonomyJSON, &authorsJSON, &contributorsJSON,
@@ -294,7 +289,6 @@ func scanPost(row rowScanner, relationshipOrigin *string) (PublishedPost, error)
 	post.SEO.Index = !strings.Contains(strings.ToLower(post.SEO.Robots), "noindex")
 	post.SEO.OpenGraph = mapValue(seo, "openGraph", map[string]any{})
 	post.SEO.StructuredData = []any{}
-	post.SEO.Hreflang = mapValue(seo, "hreflang", []any{})
 
 	post.Taxonomy = PublishedTaxonomy{
 		Categories: []TaxonomyTerm{},
@@ -578,17 +572,16 @@ func (s *Store) ListChanges(ctx context.Context, projectID string, cursor Change
 	return changes, rows.Err()
 }
 
-func (s *Store) ListDiscovery(ctx context.Context, projectID, locale string) ([]DiscoveryEntry, error) {
+func (s *Store) ListDiscovery(ctx context.Context, projectID string) ([]DiscoveryEntry, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT content_id, locale, canonical_url,
+		SELECT content_id, canonical_url,
 		       COALESCE(materially_modified_at, first_published_at, updated_at)
 		FROM project_publications
 		WHERE project_id = ?
 		  AND publication_state = 'published'
 		  AND robots_directive NOT LIKE '%noindex%'
-		  AND (? = '' OR locale = ?)
 		ORDER BY canonical_url
-	`, projectID, locale, locale)
+	`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +590,7 @@ func (s *Store) ListDiscovery(ctx context.Context, projectID, locale string) ([]
 	var entries []DiscoveryEntry
 	for rows.Next() {
 		var entry DiscoveryEntry
-		if err := rows.Scan(&entry.ID, &entry.Locale, &entry.CanonicalURL, &entry.LastModified); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.CanonicalURL, &entry.LastModified); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)

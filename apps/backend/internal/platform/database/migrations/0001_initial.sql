@@ -27,8 +27,6 @@ CREATE TABLE projects (
     primary_domain TEXT,
     verified_domains_json TEXT NOT NULL DEFAULT '[]',
     blog_base_path TEXT NOT NULL DEFAULT '/blog',
-    default_locale TEXT NOT NULL DEFAULT 'en',
-    supported_locales TEXT NOT NULL DEFAULT '["en"]',
     timezone TEXT NOT NULL DEFAULT 'UTC',
     publisher_name TEXT,
     publisher_logo_asset_id TEXT,
@@ -305,7 +303,6 @@ CREATE TABLE content_items (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
     article_type TEXT NOT NULL CHECK(article_type IN ('standard','guide','tutorial','comparison','case_study','research','listicle','news_update','opinion','reference','glossary','release_note')),
-    translation_group_id TEXT,
     origin_project_id TEXT,
     origin_content_id TEXT,
     created_by TEXT NOT NULL,
@@ -342,7 +339,6 @@ CREATE TABLE content_revisions (
     table_of_contents_json TEXT NOT NULL DEFAULT '[]',
     word_count INTEGER NOT NULL DEFAULT 0,
     reading_time_seconds INTEGER NOT NULL DEFAULT 0,
-    locale TEXT NOT NULL DEFAULT 'en',
     author_snapshot_json TEXT NOT NULL DEFAULT '[]',
     contributor_snapshot_json TEXT NOT NULL DEFAULT '[]',
     taxonomy_snapshot_json TEXT NOT NULL DEFAULT '{}',
@@ -369,7 +365,6 @@ CREATE TABLE project_publications (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
     content_id TEXT NOT NULL,
-    locale TEXT NOT NULL,
     slug TEXT NOT NULL,
     canonical_url TEXT NOT NULL,
     canonical_policy TEXT NOT NULL DEFAULT 'self',
@@ -393,8 +388,8 @@ CREATE TABLE project_publications (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id, content_id) REFERENCES content_items(project_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (project_id, content_id, published_revision_id) REFERENCES content_revisions(project_id, content_id, id),
-    UNIQUE(project_id, content_id, locale),
-    UNIQUE(project_id, locale, slug)
+    UNIQUE(project_id, content_id),
+    UNIQUE(project_id, slug)
 );
 -- statement
 CREATE TABLE article_taxonomy (
@@ -901,7 +896,7 @@ CREATE INDEX idx_content_items_project_created ON content_items(project_id, crea
 -- statement
 CREATE INDEX idx_revisions_content ON content_revisions(project_id, content_id, revision_number);
 -- statement
-CREATE INDEX idx_publications_project_slug ON project_publications(project_id, locale, slug, publication_state);
+CREATE INDEX idx_publications_project_slug ON project_publications(project_id, slug, publication_state);
 -- statement
 CREATE INDEX idx_taxonomy_tree ON taxonomy_terms(project_id, type, parent_id, slug);
 -- statement

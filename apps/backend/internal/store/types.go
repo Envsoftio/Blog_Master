@@ -4,7 +4,6 @@ type PublishedPost struct {
 	ID            string            `json:"id"`
 	ArticleType   string            `json:"articleType"`
 	Slug          string            `json:"slug"`
-	Locale        string            `json:"locale"`
 	Revision      int64             `json:"revision"`
 	Title         string            `json:"title"`
 	Deck          string            `json:"deck,omitempty"`
@@ -51,7 +50,6 @@ type PublishedSEO struct {
 	Index          bool   `json:"index"`
 	OpenGraph      any    `json:"openGraph"`
 	StructuredData any    `json:"structuredData"`
-	Hreflang       any    `json:"hreflang"`
 }
 
 type TaxonomyTerm struct {
@@ -123,7 +121,6 @@ type ChangeRecord struct {
 
 type DiscoveryEntry struct {
 	ID           string `json:"id"`
-	Locale       string `json:"locale"`
 	CanonicalURL string `json:"canonicalUrl"`
 	LastModified string `json:"lastModified"`
 }

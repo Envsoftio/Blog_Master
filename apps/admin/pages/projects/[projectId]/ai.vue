@@ -316,10 +316,6 @@
           <input v-model.trim="voiceForm.humor">
         </label>
         <label class="field">
-          <span>Locale</span>
-          <input v-model.trim="voiceForm.locale" required>
-        </label>
-        <label class="field">
           <span>Sentence preferences</span>
           <textarea v-model.trim="voiceForm.sentencePreferences" required></textarea>
         </label>
@@ -573,7 +569,6 @@ const voiceForm = reactive({
   conclusionRules: '',
   callToActionRules: '',
   regionalSpelling: '',
-  locale: '',
   writingExamples: Array.from({ length: 3 }, () => ({ title: '', excerpt: '' }))
 })
 const evidenceForm = reactive({
@@ -634,7 +629,6 @@ const canSaveVoice = computed(() =>
   voiceForm.conclusionRules.length > 0 &&
   voiceForm.callToActionRules.length > 0 &&
   voiceForm.regionalSpelling.length > 0 &&
-  voiceForm.locale.length > 0 &&
   voiceForm.writingExamples.every(example => example.title.length > 0 && example.excerpt.length >= 40)
 )
 const canCreateEvidence = computed(() =>
@@ -711,8 +705,6 @@ async function loadWorkspace() {
     voiceProfile.value = voiceResponse?.data || null
     if (voiceProfile.value) {
       applyVoiceProfile(voiceProfile.value.profile)
-    } else if (!voiceForm.locale) {
-      voiceForm.locale = project.value.defaultLocale
     }
     serviceAvailable.value = true
   } catch (error) {
@@ -789,8 +781,7 @@ async function saveVoiceProfile() {
       introductionRules: voiceForm.introductionRules,
       conclusionRules: voiceForm.conclusionRules,
       callToActionRules: voiceForm.callToActionRules,
-      regionalSpelling: voiceForm.regionalSpelling,
-      locale: voiceForm.locale
+      regionalSpelling: voiceForm.regionalSpelling
     }
     const response = await api.createVoiceProfile(projectID.value, profile)
     voiceProfile.value = response.data
@@ -875,7 +866,6 @@ function applyVoiceProfile(profile: VoiceProfileDocument) {
   voiceForm.conclusionRules = profile.conclusionRules
   voiceForm.callToActionRules = profile.callToActionRules
   voiceForm.regionalSpelling = profile.regionalSpelling
-  voiceForm.locale = profile.locale
   voiceForm.writingExamples = profile.writingExamples.map(example => ({ ...example }))
   while (voiceForm.writingExamples.length < 3) {
     voiceForm.writingExamples.push({ title: '', excerpt: '' })

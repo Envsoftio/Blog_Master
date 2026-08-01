@@ -260,7 +260,7 @@ func assertRateLimitStatus(t *testing.T, app *fiber.App, key string, expected in
 
 func getContentPost(t *testing.T, server *Server, projectID, slug, ifNoneMatch string) *http.Response {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodGet, "/content/v1/posts/"+slug+"?locale=en", nil)
+	request := httptest.NewRequest(http.MethodGet, "/content/v1/posts/"+slug, nil)
 	request.Header.Set("X-Dev-Project-ID", projectID)
 	if ifNoneMatch != "" {
 		request.Header.Set("If-None-Match", ifNoneMatch)

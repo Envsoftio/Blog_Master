@@ -19,8 +19,6 @@ components:
           type: string
         latestRevision:
           $ref: "#/components/schemas/AdminRevision"
-        locale:
-          type: string
         originArticleId:
           type: string
         originProjectId:
@@ -42,7 +40,6 @@ components:
         - projectId
         - articleType
         - slug
-        - locale
         - title
         - editorialState
         - publicationState
@@ -66,8 +63,6 @@ components:
           type: string
         id:
           type: string
-        locale:
-          type: string
         projectId:
           type: string
         revisionNumber:
@@ -83,7 +78,6 @@ components:
         - articleId
         - revisionNumber
         - title
-        - locale
         - editorialState
         - contentHash
         - createdAt
@@ -117,8 +111,6 @@ components:
           type: string
         id:
           type: string
-        locale:
-          type: string
         markdownExport:
           type: string
         mediaSnapshot: {}
@@ -126,10 +118,8 @@ components:
           type: string
         projectId:
           type: string
-        publishedLocales:
-          items:
-            type: string
-          type: array
+        published:
+          type: boolean
         readingTimeSeconds:
           format: int64
           type: integer
@@ -168,13 +158,12 @@ components:
         - markdownExport
         - wordCount
         - readingTimeSeconds
-        - publishedLocales
+        - published
         - id
         - projectId
         - articleId
         - revisionNumber
         - title
-        - locale
         - editorialState
         - contentHash
         - createdAt
@@ -198,14 +187,10 @@ components:
           type: string
         id:
           type: string
-        locale:
-          type: string
         projectId:
           type: string
-        publishedLocales:
-          items:
-            type: string
-          type: array
+        published:
+          type: boolean
         revisionNumber:
           format: int64
           type: integer
@@ -214,13 +199,12 @@ components:
         title:
           type: string
       required:
-        - publishedLocales
+        - published
         - id
         - projectId
         - articleId
         - revisionNumber
         - title
-        - locale
         - editorialState
         - contentHash
         - createdAt
@@ -353,8 +337,6 @@ components:
           format: uri
           type: string
         destinationProjectId:
-          type: string
-        locale:
           type: string
         primaryCategoryId:
           type: string
@@ -744,8 +726,6 @@ components:
             - https://example.com/schemas/RollbackRequest.json
           format: uri
           readOnly: true
-          type: string
-        locale:
           type: string
         revisionId:
           type: string
@@ -2738,7 +2718,7 @@ paths:
         - Administration
   /api/v1/projects/{projectID}/articles/{articleID}/rollback:
     post:
-      description: Publishes a previously approved revision for the selected locale while preserving publication routing metadata and revision history.
+      description: Publishes a previously approved revision while preserving publication routing metadata and revision history.
       operationId: rollbackArticle
       parameters:
         - description: Project identifier
@@ -2764,7 +2744,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/RollbackRequest"
-        description: Approved revision and optional publication locale to restore.
+        description: Approved revision to restore.
         required: true
       responses:
         "200":

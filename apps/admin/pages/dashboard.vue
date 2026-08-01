@@ -75,7 +75,7 @@
                 <span class="content-title__icon"><FileText :size="15" /></span>
                 <span>
                   <strong>{{ item.article.title }}</strong>
-                  <small>{{ labelize(item.article.articleType) }} · {{ item.article.locale.toUpperCase() }}</small>
+                  <small>{{ labelize(item.article.articleType) }}</small>
                 </span>
               </span>
               <span>{{ item.project.name }}</span>
@@ -98,7 +98,6 @@
             <template v-if="selectedProject">
               <dl class="project-details">
                 <div><dt>Domain</dt><dd>{{ selectedProject.primaryDomain || 'Not configured' }}</dd></div>
-                <div><dt>Locale</dt><dd>{{ selectedProject.defaultLocale.toUpperCase() }}</dd></div>
                 <div><dt>Role</dt><dd>{{ labelize(selectedProject.role) }}</dd></div>
                 <div><dt>Status</dt><dd><span class="status-pill" :class="{ 'status-pill--success': selectedProject.status === 'active' }">{{ selectedProject.status }}</span></dd></div>
               </dl>

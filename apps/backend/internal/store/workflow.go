@@ -66,7 +66,6 @@ type AdminRevision struct {
 	Deck           string `json:"deck,omitempty"`
 	Excerpt        string `json:"excerpt,omitempty"`
 	ShortAnswer    string `json:"shortAnswer,omitempty"`
-	Locale         string `json:"locale"`
 	EditorialState string `json:"editorialState"`
 	ContentHash    string `json:"contentHash"`
 	CreatedAt      string `json:"createdAt"`
@@ -74,8 +73,8 @@ type AdminRevision struct {
 
 type AdminRevisionSummary struct {
 	AdminRevision
-	BaseRevisionID   string   `json:"baseRevisionId,omitempty"`
-	PublishedLocales []string `json:"publishedLocales" nullable:"false"`
+	BaseRevisionID string `json:"baseRevisionId,omitempty"`
+	Published      bool   `json:"published"`
 }
 
 type AdminRevisionDetail struct {
@@ -108,7 +107,6 @@ type AdminArticle struct {
 	OriginArticleID  string         `json:"originArticleId,omitempty"`
 	ArticleType      string         `json:"articleType"`
 	Slug             string         `json:"slug"`
-	Locale           string         `json:"locale"`
 	Title            string         `json:"title"`
 	EditorialState   string         `json:"editorialState"`
 	PublicationState string         `json:"publicationState"`
@@ -132,7 +130,6 @@ type ArticleInput struct {
 	ArticleType       string
 	Title             string
 	Slug              string
-	Locale            string
 	PrimaryCategoryID string
 	Contributors      []RevisionContributorInput
 	Deck              string
@@ -174,14 +171,12 @@ type SEOInput struct {
 type PublicationInput struct {
 	RevisionID      string
 	Slug            string
-	Locale          string
 	CanonicalURL    string
 	ScheduledForUTC string
 }
 
 type RollbackInput struct {
 	RevisionID string
-	Locale     string
 }
 
 type CopyArticleInput struct {
@@ -189,7 +184,6 @@ type CopyArticleInput struct {
 	SourceRevisionID     string
 	PrimaryCategoryID    string
 	Slug                 string
-	Locale               string
 	CanonicalDecision    string
 	CanonicalOriginalURL string
 }
@@ -222,7 +216,6 @@ type workflowProject struct {
 	Status        string
 	PrimaryDomain string
 	BlogBasePath  string
-	DefaultLocale string
 }
 
 func (s *Store) ListArticlesForUser(ctx context.Context, userID, projectID, cursor string, limit int, filter ArticleListFilter) ([]AdminArticle, error) {
@@ -249,7 +242,6 @@ func (s *Store) ListArticlesForUser(ctx context.Context, userID, projectID, curs
 		LEFT JOIN project_publications publication
 		  ON publication.project_id = item.project_id
 		 AND publication.content_id = item.id
-		 AND publication.locale = revision.locale
 		WHERE item.project_id = ?
 		  AND (? = 1 OR item.archived_at IS NULL)
 		  AND (? = '' OR item.id > ?)
@@ -333,7 +325,6 @@ func (s *Store) GetArticleForUser(ctx context.Context, userID, projectID, articl
 		LEFT JOIN project_publications publication
 		  ON publication.project_id = item.project_id
 		 AND publication.content_id = item.id
-		 AND publication.locale = revision.locale
 		WHERE item.project_id = ?
 		  AND item.id = ?
 		  AND item.archived_at IS NULL
@@ -362,9 +353,6 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 	}
 	if project.Status != "active" {
 		return AdminArticle{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
-	}
-	if input.Locale == "" {
-		input.Locale = project.DefaultLocale
 	}
 	category, err := loadCategory(ctx, tx, projectID, input.PrimaryCategoryID)
 	if err != nil {
@@ -426,14 +414,14 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 		INSERT INTO content_revisions(
 		  id, project_id, content_id, revision_number, created_by_type, created_by_user_id,
 		  title, deck, excerpt, short_answer, body_document_json, sanitized_html, plain_text,
-		  markdown_export, table_of_contents_json, word_count, reading_time_seconds, locale,
+		  markdown_export, table_of_contents_json, word_count, reading_time_seconds,
 		  author_snapshot_json, contributor_snapshot_json, taxonomy_snapshot_json,
 		  seo_snapshot_json, content_hash, editorial_state
-		) VALUES (?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
+		) VALUES (?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
 	`, revisionID, projectID, articleID, actorUserID, input.Title, nullIfEmpty(input.Deck),
 		nullIfEmpty(input.Excerpt), nullIfEmpty(input.ShortAnswer), rendered.DocumentJSON, rendered.HTML, rendered.PlainText,
 		rendered.Markdown, rendered.TableOfContents, wordCount(rendered.PlainText), readingTimeSeconds(rendered.PlainText),
-		input.Locale, attribution.AuthorSnapshotJSON, attribution.ContributorSnapshotJSON,
+		attribution.AuthorSnapshotJSON, attribution.ContributorSnapshotJSON,
 		taxonomyJSON, seoJSON, contentHash); err != nil {
 		return AdminArticle{}, err
 	}
@@ -442,9 +430,9 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO project_publications(
-		  id, project_id, content_id, locale, slug, canonical_url, publication_state
-		) VALUES (?, ?, ?, ?, ?, ?, 'unpublished')
-	`, publicationID, projectID, articleID, input.Locale, input.Slug, canonicalURL(project, input.Slug)); err != nil {
+		  id, project_id, content_id, slug, canonical_url, publication_state
+		) VALUES (?, ?, ?, ?, ?, 'unpublished')
+	`, publicationID, projectID, articleID, input.Slug, canonicalURL(project, input.Slug)); err != nil {
 		return AdminArticle{}, err
 	}
 	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "content.create", "content", articleID, "success", nil); err != nil {
@@ -551,16 +539,14 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 		INSERT INTO content_revisions(
 		  id, project_id, content_id, revision_number, base_revision_id, created_by_type, created_by_user_id,
 		  title, deck, excerpt, short_answer, body_document_json, sanitized_html, plain_text,
-		  markdown_export, table_of_contents_json, word_count, reading_time_seconds, locale,
+		  markdown_export, table_of_contents_json, word_count, reading_time_seconds,
 		  author_snapshot_json, contributor_snapshot_json, taxonomy_snapshot_json,
 		  seo_snapshot_json, content_hash, editorial_state
-		) VALUES (?, ?, ?, ?, ?, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((
-		  SELECT locale FROM project_publications WHERE project_id = ? AND content_id = ? LIMIT 1
-		), 'en'), ?, ?, ?, ?, ?, 'draft')
+		) VALUES (?, ?, ?, ?, ?, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
 	`, revisionID, projectID, articleID, nextNumber, input.BaseRevisionID, actorUserID, input.Title, nullIfEmpty(input.Deck),
 		nullIfEmpty(input.Excerpt), nullIfEmpty(input.ShortAnswer), rendered.DocumentJSON, rendered.HTML, rendered.PlainText,
 		rendered.Markdown, rendered.TableOfContents, wordCount(rendered.PlainText), readingTimeSeconds(rendered.PlainText),
-		projectID, articleID, attribution.AuthorSnapshotJSON, attribution.ContributorSnapshotJSON,
+		attribution.AuthorSnapshotJSON, attribution.ContributorSnapshotJSON,
 		taxonomyJSON, seoJSON, contentHash); err != nil {
 		return AdminRevision{}, err
 	}
@@ -615,9 +601,6 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 	}
 	if destinationProject.Status != "active" {
 		return AdminArticle{}, fmt.Errorf("%w: destination project must be active", ErrInvalidWorkflow)
-	}
-	if input.Locale == "" {
-		input.Locale = destinationProject.DefaultLocale
 	}
 	destinationCategory, err := loadCategory(ctx, tx, input.DestinationProjectID, input.PrimaryCategoryID)
 	if err != nil {
@@ -688,17 +671,17 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 		  id, project_id, content_id, revision_number, created_by_type, created_by_user_id,
 		  title, alternate_title, deck, excerpt, short_answer, body_document_json,
 		  sanitized_html, plain_text, markdown_export, table_of_contents_json,
-		  word_count, reading_time_seconds, locale, taxonomy_snapshot_json, seo_snapshot_json,
+		  word_count, reading_time_seconds, taxonomy_snapshot_json, seo_snapshot_json,
 		  change_summary, content_hash, ai_assistance_level, ai_provenance_summary_json,
 		  editorial_state
 		) VALUES (
-		  ?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft'
+		  ?, ?, ?, 1, 'human', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft'
 		)
 	`, revisionID, input.DestinationProjectID, articleID, actorUserID,
 		source.Title, nullIfEmpty(source.AlternateTitle), nullIfEmpty(source.Deck),
 		nullIfEmpty(source.Excerpt), nullIfEmpty(source.ShortAnswer), source.BodyDocumentJSON,
 		source.SanitizedHTML, source.PlainText, source.MarkdownExport, source.TableOfContentsJSON,
-		source.WordCount, source.ReadingTimeSeconds, input.Locale, taxonomyJSON, seoJSON,
+		source.WordCount, source.ReadingTimeSeconds, taxonomyJSON, seoJSON,
 		fmt.Sprintf("Copied from %s/%s revision %s", sourceProjectID, sourceArticleID, input.SourceRevisionID),
 		contentHash, source.AIAssistanceLevel, source.AIProvenanceSummaryJSON,
 	); err != nil {
@@ -706,9 +689,9 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO project_publications(
-		  id, project_id, content_id, locale, slug, canonical_url, canonical_policy, publication_state
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 'unpublished')
-	`, publicationID, input.DestinationProjectID, articleID, input.Locale, input.Slug,
+		  id, project_id, content_id, slug, canonical_url, canonical_policy, publication_state
+		) VALUES (?, ?, ?, ?, ?, ?, 'unpublished')
+	`, publicationID, input.DestinationProjectID, articleID, input.Slug,
 		destinationCanonicalURL, input.CanonicalDecision); err != nil {
 		return AdminArticle{}, err
 	}
@@ -925,7 +908,6 @@ func (s *Store) RollbackArticle(ctx context.Context, actorUserID, projectID, art
 		return AdminArticle{}, err
 	}
 	input.RevisionID = strings.TrimSpace(input.RevisionID)
-	input.Locale = strings.TrimSpace(input.Locale)
 	if input.RevisionID == "" {
 		return AdminArticle{}, fmt.Errorf("%w: revisionId is required", ErrValidation)
 	}
@@ -957,14 +939,7 @@ func (s *Store) RollbackArticle(ctx context.Context, actorUserID, projectID, art
 		return AdminArticle{}, err
 	}
 
-	locale := input.Locale
-	if locale == "" {
-		locale = revision.Locale
-	}
-	if locale == "" {
-		locale = project.DefaultLocale
-	}
-	publication, err := loadPublicationForLocale(ctx, tx, projectID, articleID, locale)
+	publication, err := loadPublication(ctx, tx, projectID, articleID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AdminArticle{}, fmt.Errorf("%w: article must be published before rollback", ErrInvalidWorkflow)
 	}
@@ -984,7 +959,6 @@ func (s *Store) RollbackArticle(ctx context.Context, actorUserID, projectID, art
 		projectID,
 		articleID,
 		revision.ID,
-		locale,
 		publication.Slug,
 		publication.CanonicalURL,
 		"",
@@ -993,7 +967,7 @@ func (s *Store) RollbackArticle(ctx context.Context, actorUserID, projectID, art
 	if err != nil {
 		return AdminArticle{}, err
 	}
-	version, err := loadPublicationVersion(ctx, tx, projectID, articleID, locale)
+	version, err := loadPublicationVersion(ctx, tx, projectID, articleID)
 	if err != nil {
 		return AdminArticle{}, err
 	}
@@ -1215,7 +1189,7 @@ func (s *Store) GetRevisionForUser(ctx context.Context, userID, projectID, revis
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, project_id, content_id, revision_number, title,
 		       COALESCE(deck, ''), COALESCE(excerpt, ''), COALESCE(short_answer, ''),
-		       locale, editorial_state, content_hash, created_at
+		       editorial_state, content_hash, created_at
 		FROM content_revisions
 		WHERE project_id = ? AND id = ?
 	`, projectID, revisionID)
@@ -1256,20 +1230,15 @@ func (s *Store) ListRevisionHistoryForUser(ctx context.Context, userID, projectI
 	query := `
 		SELECT revision.id, revision.project_id, revision.content_id, revision.revision_number,
 		       revision.title, COALESCE(revision.deck, ''), COALESCE(revision.excerpt, ''),
-		       COALESCE(revision.short_answer, ''), revision.locale, revision.editorial_state,
+		       COALESCE(revision.short_answer, ''), revision.editorial_state,
 		       revision.content_hash, revision.created_at, COALESCE(revision.base_revision_id, ''),
-		       COALESCE((
-		         SELECT json_group_array(current_publication.locale)
-		         FROM (
-		           SELECT publication.locale
-		           FROM project_publications publication
-		           WHERE publication.project_id = revision.project_id
-		             AND publication.content_id = revision.content_id
-		             AND publication.published_revision_id = revision.id
-		             AND publication.publication_state = 'published'
-		           ORDER BY publication.locale
-		         ) current_publication
-		       ), '[]')
+		       EXISTS(
+		         SELECT 1 FROM project_publications publication
+		         WHERE publication.project_id = revision.project_id
+		           AND publication.content_id = revision.content_id
+		           AND publication.published_revision_id = revision.id
+		           AND publication.publication_state = 'published'
+		       )
 		FROM content_revisions revision
 		WHERE revision.project_id = ? AND revision.content_id = ?
 	`
@@ -1305,20 +1274,15 @@ func (s *Store) GetRevisionDetailForUser(ctx context.Context, userID, projectID,
 	row := s.db.QueryRowContext(ctx, `
 		SELECT revision.id, revision.project_id, revision.content_id, revision.revision_number,
 		       revision.title, COALESCE(revision.deck, ''), COALESCE(revision.excerpt, ''),
-		       COALESCE(revision.short_answer, ''), revision.locale, revision.editorial_state,
+		       COALESCE(revision.short_answer, ''), revision.editorial_state,
 		       revision.content_hash, revision.created_at, COALESCE(revision.base_revision_id, ''),
-		       COALESCE((
-		         SELECT json_group_array(current_publication.locale)
-		         FROM (
-		           SELECT publication.locale
-		           FROM project_publications publication
-		           WHERE publication.project_id = revision.project_id
-		             AND publication.content_id = revision.content_id
-		             AND publication.published_revision_id = revision.id
-		             AND publication.publication_state = 'published'
-		           ORDER BY publication.locale
-		         ) current_publication
-		       ), '[]'),
+		       EXISTS(
+		         SELECT 1 FROM project_publications publication
+		         WHERE publication.project_id = revision.project_id
+		           AND publication.content_id = revision.content_id
+		           AND publication.published_revision_id = revision.id
+		           AND publication.publication_state = 'published'
+		       ),
 		       COALESCE(revision.alternate_title, ''), revision.body_document_json,
 		       revision.sanitized_html, revision.plain_text, revision.markdown_export,
 		       revision.table_of_contents_json, revision.word_count, revision.reading_time_seconds,
@@ -1628,23 +1592,16 @@ func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectI
 	if canonical == "" {
 		canonical = canonicalURL(project, input.Slug)
 	}
-	locale := strings.TrimSpace(input.Locale)
-	if locale == "" {
-		locale = revision.Locale
-	}
-	if locale == "" {
-		locale = project.DefaultLocale
-	}
-	previousPublication, previousPublicationErr := loadPublicationForLocale(ctx, tx, projectID, articleID, locale)
+	previousPublication, previousPublicationErr := loadPublication(ctx, tx, projectID, articleID)
 	if previousPublicationErr != nil && !errors.Is(previousPublicationErr, sql.ErrNoRows) {
 		return AdminArticle{}, previousPublicationErr
 	}
-	publicationID, err := upsertPublication(ctx, tx, projectID, articleID, revision.ID, locale, input.Slug, canonical, input.ScheduledForUTC, state)
+	publicationID, err := upsertPublication(ctx, tx, projectID, articleID, revision.ID, input.Slug, canonical, input.ScheduledForUTC, state)
 	if err != nil {
 		return AdminArticle{}, err
 	}
 	if state == "published" {
-		version, err := loadPublicationVersion(ctx, tx, projectID, articleID, locale)
+		version, err := loadPublicationVersion(ctx, tx, projectID, articleID)
 		if err != nil {
 			return AdminArticle{}, err
 		}
@@ -1803,7 +1760,7 @@ func (s *Store) getSeriesByID(ctx context.Context, projectID, seriesID string) (
 const adminArticleColumns = `
 	item.id, item.project_id, COALESCE(item.origin_project_id, ''),
 	COALESCE(item.origin_content_id, ''), item.article_type,
-	COALESCE(publication.slug, ''), COALESCE(publication.locale, revision.locale),
+	COALESCE(publication.slug, ''),
 	revision.title, revision.editorial_state,
 	COALESCE(publication.publication_state, 'unpublished'),
 	COALESCE(publication.canonical_policy, 'self'),
@@ -1813,7 +1770,7 @@ const adminArticleColumns = `
 	COALESCE(item.archived_at, ''),
 	revision.id, revision.revision_number, revision.title,
 	COALESCE(revision.deck, ''), COALESCE(revision.excerpt, ''),
-	COALESCE(revision.short_answer, ''), revision.locale,
+	COALESCE(revision.short_answer, ''),
 	revision.editorial_state, revision.content_hash, revision.created_at,
 	item.created_at
 `
@@ -1828,7 +1785,6 @@ func scanAdminArticle(row rowScanner) (AdminArticle, error) {
 		&article.OriginArticleID,
 		&article.ArticleType,
 		&article.Slug,
-		&article.Locale,
 		&article.Title,
 		&article.EditorialState,
 		&article.PublicationState,
@@ -1843,7 +1799,6 @@ func scanAdminArticle(row rowScanner) (AdminArticle, error) {
 		&revision.Deck,
 		&revision.Excerpt,
 		&revision.ShortAnswer,
-		&revision.Locale,
 		&revision.EditorialState,
 		&revision.ContentHash,
 		&revision.CreatedAt,
@@ -1869,7 +1824,6 @@ func scanAdminRevision(row rowScanner) (AdminRevision, error) {
 		&revision.Deck,
 		&revision.Excerpt,
 		&revision.ShortAnswer,
-		&revision.Locale,
 		&revision.EditorialState,
 		&revision.ContentHash,
 		&revision.CreatedAt,
@@ -1879,7 +1833,6 @@ func scanAdminRevision(row rowScanner) (AdminRevision, error) {
 
 func scanAdminRevisionSummary(row rowScanner) (AdminRevisionSummary, error) {
 	var revision AdminRevisionSummary
-	var publishedLocalesJSON string
 	err := row.Scan(
 		&revision.ID,
 		&revision.ProjectID,
@@ -1889,24 +1842,20 @@ func scanAdminRevisionSummary(row rowScanner) (AdminRevisionSummary, error) {
 		&revision.Deck,
 		&revision.Excerpt,
 		&revision.ShortAnswer,
-		&revision.Locale,
 		&revision.EditorialState,
 		&revision.ContentHash,
 		&revision.CreatedAt,
 		&revision.BaseRevisionID,
-		&publishedLocalesJSON,
+		&revision.Published,
 	)
 	if err != nil {
 		return AdminRevisionSummary{}, err
 	}
-	revision.PublishedLocales = []string{}
-	decodeInto(publishedLocalesJSON, &revision.PublishedLocales)
 	return revision, nil
 }
 
 func scanAdminRevisionDetail(row rowScanner) (AdminRevisionDetail, error) {
 	var revision AdminRevisionDetail
-	var publishedLocalesJSON string
 	var bodyDocumentJSON, tableOfContentsJSON string
 	var authorJSON, contributorJSON, taxonomyJSON, sourceJSON, claimJSON string
 	var seoJSON, socialJSON, mediaJSON, disclosureJSON, correctionJSON string
@@ -1919,12 +1868,11 @@ func scanAdminRevisionDetail(row rowScanner) (AdminRevisionDetail, error) {
 		&revision.Deck,
 		&revision.Excerpt,
 		&revision.ShortAnswer,
-		&revision.Locale,
 		&revision.EditorialState,
 		&revision.ContentHash,
 		&revision.CreatedAt,
 		&revision.BaseRevisionID,
-		&publishedLocalesJSON,
+		&revision.Published,
 		&revision.AlternateTitle,
 		&bodyDocumentJSON,
 		&revision.SanitizedHTML,
@@ -1948,8 +1896,6 @@ func scanAdminRevisionDetail(row rowScanner) (AdminRevisionDetail, error) {
 	if err != nil {
 		return AdminRevisionDetail{}, err
 	}
-	revision.PublishedLocales = []string{}
-	decodeInto(publishedLocalesJSON, &revision.PublishedLocales)
 	revision.BodyDocument = decodeJSON(bodyDocumentJSON, map[string]any{})
 	revision.TableOfContents = decodeJSON(tableOfContentsJSON, []any{})
 	revision.AuthorSnapshot = decodeJSON(authorJSON, []any{})
@@ -1968,7 +1914,6 @@ func scanAdminRevisionDetail(row rowScanner) (AdminRevisionDetail, error) {
 type publicationRecord struct {
 	ID                  string
 	PublishedRevisionID string
-	Locale              string
 	Slug                string
 	CanonicalURL        string
 	PublicationState    string
@@ -2015,7 +1960,6 @@ func loadCopySourceRevision(
 		         FROM project_publications publication
 		         WHERE publication.project_id = revision.project_id
 		           AND publication.content_id = revision.content_id
-		           AND publication.locale = revision.locale
 		         LIMIT 1
 		       ), ''), revision.ai_assistance_level,
 		       revision.ai_provenance_summary_json, revision.seo_snapshot_json
@@ -2050,24 +1994,16 @@ func loadCopySourceRevision(
 }
 
 func loadPublication(ctx context.Context, tx *sql.Tx, projectID, articleID string) (publicationRecord, error) {
-	return loadPublicationForLocale(ctx, tx, projectID, articleID, "")
-}
-
-func loadPublicationForLocale(ctx context.Context, tx *sql.Tx, projectID, articleID, locale string) (publicationRecord, error) {
 	var publication publicationRecord
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, COALESCE(published_revision_id, ''), locale, slug, canonical_url,
+		SELECT id, COALESCE(published_revision_id, ''), slug, canonical_url,
 		       publication_state, publication_version, COALESCE(first_published_at, '')
 		FROM project_publications
 		WHERE project_id = ?
 		  AND content_id = ?
-		  AND (? = '' OR locale = ?)
-		ORDER BY updated_at DESC, id DESC
-		LIMIT 1
-	`, projectID, articleID, locale, locale).Scan(
+	`, projectID, articleID).Scan(
 		&publication.ID,
 		&publication.PublishedRevisionID,
-		&publication.Locale,
 		&publication.Slug,
 		&publication.CanonicalURL,
 		&publication.PublicationState,
@@ -2080,10 +2016,10 @@ func loadPublicationForLocale(ctx context.Context, tx *sql.Tx, projectID, articl
 func loadWorkflowProject(ctx context.Context, tx *sql.Tx, projectID string) (workflowProject, error) {
 	var project workflowProject
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, status, COALESCE(primary_domain, ''), blog_base_path, default_locale
+		SELECT id, status, COALESCE(primary_domain, ''), blog_base_path
 		FROM projects
 		WHERE id = ?
-	`, projectID).Scan(&project.ID, &project.Status, &project.PrimaryDomain, &project.BlogBasePath, &project.DefaultLocale)
+	`, projectID).Scan(&project.ID, &project.Status, &project.PrimaryDomain, &project.BlogBasePath)
 	return project, err
 }
 
@@ -2104,7 +2040,7 @@ func loadRevision(ctx context.Context, tx *sql.Tx, projectID, articleID, revisio
 	row := tx.QueryRowContext(ctx, `
 		SELECT id, project_id, content_id, revision_number, title,
 		       COALESCE(deck, ''), COALESCE(excerpt, ''), COALESCE(short_answer, ''),
-		       locale, editorial_state, content_hash, created_at
+		       editorial_state, content_hash, created_at
 		FROM content_revisions
 		WHERE project_id = ? AND content_id = ? AND id = ?
 	`, projectID, articleID, revisionID)
@@ -2200,14 +2136,7 @@ func ensurePublishableTaxonomy(ctx context.Context, tx *sql.Tx, projectID, artic
 	return nil
 }
 
-func upsertPublication(ctx context.Context, tx *sql.Tx, projectID, articleID, revisionID, locale, slug, canonicalURL, scheduledForUTC, state string) (string, error) {
-	if locale == "" {
-		var defaultLocale string
-		if err := tx.QueryRowContext(ctx, `SELECT default_locale FROM projects WHERE id = ?`, projectID).Scan(&defaultLocale); err != nil {
-			return "", err
-		}
-		locale = defaultLocale
-	}
+func upsertPublication(ctx context.Context, tx *sql.Tx, projectID, articleID, revisionID, slug, canonicalURL, scheduledForUTC, state string) (string, error) {
 	publicationID, err := securityRandomID("pubn")
 	if err != nil {
 		return "", err
@@ -2223,10 +2152,10 @@ func upsertPublication(ctx context.Context, tx *sql.Tx, projectID, articleID, re
 	if state == "scheduled" {
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO project_publications(
-			  id, project_id, content_id, locale, slug, canonical_url,
+			  id, project_id, content_id, slug, canonical_url,
 			  robots_directive, published_revision_id, publication_state, scheduled_for_utc
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?)
-			ON CONFLICT(project_id, content_id, locale) DO UPDATE SET
+			) VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', ?)
+			ON CONFLICT(project_id, content_id) DO UPDATE SET
 			  slug = excluded.slug,
 			  canonical_url = excluded.canonical_url,
 			  robots_directive = excluded.robots_directive,
@@ -2234,15 +2163,15 @@ func upsertPublication(ctx context.Context, tx *sql.Tx, projectID, articleID, re
 			  publication_state = 'scheduled',
 			  scheduled_for_utc = excluded.scheduled_for_utc,
 			  updated_at = CURRENT_TIMESTAMP
-		`, publicationID, projectID, articleID, locale, slug, canonicalURL, robotsDirective, revisionID, scheduledForUTC)
+		`, publicationID, projectID, articleID, slug, canonicalURL, robotsDirective, revisionID, scheduledForUTC)
 	} else {
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO project_publications(
-			  id, project_id, content_id, locale, slug, canonical_url,
+			  id, project_id, content_id, slug, canonical_url,
 			  robots_directive, published_revision_id, publication_state, first_published_at,
 			  materially_modified_at, publication_version
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'published', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
-			ON CONFLICT(project_id, content_id, locale) DO UPDATE SET
+			) VALUES (?, ?, ?, ?, ?, ?, ?, 'published', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
+			ON CONFLICT(project_id, content_id) DO UPDATE SET
 			  slug = excluded.slug,
 			  canonical_url = excluded.canonical_url,
 			  robots_directive = excluded.robots_directive,
@@ -2253,7 +2182,7 @@ func upsertPublication(ctx context.Context, tx *sql.Tx, projectID, articleID, re
 			  materially_modified_at = CURRENT_TIMESTAMP,
 			  publication_version = project_publications.publication_version + 1,
 			  updated_at = CURRENT_TIMESTAMP
-		`, publicationID, projectID, articleID, locale, slug, canonicalURL, robotsDirective, revisionID)
+		`, publicationID, projectID, articleID, slug, canonicalURL, robotsDirective, revisionID)
 	}
 	if err != nil {
 		return "", err
@@ -2262,20 +2191,18 @@ func upsertPublication(ctx context.Context, tx *sql.Tx, projectID, articleID, re
 	err = tx.QueryRowContext(ctx, `
 		SELECT id
 		FROM project_publications
-		WHERE project_id = ? AND content_id = ? AND locale = ?
-	`, projectID, articleID, locale).Scan(&storedID)
+		WHERE project_id = ? AND content_id = ?
+	`, projectID, articleID).Scan(&storedID)
 	return storedID, err
 }
 
-func loadPublicationVersion(ctx context.Context, tx *sql.Tx, projectID, articleID, locale string) (int64, error) {
+func loadPublicationVersion(ctx context.Context, tx *sql.Tx, projectID, articleID string) (int64, error) {
 	var version int64
 	err := tx.QueryRowContext(ctx, `
 		SELECT publication_version
 		FROM project_publications
-		WHERE project_id = ? AND content_id = ? AND (? = '' OR locale = ?)
-		ORDER BY updated_at DESC
-		LIMIT 1
-	`, projectID, articleID, locale, locale).Scan(&version)
+		WHERE project_id = ? AND content_id = ?
+	`, projectID, articleID).Scan(&version)
 	return version, err
 }
 
@@ -2446,7 +2373,6 @@ func applyArticleDefaults(input ArticleInput) ArticleInput {
 	if input.Slug == "" {
 		input.Slug = slugify(input.Title)
 	}
-	input.Locale = strings.TrimSpace(input.Locale)
 	input.PrimaryCategoryID = strings.TrimSpace(input.PrimaryCategoryID)
 	input.Deck = strings.TrimSpace(input.Deck)
 	input.Excerpt = strings.TrimSpace(input.Excerpt)
@@ -2460,7 +2386,6 @@ func applyCopyArticleDefaults(input CopyArticleInput) CopyArticleInput {
 	input.SourceRevisionID = strings.TrimSpace(input.SourceRevisionID)
 	input.PrimaryCategoryID = strings.TrimSpace(input.PrimaryCategoryID)
 	input.Slug = slugify(input.Slug)
-	input.Locale = strings.TrimSpace(input.Locale)
 	input.CanonicalDecision = strings.ToLower(strings.TrimSpace(input.CanonicalDecision))
 	input.CanonicalOriginalURL = strings.TrimSpace(input.CanonicalOriginalURL)
 	return input
@@ -2841,7 +2766,6 @@ func seoSnapshotJSON(input SEOInput, canonicalURL string) (string, error) {
 			"image":       input.OpenGraphImage,
 		},
 		"structuredData": []any{},
-		"hreflang":       []any{},
 	})
 	return string(raw), err
 }

@@ -36,7 +36,6 @@ type VoiceProfileDocument struct {
 	ConclusionRules      string                `json:"conclusionRules"`
 	CallToActionRules    string                `json:"callToActionRules"`
 	RegionalSpelling     string                `json:"regionalSpelling"`
-	Locale               string                `json:"locale"`
 }
 
 type VoiceProfile struct {
@@ -131,19 +130,16 @@ func (s *Store) CreateVoiceProfile(ctx context.Context, userID, projectID string
 		return VoiceProfile{}, err
 	}
 	defer tx.Rollback()
-	var status, defaultLocale, supportedLocalesJSON string
+	var status string
 	if err := tx.QueryRowContext(ctx, `
-		SELECT status, default_locale, supported_locales
+		SELECT status
 		FROM projects
 		WHERE id = ?
-	`, projectID).Scan(&status, &defaultLocale, &supportedLocalesJSON); err != nil {
+	`, projectID).Scan(&status); err != nil {
 		return VoiceProfile{}, err
 	}
 	if status != "active" {
 		return VoiceProfile{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
-	}
-	if !projectSupportsLocale(defaultLocale, supportedLocalesJSON, document.Locale) {
-		return VoiceProfile{}, fmt.Errorf("%w: voice profile locale is not supported by the project", ErrValidation)
 	}
 	var version int64
 	if err := tx.QueryRowContext(ctx, `
@@ -161,7 +157,6 @@ func (s *Store) CreateVoiceProfile(ctx context.Context, userID, projectID string
 	}
 	if err := insertAuditEventTx(ctx, tx, projectID, "user", userID, "voice_profile.create", "voice_profile", profileID, "success", map[string]any{
 		"version": version,
-		"locale":  document.Locale,
 	}); err != nil {
 		return VoiceProfile{}, err
 	}
@@ -465,7 +460,6 @@ func normalizeVoiceProfile(document VoiceProfileDocument) VoiceProfileDocument {
 	document.ConclusionRules = strings.TrimSpace(document.ConclusionRules)
 	document.CallToActionRules = strings.TrimSpace(document.CallToActionRules)
 	document.RegionalSpelling = strings.TrimSpace(document.RegionalSpelling)
-	document.Locale = strings.TrimSpace(document.Locale)
 	document.ProductTerminology = normalizeStringMap(document.ProductTerminology)
 	document.ContentTypeStyles = normalizeStringMap(document.ContentTypeStyles)
 	for index := range document.WritingExamples {
@@ -489,7 +483,6 @@ func validateVoiceProfile(document VoiceProfileDocument) error {
 		"conclusionRules":      document.ConclusionRules,
 		"callToActionRules":    document.CallToActionRules,
 		"regionalSpelling":     document.RegionalSpelling,
-		"locale":               document.Locale,
 	}
 	for field, value := range required {
 		if value == "" {
@@ -632,20 +625,4 @@ func normalizeStringMap(values map[string]string) map[string]string {
 		}
 	}
 	return normalized
-}
-
-func projectSupportsLocale(defaultLocale, supportedLocalesJSON, locale string) bool {
-	if locale == defaultLocale {
-		return true
-	}
-	var supported []string
-	if err := json.Unmarshal([]byte(supportedLocalesJSON), &supported); err != nil {
-		return false
-	}
-	for _, candidate := range supported {
-		if candidate == locale {
-			return true
-		}
-	}
-	return false
 }

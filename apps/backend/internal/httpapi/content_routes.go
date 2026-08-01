@@ -108,7 +108,6 @@ func (s *Server) listPublishedPosts(c fiber.Ctx) error {
 	}
 	ctx := c.Context()
 	projectID := project.ProjectID
-	locale := c.Query("locale")
 	category := c.Query("category")
 	tag := c.Query("tag")
 	author := c.Query("author")
@@ -128,7 +127,6 @@ func (s *Server) listPublishedPosts(c fiber.Ctx) error {
 		posts, err := s.store.ListPublishedPosts(
 			ctx,
 			projectID,
-			locale,
 			category,
 			tag,
 			author,
@@ -169,9 +167,8 @@ func (s *Server) getPublishedPostBySlug(c fiber.Ctx) error {
 	ctx := c.Context()
 	projectID := project.ProjectID
 	slug := c.Params("slug")
-	locale := c.Query("locale", "en")
 	generation := s.projectGeneration(ctx, projectID)
-	cached, err := s.cachedPublishedPostBySlug(ctx, projectID, generation, slug, locale)
+	cached, err := s.cachedPublishedPostBySlug(ctx, projectID, generation, slug)
 	if err != nil {
 		return s.publishedReadError(c, err, "Post not found", "Could not load post")
 	}
@@ -193,7 +190,7 @@ func (s *Server) headPublishedPostBySlug(c fiber.Ctx) error {
 	ctx := c.Context()
 	projectID := project.ProjectID
 	generation := s.projectGeneration(ctx, projectID)
-	cached, err := s.cachedPublishedPostBySlug(ctx, projectID, generation, c.Params("slug"), c.Query("locale", "en"))
+	cached, err := s.cachedPublishedPostBySlug(ctx, projectID, generation, c.Params("slug"))
 	if err != nil {
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
@@ -215,9 +212,8 @@ func (s *Server) getPublishedPostByID(c fiber.Ctx) error {
 	ctx := c.Context()
 	projectID := project.ProjectID
 	contentID := c.Params("contentID")
-	locale := c.Query("locale", "en")
 	generation := s.projectGeneration(ctx, projectID)
-	cached, err := s.cachedPublishedPostByID(ctx, projectID, generation, contentID, locale)
+	cached, err := s.cachedPublishedPostByID(ctx, projectID, generation, contentID)
 	if err != nil {
 		return s.publishedReadError(c, err, "Post not found", "Could not load post")
 	}
@@ -231,10 +227,10 @@ func (s *Server) getPublishedPostByID(c fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, cached.Envelope)
 }
 
-func (s *Server) cachedPublishedPostBySlug(ctx context.Context, projectID string, generation int64, slug string, locale string) (cachedPublishedPost, error) {
-	cacheKey, _ := s.contentCacheKey(projectID, generation, "post", "slug", slug, locale)
+func (s *Server) cachedPublishedPostBySlug(ctx context.Context, projectID string, generation int64, slug string) (cachedPublishedPost, error) {
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "post", "slug", slug)
 	return cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (cachedPublishedPost, time.Duration, error) {
-		post, err := s.store.GetPublishedPostBySlug(ctx, projectID, slug, locale)
+		post, err := s.store.GetPublishedPostBySlug(ctx, projectID, slug)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				return cachedPublishedPost{Found: false}, publishedLookupMissTTL, nil
@@ -249,10 +245,10 @@ func (s *Server) cachedPublishedPostBySlug(ctx context.Context, projectID string
 	})
 }
 
-func (s *Server) cachedPublishedPostByID(ctx context.Context, projectID string, generation int64, contentID string, locale string) (cachedPublishedPost, error) {
-	cacheKey, _ := s.contentCacheKey(projectID, generation, "post", "id", contentID, locale)
+func (s *Server) cachedPublishedPostByID(ctx context.Context, projectID string, generation int64, contentID string) (cachedPublishedPost, error) {
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "post", "id", contentID)
 	return cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (cachedPublishedPost, time.Duration, error) {
-		post, err := s.store.GetPublishedPostByID(ctx, projectID, contentID, locale)
+		post, err := s.store.GetPublishedPostByID(ctx, projectID, contentID)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				return cachedPublishedPost{Found: false}, publishedLookupMissTTL, nil
@@ -283,12 +279,11 @@ func (s *Server) getRelatedPosts(c fiber.Ctx) error {
 	ctx := c.Context()
 	projectID := project.ProjectID
 	slug := c.Params("slug")
-	locale := c.Query("locale", "en")
 	limit := boundedLimit(c.Query("limit", "6"), 12)
 	generation := s.projectGeneration(ctx, projectID)
-	cacheKey, _ := s.contentCacheKey(projectID, generation, "related", slug, locale, cacheLimit(limit))
+	cacheKey, _ := s.contentCacheKey(projectID, generation, "related", slug, cacheLimit(limit))
 	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (ListEnvelope[store.RelatedPost], time.Duration, error) {
-		posts, err := s.store.ListRelatedPosts(ctx, projectID, slug, locale, limit)
+		posts, err := s.store.ListRelatedPosts(ctx, projectID, slug, limit)
 		if err != nil {
 			return ListEnvelope[store.RelatedPost]{}, 0, err
 		}
@@ -530,11 +525,10 @@ func (s *Server) discoveryManifest(c fiber.Ctx) error {
 	}
 	ctx := c.Context()
 	projectID := project.ProjectID
-	locale := c.Query("locale")
 	generation := s.projectGeneration(ctx, projectID)
 	cacheKey, _ := s.contentCacheKey(projectID, generation, "discovery", normalizedContentQuery(c))
 	response, err := cachedContentJSON(ctx, s, cacheKey, func(ctx context.Context) (Envelope[map[string]any], time.Duration, error) {
-		entries, err := s.store.ListDiscovery(ctx, projectID, locale)
+		entries, err := s.store.ListDiscovery(ctx, projectID)
 		if err != nil {
 			return Envelope[map[string]any]{}, 0, err
 		}

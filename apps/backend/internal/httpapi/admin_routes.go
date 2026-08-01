@@ -207,8 +207,6 @@ type projectRequest struct {
 	PrimaryDomain            string   `json:"primaryDomain"`
 	VerifiedDomains          []string `json:"verifiedDomains"`
 	BlogBasePath             string   `json:"blogBasePath"`
-	DefaultLocale            string   `json:"defaultLocale"`
-	SupportedLocales         []string `json:"supportedLocales"`
 	Timezone                 string   `json:"timezone"`
 	PublisherName            string   `json:"publisherName"`
 	PublisherURL             string   `json:"publisherUrl"`
@@ -221,8 +219,6 @@ type projectPatchRequest struct {
 	PrimaryDomain            *string   `json:"primaryDomain"`
 	VerifiedDomains          *[]string `json:"verifiedDomains"`
 	BlogBasePath             *string   `json:"blogBasePath"`
-	DefaultLocale            *string   `json:"defaultLocale"`
-	SupportedLocales         *[]string `json:"supportedLocales"`
 	Timezone                 *string   `json:"timezone"`
 	PublisherName            *string   `json:"publisherName"`
 	PublisherURL             *string   `json:"publisherUrl"`
@@ -244,7 +240,6 @@ type articleRequest struct {
 	ArticleType       string                       `json:"articleType"`
 	Title             string                       `json:"title"`
 	Slug              string                       `json:"slug"`
-	Locale            string                       `json:"locale"`
 	PrimaryCategoryID string                       `json:"primaryCategoryId"`
 	Contributors      []revisionContributorRequest `json:"contributors"`
 	Deck              string                       `json:"deck"`
@@ -296,7 +291,6 @@ type revisionDecisionRequest struct {
 type publicationRequest struct {
 	RevisionID      string `json:"revisionId"`
 	Slug            string `json:"slug"`
-	Locale          string `json:"locale"`
 	CanonicalURL    string `json:"canonicalUrl"`
 	ScheduledFor    string `json:"scheduledFor"`
 	ScheduledForUTC string `json:"scheduledForUtc"`
@@ -304,7 +298,6 @@ type publicationRequest struct {
 
 type rollbackRequest struct {
 	RevisionID string `json:"revisionId"`
-	Locale     string `json:"locale,omitempty"`
 }
 
 type copyArticleRequest struct {
@@ -312,7 +305,6 @@ type copyArticleRequest struct {
 	SourceRevisionID     string `json:"sourceRevisionId"`
 	PrimaryCategoryID    string `json:"primaryCategoryId"`
 	Slug                 string `json:"slug"`
-	Locale               string `json:"locale,omitempty"`
 	CanonicalDecision    string `json:"canonicalDecision"`
 	CanonicalOriginalURL string `json:"canonicalOriginalUrl,omitempty"`
 }
@@ -1329,7 +1321,7 @@ func (s *Server) rollbackArticle(c fiber.Ctx) error {
 		user.ID,
 		c.Params("projectID"),
 		c.Params("articleID"),
-		store.RollbackInput{RevisionID: input.RevisionID, Locale: input.Locale},
+		store.RollbackInput{RevisionID: input.RevisionID},
 	)
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not rollback article")
@@ -2094,8 +2086,6 @@ func (input projectRequest) toStoreInput() store.ProjectInput {
 		PrimaryDomain:            input.PrimaryDomain,
 		VerifiedDomains:          input.VerifiedDomains,
 		BlogBasePath:             input.BlogBasePath,
-		DefaultLocale:            input.DefaultLocale,
-		SupportedLocales:         input.SupportedLocales,
 		Timezone:                 input.Timezone,
 		PublisherName:            input.PublisherName,
 		PublisherURL:             input.PublisherURL,
@@ -2110,8 +2100,6 @@ func (input projectPatchRequest) toStorePatch() store.ProjectPatch {
 		PrimaryDomain:            input.PrimaryDomain,
 		VerifiedDomains:          input.VerifiedDomains,
 		BlogBasePath:             input.BlogBasePath,
-		DefaultLocale:            input.DefaultLocale,
-		SupportedLocales:         input.SupportedLocales,
 		Timezone:                 input.Timezone,
 		PublisherName:            input.PublisherName,
 		PublisherURL:             input.PublisherURL,
@@ -2137,7 +2125,6 @@ func (input articleRequest) toStoreInput() store.ArticleInput {
 		ArticleType:       input.ArticleType,
 		Title:             input.Title,
 		Slug:              input.Slug,
-		Locale:            input.Locale,
 		PrimaryCategoryID: input.PrimaryCategoryID,
 		Contributors:      contributorInputs(input.Contributors),
 		Deck:              input.Deck,
@@ -2196,7 +2183,6 @@ func (input copyArticleRequest) toStoreInput() store.CopyArticleInput {
 		SourceRevisionID:     input.SourceRevisionID,
 		PrimaryCategoryID:    input.PrimaryCategoryID,
 		Slug:                 input.Slug,
-		Locale:               input.Locale,
 		CanonicalDecision:    input.CanonicalDecision,
 		CanonicalOriginalURL: input.CanonicalOriginalURL,
 	}
@@ -2217,7 +2203,6 @@ func (input publicationRequest) toStoreInput(scheduled bool) (store.PublicationI
 	return store.PublicationInput{
 		RevisionID:      input.RevisionID,
 		Slug:            input.Slug,
-		Locale:          input.Locale,
 		CanonicalURL:    input.CanonicalURL,
 		ScheduledForUTC: scheduledForUTC,
 	}, nil

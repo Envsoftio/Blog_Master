@@ -92,15 +92,7 @@
               <textarea v-model.trim="form.verifiedDomains" class="min-h-24 w-full rounded-md border border-[#bfcac3] px-3 py-2 font-mono text-sm dark:border-[#4b5650] dark:bg-[#171b18]" :disabled="!canManageProject" />
             </label>
 
-            <div class="grid gap-4 md:grid-cols-3">
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Default locale</span>
-                <input v-model.trim="form.defaultLocale" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required :disabled="!canManageProject" />
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Supported locales</span>
-                <input v-model.trim="form.supportedLocales" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required :disabled="!canManageProject" />
-              </label>
+            <div class="grid gap-4 md:grid-cols-1">
               <label class="block space-y-2">
                 <span class="text-sm font-medium">Timezone</span>
                 <input v-model.trim="form.timezone" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required :disabled="!canManageProject" />
@@ -262,8 +254,6 @@ type AdminProject = {
   primaryDomain?: string
   verifiedDomains: string[]
   blogBasePath: string
-  defaultLocale: string
-  supportedLocales: string[]
   timezone: string
   publisherName?: string
   publisherUrl?: string
@@ -309,8 +299,6 @@ const form = reactive({
   primaryDomain: '',
   verifiedDomains: '',
   blogBasePath: '/blog',
-  defaultLocale: 'en',
-  supportedLocales: 'en',
   timezone: 'UTC',
   publisherName: '',
   publisherUrl: '',
@@ -320,7 +308,7 @@ const form = reactive({
 
 const canManageProject = computed(() => project.value?.role === 'project_owner' || project.value?.role === 'project_admin')
 const canDeleteProject = computed(() => project.value?.role === 'project_owner' && Boolean(deletionImpact.value?.canDelete))
-const canSave = computed(() => Boolean(form.name.trim() && form.blogBasePath.trim() && form.defaultLocale.trim() && splitCSV(form.supportedLocales).length > 0 && form.timezone.trim()))
+const canSave = computed(() => Boolean(form.name.trim() && form.blogBasePath.trim() && form.timezone.trim()))
 const impactRows = computed(() => {
   if (!deletionImpact.value) return []
   return [
@@ -435,8 +423,6 @@ function setProject(value: AdminProject) {
   form.primaryDomain = value.primaryDomain || ''
   form.verifiedDomains = (value.verifiedDomains || []).join('\n')
   form.blogBasePath = value.blogBasePath || '/blog'
-  form.defaultLocale = value.defaultLocale || 'en'
-  form.supportedLocales = (value.supportedLocales?.length ? value.supportedLocales : [value.defaultLocale || 'en']).join(', ')
   form.timezone = value.timezone || 'UTC'
   form.publisherName = value.publisherName || ''
   form.publisherUrl = value.publisherUrl || ''
@@ -450,8 +436,6 @@ function projectPatchBody() {
     primaryDomain: form.primaryDomain,
     verifiedDomains: splitLines(form.verifiedDomains),
     blogBasePath: form.blogBasePath,
-    defaultLocale: form.defaultLocale,
-    supportedLocales: splitCSV(form.supportedLocales),
     timezone: form.timezone,
     publisherName: form.publisherName,
     publisherUrl: form.publisherUrl,
@@ -481,10 +465,6 @@ async function getCSRFToken() {
     credentials: 'include'
   })
   return response.data.csrfToken
-}
-
-function splitCSV(value: string) {
-  return cleanList(value.split(','))
 }
 
 function splitLines(value: string) {

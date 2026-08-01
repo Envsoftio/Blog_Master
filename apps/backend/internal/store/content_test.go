@@ -14,7 +14,6 @@ func TestDecodeJSONObjectRejectsNonObjects(t *testing.T) {
 func TestPublishedArticleStructuredDataUsesApprovedInputs(t *testing.T) {
 	post := PublishedPost{
 		ArticleType:   "news_update",
-		Locale:        "en-IN",
 		Title:         "A trustworthy headline",
 		PublishedAt:   "2026-08-01 10:30:00",
 		ModifiedAt:    "2026-08-02T11:45:00+05:30",

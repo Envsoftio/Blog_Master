@@ -24,8 +24,6 @@ export type AdminProject = {
   publicProjectKey?: string
   primaryDomain?: string
   blogBasePath: string
-  defaultLocale: string
-  supportedLocales?: string[]
   timezone?: string
   role: string
   publisherName?: string
@@ -53,7 +51,6 @@ export type AdminRevision = {
   deck?: string
   excerpt?: string
   shortAnswer?: string
-  locale: string
   editorialState: string
   contentHash?: string
   createdAt?: string
@@ -64,7 +61,6 @@ export type AdminArticle = {
   projectId: string
   articleType: string
   slug: string
-  locale: string
   title: string
   editorialState: string
   publicationState: string
@@ -79,7 +75,7 @@ export type AdminArticle = {
 
 export type AdminRevisionSummary = AdminRevision & {
   baseRevisionId?: string
-  publishedLocales: string[]
+  published: boolean
 }
 
 export type AdminRevisionDetail = AdminRevisionSummary & {
@@ -431,7 +427,6 @@ export type VoiceProfileDocument = {
   conclusionRules: string
   callToActionRules: string
   regionalSpelling: string
-  locale: string
 }
 
 export type VoiceProfile = {
@@ -547,8 +542,6 @@ export type ProjectCreatePayload = {
   slug: string
   primaryDomain?: string
   blogBasePath: string
-  defaultLocale: string
-  supportedLocales: string[]
   timezone: string
   soloOwnerApprovalEnabled?: boolean
 }
@@ -569,8 +562,6 @@ export type ProjectUpdatePayload = Partial<{
   primaryDomain: string
   verifiedDomains: string[]
   blogBasePath: string
-  defaultLocale: string
-  supportedLocales: string[]
   timezone: string
   publisherName: string
   publisherUrl: string
@@ -582,7 +573,6 @@ export type ArticleCreatePayload = {
   articleType: string
   title: string
   slug: string
-  locale?: string
   primaryCategoryId: string
   contributors?: RevisionContributorInput[]
   deck?: string
@@ -632,7 +622,6 @@ export type ArticleCopyPayload = {
   sourceRevisionId: string
   primaryCategoryId: string
   slug: string
-  locale?: string
   canonicalDecision: 'canonical_original' | 'material_adaptation'
   canonicalOriginalUrl?: string
 }

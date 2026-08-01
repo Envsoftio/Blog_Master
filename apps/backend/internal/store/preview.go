@@ -161,7 +161,7 @@ func (s *Store) FindPreviewToken(ctx context.Context, secret, revisionID string)
 
 func (s *Store) GetPreviewPost(ctx context.Context, projectID, articleID, revisionID string) (PublishedPost, error) {
 	post, err := scanPost(s.db.QueryRowContext(ctx, `
-		SELECT ci.id, ci.article_type, COALESCE(pp.slug, ci.id), cr.locale,
+		SELECT ci.id, ci.article_type, COALESCE(pp.slug, ci.id),
 		       cr.revision_number, cr.title, COALESCE(cr.deck, ''),
 		       COALESCE(cr.excerpt, ''), COALESCE(cr.short_answer, ''),
 		       cr.body_document_json, cr.sanitized_html, cr.table_of_contents_json,
@@ -178,7 +178,6 @@ func (s *Store) GetPreviewPost(ctx context.Context, projectID, articleID, revisi
 		LEFT JOIN project_publications pp
 		  ON pp.project_id = cr.project_id
 		 AND pp.content_id = cr.content_id
-		 AND pp.locale = cr.locale
 		WHERE cr.project_id = ? AND cr.content_id = ? AND cr.id = ?
 		  AND ci.archived_at IS NULL
 	`, projectID, articleID, revisionID), nil)

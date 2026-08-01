@@ -25,7 +25,7 @@ func publishedArticleStructuredData(post PublishedPost) []any {
 		"headline":         strings.TrimSpace(post.Title),
 	}
 	setNonEmptyString(article, "description", post.SEO.Description)
-	setNonEmptyString(article, "inLanguage", post.Locale)
+	setNonEmptyString(article, "inLanguage", "en")
 	setStructuredDataDate(article, "datePublished", post.PublishedAt)
 	setStructuredDataDate(article, "dateModified", post.ModifiedAt)
 

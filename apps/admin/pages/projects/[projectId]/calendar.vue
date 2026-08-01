@@ -104,7 +104,7 @@
               </span>
               <span class="rail-list__copy">
                 <strong>{{ article.title }}</strong>
-                <small>{{ formatTime(article.scheduledForUtc) }} · {{ article.locale.toUpperCase() }}</small>
+                <small>{{ formatTime(article.scheduledForUtc) }}</small>
               </span>
             </NuxtLink>
           </div>

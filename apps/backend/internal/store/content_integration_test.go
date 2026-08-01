@@ -39,10 +39,10 @@ func TestPublishedPostQueryAndSnapshots(t *testing.T) {
 		  '[]', '[]', 'content-hash', 'approved'
 		);
 		INSERT INTO project_publications(
-		  id, project_id, content_id, locale, slug, canonical_url,
+		  id, project_id, content_id, slug, canonical_url,
 		  published_revision_id, publication_state, first_published_at
 		) VALUES (
-		  'publication', 'project', 'article', 'en', 'published',
+		  'publication', 'project', 'article', 'published',
 		  'https://example.test/blog/published', 'revision', 'published',
 		  '2026-07-29 10:00:00'
 		);
@@ -53,7 +53,7 @@ func TestPublishedPostQueryAndSnapshots(t *testing.T) {
 
 	contentStore := store.New(db)
 	posts, err := contentStore.ListPublishedPosts(
-		context.Background(), "project", "en", "category", "", "", "", "",
+		context.Background(), "project", "category", "", "", "", "",
 		false, "", "", store.PublishedCursor{}, 10,
 	)
 	if err != nil {

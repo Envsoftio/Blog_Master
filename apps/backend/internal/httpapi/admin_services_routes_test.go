@@ -1943,7 +1943,7 @@ func createApprovedAIJobContext(
 	voiceResponse := mustTest(t, server, newMemberMutationRequest(
 		http.MethodPost,
 		"/api/v1/projects/"+projectID+"/voice-profile",
-		validVoiceProfileBody("en", "Direct, exact, and practical"),
+		validVoiceProfileBody("Direct, exact, and practical"),
 		login,
 	))
 	if voiceResponse.StatusCode != http.StatusCreated {

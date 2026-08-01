@@ -14,9 +14,7 @@ func TestVoiceProfilesAreVersionedValidatedAndProjectScoped(t *testing.T) {
 	writer := seedAndLogin(t, server, db, "voice-writer@example.test", "another correct horse battery staple")
 	project := createTestProject(t, server, owner, `{
 		"slug":"voice-project",
-		"name":"Voice Project",
-		"defaultLocale":"en",
-		"supportedLocales":["en","en-GB"]
+		"name":"Voice Project"
 	}`)
 	if _, err := db.Exec(`
 		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
@@ -35,7 +33,7 @@ func TestVoiceProfilesAreVersionedValidatedAndProjectScoped(t *testing.T) {
 	writerCreate := mustTest(t, server, newMemberMutationRequest(
 		http.MethodPost,
 		path,
-		validVoiceProfileBody("en", "Direct and practical"),
+		validVoiceProfileBody("Direct and practical"),
 		writer,
 	))
 	if writerCreate.StatusCode != http.StatusForbidden {
@@ -55,7 +53,7 @@ func TestVoiceProfilesAreVersionedValidatedAndProjectScoped(t *testing.T) {
 	firstResponse := mustTest(t, server, newMemberMutationRequest(
 		http.MethodPost,
 		path,
-		validVoiceProfileBody("en", "Direct and practical"),
+		validVoiceProfileBody("Direct and practical"),
 		owner,
 	))
 	if firstResponse.StatusCode != http.StatusCreated {
@@ -63,16 +61,14 @@ func TestVoiceProfilesAreVersionedValidatedAndProjectScoped(t *testing.T) {
 	}
 	var first Envelope[store.VoiceProfile]
 	decodeJSONResponse(t, firstResponse, &first)
-	if first.Data.Version != 1 ||
-		first.Data.Profile.Locale != "en" ||
-		len(first.Data.Profile.WritingExamples) != 3 {
+	if first.Data.Version != 1 || len(first.Data.Profile.WritingExamples) != 3 {
 		t.Fatalf("unexpected first voice profile %#v", first.Data)
 	}
 
 	secondResponse := mustTest(t, server, newMemberMutationRequest(
 		http.MethodPost,
 		path,
-		validVoiceProfileBody("en-GB", "Calm, exact, and candid"),
+		validVoiceProfileBody("Calm, exact, and candid"),
 		owner,
 	))
 	if secondResponse.StatusCode != http.StatusCreated {
@@ -105,16 +101,6 @@ func TestVoiceProfilesAreVersionedValidatedAndProjectScoped(t *testing.T) {
 		WHERE project_id = ? AND id = ?
 	`, project.ID, first.Data.ID); err == nil {
 		t.Fatal("expected voice profile versions to be immutable")
-	}
-
-	unsupportedLocale := mustTest(t, server, newMemberMutationRequest(
-		http.MethodPost,
-		path,
-		validVoiceProfileBody("fr", "Direct and practical"),
-		owner,
-	))
-	if unsupportedLocale.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected unsupported voice locale to fail with 400, got %d", unsupportedLocale.StatusCode)
 	}
 
 	otherProject := createTestProject(t, server, owner, `{"slug":"other-voice","name":"Other Voice"}`)
@@ -406,7 +392,7 @@ func TestEvidencePacketsUseProjectSourcesAndImmutableApproval(t *testing.T) {
 	}
 }
 
-func validVoiceProfileBody(locale, tone string) string {
+func validVoiceProfileBody(tone string) string {
 	return `{"profile":{
 		"audience":"Growth and product teams responsible for technical websites",
 		"assumedKnowledge":"Comfortable with web publishing and basic search concepts",
@@ -431,8 +417,7 @@ func validVoiceProfileBody(locale, tone string) string {
 		"introductionRules":"Begin with the reader problem and the concrete outcome",
 		"conclusionRules":"Summarize the decision and its important limitations",
 		"callToActionRules":"Offer one relevant next action without manufactured urgency",
-		"regionalSpelling":"Use the spelling conventions of the selected locale",
-		"locale":"` + locale + `"
+		"regionalSpelling":"Use consistent English spelling conventions"
 	}}`
 }
 

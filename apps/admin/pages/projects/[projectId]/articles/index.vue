@@ -110,7 +110,6 @@
               <p>{{ article.latestRevision?.excerpt || `/${article.slug}` }}</p>
               <div class="content-item__meta">
                 <span>{{ labelize(article.articleType) }}</span>
-                <span>{{ article.locale.toUpperCase() }}</span>
                 <span>{{ article.latestRevision ? `Revision ${article.latestRevision.revisionNumber}` : 'No revision' }}</span>
               </div>
             </div>
@@ -434,7 +433,6 @@ function publicationBody(article: AdminArticle) {
   return {
     revisionId: latestRevisionID(article),
     slug: article.slug,
-    locale: article.locale,
     ...(article.canonicalUrl ? { canonicalUrl: article.canonicalUrl } : {})
   }
 }

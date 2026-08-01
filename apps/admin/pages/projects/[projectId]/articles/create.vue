@@ -45,10 +45,6 @@
               <span>Slug</span>
               <input v-model.trim="articleForm.slug" class="mono-input" placeholder="article-slug" required @input="slugTouched = true">
             </label>
-            <label class="field">
-              <span>Locale</span>
-              <input v-model.trim="articleForm.locale" placeholder="en" required>
-            </label>
             <label class="field setup-fields__category">
               <span>Primary category</span>
               <select v-model="articleForm.primaryCategoryId" :disabled="categories.length === 0" required>
@@ -163,7 +159,7 @@
         <div class="create-form__actions surface">
           <div>
             <strong>{{ canCreateArticle ? 'Ready to create' : 'Complete the required fields' }}</strong>
-            <span>Title, slug, locale, category, and a primary author are required.</span>
+            <span>Title, slug, category, and a primary author are required.</span>
           </div>
           <NuxtLink class="button" :to="`/projects/${projectID}/articles`">Cancel</NuxtLink>
           <button class="button button--primary" type="submit" :disabled="creatingArticle || !canCreateArticle">
@@ -195,7 +191,6 @@
             <dl>
               <div><dt>Template</dt><dd>{{ labelize(articleForm.articleType) }}</dd></div>
               <div><dt>Words</dt><dd>{{ wordCount }}</dd></div>
-              <div><dt>Locale</dt><dd>{{ articleForm.locale || 'Not set' }}</dd></div>
               <div><dt>Category</dt><dd>{{ selectedCategory ? categoryPathLabel(selectedCategory) : 'Not set' }}</dd></div>
               <div><dt>Author</dt><dd>{{ selectedAuthor?.displayName || 'Not set' }}</dd></div>
               <div><dt>Credits</dt><dd>{{ articleForm.contributors.length }}</dd></div>
@@ -301,7 +296,6 @@ const articleForm = reactive({
   articleType: 'guide',
   title: '',
   slug: '',
-  locale: '',
   primaryCategoryId: '',
   contributors: [] as RevisionContributorInput[],
   deck: '',
@@ -332,7 +326,6 @@ const canCreateArticle = computed(() => Boolean(
   canWriteArticles.value
   && articleForm.title.trim()
   && articleForm.slug.trim()
-  && articleForm.locale.trim()
   && articleForm.primaryCategoryId
   && hasValidRevisionContributors(articleForm.contributors)
 ))
@@ -407,9 +400,6 @@ async function refresh() {
       .filter(author => author.status === 'active')
       .sort((left, right) => left.displayName.localeCompare(right.displayName))
     recentArticles.value = articleResponse.data
-    if (!articleForm.locale) {
-      articleForm.locale = project.value.defaultLocale || 'en'
-    }
     if (!articleForm.primaryCategoryId && categories.value[0]) {
       articleForm.primaryCategoryId = categories.value[0].id
     }
@@ -459,7 +449,6 @@ async function createArticle() {
       articleType: articleForm.articleType,
       title: articleForm.title,
       slug: articleForm.slug,
-      locale: articleForm.locale,
       primaryCategoryId: articleForm.primaryCategoryId,
       contributors: articleForm.contributors,
       deck: articleForm.deck,
@@ -537,7 +526,7 @@ function restoreCreateDraft() {
         fields?: Record<string, unknown>
       }
       const stringKeys = [
-        'articleType', 'title', 'slug', 'locale', 'primaryCategoryId', 'deck', 'excerpt', 'shortAnswer',
+        'articleType', 'title', 'slug', 'primaryCategoryId', 'deck', 'excerpt', 'shortAnswer',
         'seoTitle', 'seoDescription', 'robots', 'openGraphTitle', 'openGraphDescription', 'openGraphImage', 'html'
       ]
       if (

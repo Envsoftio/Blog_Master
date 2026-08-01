@@ -375,9 +375,6 @@ func TestRollbackOpenAPIContract(t *testing.T) {
 	if _, ok := requestSchema.Properties["revisionId"]; !ok {
 		t.Fatal("expected rollback request to document revisionId")
 	}
-	if _, ok := requestSchema.Properties["locale"]; !ok {
-		t.Fatal("expected rollback request to document locale")
-	}
 	if _, ok := requestSchema.Properties["slug"]; ok {
 		t.Fatal("rollback request must not document slug")
 	}
@@ -432,7 +429,6 @@ func TestCopyArticleOpenAPIContract(t *testing.T) {
 		"sourceRevisionId",
 		"primaryCategoryId",
 		"slug",
-		"locale",
 		"canonicalDecision",
 		"canonicalOriginalUrl",
 	} {
@@ -575,14 +571,11 @@ func TestRevisionHistoryOpenAPIContract(t *testing.T) {
 		t.Fatal("expected revision history data to document array items")
 	}
 	revisionSummarySchema := resolveContractSchema(t, server, listDataSchema.Items)
-	for _, property := range []string{"id", "articleId", "revisionNumber", "baseRevisionId", "publishedLocales"} {
+	for _, property := range []string{"id", "articleId", "revisionNumber", "baseRevisionId", "published"} {
 		contractProperty(t, revisionSummarySchema, property)
 	}
-	if !containsString(revisionSummarySchema.Required, "publishedLocales") {
-		t.Fatal("expected publishedLocales to be required in revision summaries")
-	}
-	if contractProperty(t, revisionSummarySchema, "publishedLocales").Nullable {
-		t.Fatal("expected publishedLocales to be non-nullable in revision summaries")
+	if !containsString(revisionSummarySchema.Required, "published") {
+		t.Fatal("expected published to be required in revision summaries")
 	}
 	assertRevisionHeadOperation(t, listItem.Head, "headArticleRevisions", true)
 
@@ -616,11 +609,11 @@ func TestRevisionHistoryOpenAPIContract(t *testing.T) {
 		"plainText",
 		"taxonomySnapshot",
 		"seoSnapshot",
-		"publishedLocales",
+		"published",
 	} {
 		contractProperty(t, detailSchema, property)
 	}
-	for _, property := range []string{"bodyDocument", "plainText", "taxonomySnapshot", "seoSnapshot", "publishedLocales"} {
+	for _, property := range []string{"bodyDocument", "plainText", "taxonomySnapshot", "seoSnapshot", "published"} {
 		if !containsString(detailSchema.Required, property) {
 			t.Fatalf("expected revision detail property %q to be required", property)
 		}

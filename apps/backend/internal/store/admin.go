@@ -72,8 +72,6 @@ type AdminProject struct {
 	PrimaryDomain            string   `json:"primaryDomain,omitempty"`
 	VerifiedDomains          []string `json:"verifiedDomains"`
 	BlogBasePath             string   `json:"blogBasePath"`
-	DefaultLocale            string   `json:"defaultLocale"`
-	SupportedLocales         []string `json:"supportedLocales"`
 	Timezone                 string   `json:"timezone"`
 	PublisherName            string   `json:"publisherName,omitempty"`
 	PublisherURL             string   `json:"publisherUrl,omitempty"`
@@ -129,8 +127,6 @@ type ProjectInput struct {
 	PrimaryDomain            string
 	VerifiedDomains          []string
 	BlogBasePath             string
-	DefaultLocale            string
-	SupportedLocales         []string
 	Timezone                 string
 	PublisherName            string
 	PublisherURL             string
@@ -143,8 +139,6 @@ type ProjectPatch struct {
 	PrimaryDomain            *string
 	VerifiedDomains          *[]string
 	BlogBasePath             *string
-	DefaultLocale            *string
-	SupportedLocales         *[]string
 	Timezone                 *string
 	PublisherName            *string
 	PublisherURL             *string
@@ -522,21 +516,16 @@ func (s *Store) CreateProject(ctx context.Context, actorUserID string, input Pro
 	if err != nil {
 		return AdminProject{}, err
 	}
-	supportedLocalesJSON, err := jsonString(input.SupportedLocales)
-	if err != nil {
-		return AdminProject{}, err
-	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO projects(
 		  id, workspace_id, slug, name, public_project_key, primary_domain,
-		  verified_domains_json, blog_base_path, default_locale, supported_locales,
+		  verified_domains_json, blog_base_path,
 		  timezone, publisher_name, publisher_url, default_robots_policy,
 		  solo_owner_approval_enabled, created_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		projectID, workspaceID, input.Slug, input.Name, publicProjectKey, nullIfEmpty(input.PrimaryDomain),
-		verifiedDomainsJSON, input.BlogBasePath, input.DefaultLocale, supportedLocalesJSON,
-		input.Timezone, nullIfEmpty(input.PublisherName), nullIfEmpty(input.PublisherURL),
+		verifiedDomainsJSON, input.BlogBasePath, input.Timezone, nullIfEmpty(input.PublisherName), nullIfEmpty(input.PublisherURL),
 		input.DefaultRobotsPolicy, input.SoloOwnerApprovalEnabled, actorUserID,
 	); err != nil {
 		return AdminProject{}, err
@@ -579,8 +568,6 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 		PrimaryDomain:            current.PrimaryDomain,
 		VerifiedDomains:          current.VerifiedDomains,
 		BlogBasePath:             current.BlogBasePath,
-		DefaultLocale:            current.DefaultLocale,
-		SupportedLocales:         current.SupportedLocales,
 		Timezone:                 current.Timezone,
 		PublisherName:            current.PublisherName,
 		PublisherURL:             current.PublisherURL,
@@ -598,12 +585,6 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 	}
 	if patch.BlogBasePath != nil {
 		next.BlogBasePath = strings.TrimSpace(*patch.BlogBasePath)
-	}
-	if patch.DefaultLocale != nil {
-		next.DefaultLocale = strings.TrimSpace(*patch.DefaultLocale)
-	}
-	if patch.SupportedLocales != nil {
-		next.SupportedLocales = cleanStringSlice(*patch.SupportedLocales)
 	}
 	if patch.Timezone != nil {
 		next.Timezone = strings.TrimSpace(*patch.Timezone)
@@ -629,10 +610,6 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 	if err != nil {
 		return AdminProject{}, err
 	}
-	supportedLocalesJSON, err := jsonString(next.SupportedLocales)
-	if err != nil {
-		return AdminProject{}, err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AdminProject{}, err
@@ -645,8 +622,6 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 		    primary_domain = ?,
 		    verified_domains_json = ?,
 		    blog_base_path = ?,
-		    default_locale = ?,
-		    supported_locales = ?,
 		    timezone = ?,
 		    publisher_name = ?,
 		    publisher_url = ?,
@@ -656,7 +631,7 @@ func (s *Store) UpdateProject(ctx context.Context, actorUserID, projectID string
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, next.Name, nullIfEmpty(next.PrimaryDomain), verifiedDomainsJSON, next.BlogBasePath,
-		next.DefaultLocale, supportedLocalesJSON, next.Timezone, nullIfEmpty(next.PublisherName),
+		next.Timezone, nullIfEmpty(next.PublisherName),
 		nullIfEmpty(next.PublisherURL), next.DefaultRobotsPolicy, next.SoloOwnerApprovalEnabled, projectID)
 	if err != nil {
 		return AdminProject{}, err
@@ -2084,8 +2059,7 @@ const adminProjectColumns = `
 	project.id, project.workspace_id, workspace.slug, workspace.name,
 	project.slug, project.name, project.status, project.public_project_key,
 	COALESCE(project.primary_domain, ''), project.verified_domains_json,
-	project.blog_base_path, project.default_locale, project.supported_locales,
-	project.timezone, COALESCE(project.publisher_name, ''),
+	project.blog_base_path, project.timezone, COALESCE(project.publisher_name, ''),
 	COALESCE(project.publisher_url, ''), project.default_robots_policy,
 	project.solo_owner_approval_enabled,
 	membership.role, project.created_at, project.updated_at
@@ -2102,7 +2076,7 @@ const adminAuthorColumns = `
 
 func scanAdminProject(row rowScanner) (AdminProject, error) {
 	var project AdminProject
-	var verifiedDomainsJSON, supportedLocalesJSON string
+	var verifiedDomainsJSON string
 	err := row.Scan(
 		&project.ID,
 		&project.WorkspaceID,
@@ -2115,8 +2089,6 @@ func scanAdminProject(row rowScanner) (AdminProject, error) {
 		&project.PrimaryDomain,
 		&verifiedDomainsJSON,
 		&project.BlogBasePath,
-		&project.DefaultLocale,
-		&supportedLocalesJSON,
 		&project.Timezone,
 		&project.PublisherName,
 		&project.PublisherURL,
@@ -2130,12 +2102,8 @@ func scanAdminProject(row rowScanner) (AdminProject, error) {
 		return AdminProject{}, err
 	}
 	decodeInto(verifiedDomainsJSON, &project.VerifiedDomains)
-	decodeInto(supportedLocalesJSON, &project.SupportedLocales)
 	if project.VerifiedDomains == nil {
 		project.VerifiedDomains = []string{}
-	}
-	if project.SupportedLocales == nil {
-		project.SupportedLocales = []string{}
 	}
 	return project, nil
 }
@@ -2326,18 +2294,11 @@ func applyProjectDefaults(input ProjectInput) ProjectInput {
 	input.PublisherName = strings.TrimSpace(input.PublisherName)
 	input.PublisherURL = strings.TrimSpace(input.PublisherURL)
 	input.VerifiedDomains = cleanStringSlice(input.VerifiedDomains)
-	input.SupportedLocales = cleanStringSlice(input.SupportedLocales)
 	if input.BlogBasePath == "" {
 		input.BlogBasePath = "/blog"
 	}
 	if !strings.HasPrefix(input.BlogBasePath, "/") {
 		input.BlogBasePath = "/" + input.BlogBasePath
-	}
-	if input.DefaultLocale == "" {
-		input.DefaultLocale = "en"
-	}
-	if len(input.SupportedLocales) == 0 {
-		input.SupportedLocales = []string{input.DefaultLocale}
 	}
 	if input.Timezone == "" {
 		input.Timezone = "UTC"
@@ -2360,9 +2321,6 @@ func validateProjectInput(input ProjectInput) error {
 	}
 	if strings.Contains(input.BlogBasePath, " ") {
 		return errors.New("blog base path cannot contain spaces")
-	}
-	if input.DefaultLocale == "" {
-		return errors.New("default locale is required")
 	}
 	return nil
 }

@@ -24,7 +24,6 @@ export type APIListEnvelope<T> = {
 }
 
 export type ListPostsParams = {
-  locale?: string
   category?: string
   categoryMode?: 'descendants' | 'exact'
   tag?: string
@@ -108,14 +107,12 @@ export type PublishedSEO = {
   index: boolean
   openGraph: PublishedOpenGraph
   structuredData: JSONLDObject[]
-  hreflang: unknown
 }
 
 export type PublishedPost = {
   id: string
   articleType: string
   slug: string
-  locale: string
   revision: number
   title: string
   deck?: string
@@ -147,7 +144,6 @@ export type RelatedPost = {
 
 export type DiscoveryEntry = {
   id: string
-  locale: string
   canonicalUrl: string
   lastModified: string
 }
@@ -166,7 +162,6 @@ export type ChangeRecord = {
 }
 
 export type HeadPostOptions = {
-  locale?: string
   ifNoneMatch?: string
   ifModifiedSince?: string
 }
@@ -192,8 +187,8 @@ export class ContentClient {
     this.fetcher = options.fetch ?? globalThis.fetch
   }
 
-  getPost(slug: string, locale = 'en') {
-    return this.request<APIEnvelope<PublishedPost>>(`/content/v1/posts/${encodeURIComponent(slug)}?locale=${encodeURIComponent(locale)}`)
+  getPost(slug: string) {
+    return this.request<APIEnvelope<PublishedPost>>(`/content/v1/posts/${encodeURIComponent(slug)}`)
   }
 
   async headPost(slug: string, options: HeadPostOptions = {}): Promise<HeadPostResult> {
@@ -204,7 +199,7 @@ export class ContentClient {
     if (options.ifNoneMatch) headers.set('If-None-Match', options.ifNoneMatch)
     if (options.ifModifiedSince) headers.set('If-Modified-Since', options.ifModifiedSince)
     const response = await this.fetcher(
-      `${this.baseUrl}/content/v1/posts/${encodeURIComponent(slug)}${query({ locale: options.locale ?? 'en' })}`,
+      `${this.baseUrl}/content/v1/posts/${encodeURIComponent(slug)}`,
       { method: 'HEAD', headers }
     )
     if (!response.ok && response.status !== 304) {
@@ -218,8 +213,8 @@ export class ContentClient {
     }
   }
 
-  getPostByID(contentID: string, locale = 'en') {
-    return this.request<APIEnvelope<PublishedPost>>(`/content/v1/posts/by-id/${encodeURIComponent(contentID)}?locale=${encodeURIComponent(locale)}`)
+  getPostByID(contentID: string) {
+    return this.request<APIEnvelope<PublishedPost>>(`/content/v1/posts/by-id/${encodeURIComponent(contentID)}`)
   }
 
   getPreviewRevision(revisionID: string, previewToken: string) {
@@ -233,9 +228,9 @@ export class ContentClient {
     return this.request<APIListEnvelope<PublishedPost>>(`/content/v1/posts${query(params)}`)
   }
 
-  relatedPosts(slug: string, locale = 'en', limit = 6) {
+  relatedPosts(slug: string, limit = 6) {
     return this.request<APIListEnvelope<RelatedPost>>(
-      `/content/v1/posts/${encodeURIComponent(slug)}/related${query({ locale, limit })}`
+      `/content/v1/posts/${encodeURIComponent(slug)}/related${query({ limit })}`
     )
   }
 
@@ -275,8 +270,8 @@ export class ContentClient {
     return this.request<APIListEnvelope<PublishedPost>>(`/content/v1/feed-data${query(params)}`)
   }
 
-  discoveryManifest(locale?: string) {
-    return this.request<APIEnvelope<{ urls: DiscoveryEntry[] }>>(`/content/v1/discovery-manifest${query({ locale })}`)
+  discoveryManifest() {
+    return this.request<APIEnvelope<{ urls: DiscoveryEntry[] }>>('/content/v1/discovery-manifest')
   }
 
   redirects(params: { cursor?: string, limit?: number } = {}) {

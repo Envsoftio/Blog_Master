@@ -802,7 +802,7 @@ func documentRollbackRoute(api huma.API) {
 		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/rollback",
 		OperationID: "rollbackArticle",
 		Summary:     "Rollback an article",
-		Description: "Publishes a previously approved revision for the selected locale while preserving publication routing metadata and revision history.",
+		Description: "Publishes a previously approved revision while preserving publication routing metadata and revision history.",
 		Tags:        []string{"Administration"},
 		Security:    adminSessionSecurityRequirement(),
 		Parameters: []*huma.Param{
@@ -829,7 +829,7 @@ func documentRollbackRoute(api huma.API) {
 			},
 		},
 		RequestBody: &huma.RequestBody{
-			Description: "Approved revision and optional publication locale to restore.",
+			Description: "Approved revision to restore.",
 			Required:    true,
 			Content: map[string]*huma.MediaType{
 				"application/json": {Schema: requestSchema},

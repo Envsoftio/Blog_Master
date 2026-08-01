@@ -60,7 +60,7 @@
             <article class="rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div class="min-w-0">
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">{{ labelize(article.articleType) }} / {{ article.locale }}</p>
+                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">{{ labelize(article.articleType) }}</p>
                   <h2 class="mt-1 truncate text-xl font-semibold tracking-normal">{{ article.title }}</h2>
                   <p class="mt-1 truncate text-sm text-[#5f6a63] dark:text-[#b8c2bb]">{{ article.slug }}</p>
                 </div>
@@ -122,10 +122,6 @@
                 <div>
                   <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Created</dt>
                   <dd class="truncate">{{ formatDate(article.latestRevision.createdAt) }}</dd>
-                </div>
-                <div>
-                  <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Locale</dt>
-                  <dd class="truncate">{{ article.latestRevision.locale }}</dd>
                 </div>
               </dl>
 
@@ -202,9 +198,7 @@
                     </span>
                   </div>
                   <p class="mt-3 line-clamp-2 text-sm text-[#4f5b54] dark:text-[#c5cec8]">{{ revision.title }}</p>
-                  <p v-if="revision.publishedLocales.length" class="mt-2 text-xs font-medium text-[#165a4a] dark:text-[#aee4d0]">
-                    Published: {{ revision.publishedLocales.join(', ') }}
-                  </p>
+                  <p v-if="revision.published" class="mt-2 text-xs font-medium text-[#165a4a] dark:text-[#aee4d0]">Published</p>
                   <div class="mt-3 flex flex-wrap gap-2">
                     <button
                       class="rounded-md border border-[#c9d4cc] px-2.5 py-1.5 text-xs font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]"
@@ -734,10 +728,6 @@
                 <input v-model.trim="copyForm.slug" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
               </label>
               <label class="block space-y-2">
-                <span class="text-sm font-medium">Locale</span>
-                <input v-model.trim="copyForm.locale" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
-              </label>
-              <label class="block space-y-2">
                 <span class="text-sm font-medium">Canonical decision</span>
                 <select v-model="copyForm.canonicalDecision" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]">
                   <option value="material_adaptation">Material adaptation</option>
@@ -748,7 +738,7 @@
                 v-if="copyForm.canonicalDecision === 'canonical_original'"
                 class="rounded-md border border-[#d8d0e8] bg-[#f7f4fc] px-3 py-2 text-xs text-[#5e4b86] dark:border-[#4f4565] dark:bg-[#211d2a] dark:text-[#cbbfe2]"
               >
-                The canonical URL is resolved by the server from the selected source revision’s locale. It cannot be redirected to another URL.
+                The canonical URL is resolved by the server from the selected source revision. It cannot be redirected to another URL.
               </p>
               <p class="rounded-md bg-[#f2f5f3] px-3 py-2 text-xs text-[#5d6a61] dark:bg-[#171b18] dark:text-[#aeb8b0]">
                 The destination gets a new unpublished draft and revision history. Choose destination taxonomy; copies containing project-owned body references are blocked until those references are removed or remapped.
@@ -844,7 +834,7 @@
                   </option>
                 </select>
               </label>
-              <p v-if="article.publicationState !== 'published'" class="text-xs text-[#667169] dark:text-[#aeb8b0]">Rollback is available while this locale is published.</p>
+              <p v-if="article.publicationState !== 'published'" class="text-xs text-[#667169] dark:text-[#aeb8b0]">Rollback is available while this article is published.</p>
               <button
                 class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
                 type="submit"
@@ -930,7 +920,6 @@ type AdminProject = {
   role: string
   primaryDomain?: string
   blogBasePath: string
-  defaultLocale: string
 }
 
 type AdminRevision = {
@@ -942,7 +931,6 @@ type AdminRevision = {
   deck?: string
   excerpt?: string
   shortAnswer?: string
-  locale: string
   editorialState: string
   contentHash: string
   createdAt: string
@@ -950,7 +938,7 @@ type AdminRevision = {
 
 type AdminRevisionSummary = AdminRevision & {
   baseRevisionId?: string
-  publishedLocales: string[]
+  published: boolean
 }
 
 type AdminRevisionDetail = AdminRevisionSummary & {
@@ -1042,7 +1030,6 @@ type AdminArticle = {
   originArticleId?: string
   articleType: string
   slug: string
-  locale: string
   title: string
   editorialState: string
   publicationState: string
@@ -1198,7 +1185,6 @@ const copyForm = reactive({
   sourceRevisionId: '',
   primaryCategoryId: '',
   slug: '',
-  locale: '',
   canonicalDecision: 'material_adaptation'
 })
 
@@ -1266,7 +1252,6 @@ const canCopyArticle = computed(() => Boolean(
   && copyForm.sourceRevisionId
   && copyForm.primaryCategoryId
   && copyForm.slug.trim()
-  && copyForm.locale.trim()
   && ['canonical_original', 'material_adaptation'].includes(copyForm.canonicalDecision)
 ))
 const openCommentCount = computed(() => comments.value.filter(comment => comment.status !== 'resolved').length)
@@ -1307,7 +1292,6 @@ const comparisonFields = computed<ComparisonField[]>(() => {
     comparisonField('deck', 'Deck', before.deck || '', after.deck || ''),
     comparisonField('excerpt', 'Excerpt', before.excerpt || '', after.excerpt || ''),
     comparisonField('shortAnswer', 'Short answer', before.shortAnswer || '', after.shortAnswer || ''),
-    comparisonField('locale', 'Locale', before.locale, after.locale),
     comparisonField('bodyText', 'Body text', before.plainText, after.plainText, false, true),
     comparisonField('bodyDocument', 'Structured body', prettyJSON(before.bodyDocument), prettyJSON(after.bodyDocument), true, true),
     comparisonField('sanitizedHtml', 'Sanitized HTML', before.sanitizedHtml, after.sanitizedHtml, true, true),
@@ -1587,7 +1571,6 @@ async function copyArticle() {
           sourceRevisionId: copyForm.sourceRevisionId,
           primaryCategoryId: copyForm.primaryCategoryId,
           slug: copyForm.slug,
-          locale: copyForm.locale,
           canonicalDecision: copyForm.canonicalDecision
         }
       }
@@ -1610,8 +1593,6 @@ async function loadCopyDestinationCategories(destinationProjectId: string) {
     const allCategories = await fetchAllCategories(destinationProjectId)
     if (requestVersion !== copyCategoryRequestVersion) return
     copyDestinationCategories.value = sortCategories(allCategories)
-    const destination = projects.value.find(candidate => candidate.id === destinationProjectId)
-    copyForm.locale = destination?.defaultLocale || 'en'
   } catch (error) {
     if (requestVersion !== copyCategoryRequestVersion) return
     errorMessage.value = normalizeAPIError(error, 'Could not load destination categories.')
@@ -1721,16 +1702,13 @@ async function unpublishArticle() {
 async function rollbackArticle() {
   const selected = revisions.value.find(revision => revision.id === rollbackForm.revisionId)
   if (!selected || !canRollback.value) return
-  if (!window.confirm(`Rollback this locale to revision #${selected.revisionNumber}?`)) return
+  if (!window.confirm(`Rollback this article to revision #${selected.revisionNumber}?`)) return
   await mutateArticle('rollback', async (csrfToken) => {
     await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/rollback`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'X-CSRF-Token': csrfToken },
-      body: {
-        revisionId: rollbackForm.revisionId,
-        locale: article.value?.locale || project.value?.defaultLocale || 'en'
-      }
+      body: { revisionId: rollbackForm.revisionId }
     })
     rollbackForm.revisionId = ''
     successMessage.value = 'Article rolled back.'
@@ -2016,7 +1994,6 @@ function setArticle(value: AdminArticle) {
   revisionForm.title = revisionForm.title || value.title
   copyForm.sourceRevisionId = copyForm.sourceRevisionId || value.latestRevision?.id || ''
   copyForm.slug = copyForm.slug || `${value.slug}-copy`
-  copyForm.locale = copyForm.locale || value.locale || project.value?.defaultLocale || 'en'
   assignmentForm.revisionId = value.latestRevision?.id || ''
   commentForm.revisionId = value.latestRevision?.id || ''
   if (!scheduleDraft.value) {
@@ -2184,7 +2161,6 @@ function publicationBody(revisionId: string) {
   return {
     revisionId,
     slug: publicationForm.slug,
-    locale: article.value?.locale || project.value?.defaultLocale || 'en',
     canonicalUrl: publicationForm.canonicalUrl || undefined
   }
 }
@@ -2653,8 +2629,7 @@ function removeLocalDraft() {
 }
 
 function isCurrentPublication(revision: AdminRevisionSummary) {
-  const locale = article.value?.locale || project.value?.defaultLocale || 'en'
-  return revision.publishedLocales.includes(locale)
+  return revision.published
 }
 
 function assignmentDueAtForAPI() {

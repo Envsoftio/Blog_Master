@@ -34,10 +34,6 @@
           <input v-model.trim="form.blogBasePath" required placeholder="/blog">
         </label>
         <label class="field">
-          <span>Default locale</span>
-          <input v-model.trim="form.defaultLocale" required placeholder="en">
-        </label>
-        <label class="field">
           <span>Timezone</span>
           <input v-model.trim="form.timezone" required placeholder="UTC">
         </label>
@@ -99,7 +95,6 @@
         </div>
         <dl>
           <div><dt><Globe2 :size="14" />Domain</dt><dd>{{ project.primaryDomain || 'Not configured' }}</dd></div>
-          <div><dt><Languages :size="14" />Locale</dt><dd>{{ project.defaultLocale.toUpperCase() }}</dd></div>
           <div><dt><FolderKanban :size="14" />Blog path</dt><dd>{{ project.blogBasePath }}</dd></div>
           <div><dt><Clock3 :size="14" />Timezone</dt><dd>{{ project.timezone || 'UTC' }}</dd></div>
         </dl>
@@ -120,7 +115,6 @@ import {
   Ellipsis,
   FolderKanban,
   Globe2,
-  Languages,
   LoaderCircle,
   PanelsTopLeft,
   Plus,
@@ -147,10 +141,9 @@ const form = reactive({
   slug: '',
   primaryDomain: '',
   blogBasePath: '/blog',
-  defaultLocale: 'en',
   timezone: 'UTC'
 })
-const canCreate = computed(() => form.name.length >= 2 && form.slug.length >= 2 && Boolean(form.blogBasePath) && Boolean(form.defaultLocale))
+const canCreate = computed(() => form.name.length >= 2 && form.slug.length >= 2 && Boolean(form.blogBasePath))
 const filteredProjects = computed(() => {
   const term = search.value.toLowerCase()
   return projects.value.filter(project => {
@@ -192,8 +185,6 @@ async function createProject() {
       slug: form.slug,
       primaryDomain: form.primaryDomain,
       blogBasePath: normalizeBlogPath(form.blogBasePath),
-      defaultLocale: form.defaultLocale,
-      supportedLocales: [form.defaultLocale],
       timezone: form.timezone
     })
     projects.value = [response.data, ...projects.value.filter(project => project.id !== response.data.id)]

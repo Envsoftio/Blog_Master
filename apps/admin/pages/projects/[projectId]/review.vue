@@ -66,7 +66,6 @@
             </div>
             <p>{{ article.latestRevision?.excerpt || article.slug }}</p>
             <div class="review-item__meta">
-              <span><Languages :size="13" />{{ article.locale.toUpperCase() }}</span>
               <span><GitCommitHorizontal :size="13" />Revision {{ article.latestRevision?.revisionNumber || '–' }}</span>
               <span><Clock3 :size="13" />{{ relativeDate(article.latestRevision?.createdAt || article.createdAt) }}</span>
               <span>{{ labelize(article.articleType) }}</span>
@@ -112,7 +111,6 @@ import {
   Clock3,
   FileText,
   GitCommitHorizontal,
-  Languages,
   ListChecks,
   LoaderCircle,
   RefreshCw,

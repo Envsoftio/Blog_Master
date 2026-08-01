@@ -73,8 +73,8 @@ func TestPublicationRequiresApprovedRevisionAndPrimaryCategory(t *testing.T) {
 
 	assertSQLFails(t, db, `
 		INSERT INTO project_publications(
-		  id, project_id, content_id, locale, slug, canonical_url, published_revision_id, publication_state
-		) VALUES ('publication', 'project-a', 'article', 'en', 'article', 'https://example.test/article', 'revision', 'published')
+		  id, project_id, content_id, slug, canonical_url, published_revision_id, publication_state
+		) VALUES ('publication', 'project-a', 'article', 'article', 'https://example.test/article', 'revision', 'published')
 	`, "exactly one primary category")
 	assertSQLFails(t, db, `
 		INSERT INTO article_taxonomy(project_id, content_id, taxonomy_term_id, is_primary)
@@ -85,8 +85,8 @@ func TestPublicationRequiresApprovedRevisionAndPrimaryCategory(t *testing.T) {
 		INSERT INTO article_taxonomy(project_id, content_id, taxonomy_term_id, is_primary)
 		VALUES ('project-a', 'article', 'category', 1);
 		INSERT INTO project_publications(
-		  id, project_id, content_id, locale, slug, canonical_url, published_revision_id, publication_state
-		) VALUES ('publication', 'project-a', 'article', 'en', 'article', 'https://example.test/article', 'revision', 'published');
+		  id, project_id, content_id, slug, canonical_url, published_revision_id, publication_state
+		) VALUES ('publication', 'project-a', 'article', 'article', 'https://example.test/article', 'revision', 'published');
 	`); err != nil {
 		t.Fatal(err)
 	}
