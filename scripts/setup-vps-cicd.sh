@@ -14,6 +14,7 @@ TLS_CERT_PATH=""
 TLS_KEY_PATH=""
 EXTERNAL_TLS_TERMINATION="0"
 SET_GITHUB_SECRETS="0"
+CONFIGURE_BACKUPS="0"
 GH_REPO=""
 KEY_PATH=""
 
@@ -32,6 +33,7 @@ Options:
   --tls-cert <remote-path>     TLS certificate chain on the VPS
   --tls-key <remote-path>      TLS private key on the VPS
   --external-tls               TLS terminates at a trusted upstream proxy
+  --configure-backups          Install backup scripts and systemd units (credentials are configured separately)
   --repo <owner/repo>          GitHub repo for setting secrets
   --set-github-secrets         Use gh CLI to set GitHub Actions secrets
   --key-path <path>            Local deploy key path. Default: .deploy/seoblog_github_actions_ed25519
@@ -123,6 +125,10 @@ while [ "$#" -gt 0 ]; do
       EXTERNAL_TLS_TERMINATION="1"
       shift
       ;;
+    --configure-backups)
+      CONFIGURE_BACKUPS="1"
+      shift
+      ;;
     --repo)
       GH_REPO="${2:-}"
       shift 2
@@ -148,6 +154,7 @@ done
 [ -n "$REMOTE_HOST" ] || die "--host is required"
 [ -n "$REMOTE_USER" ] || die "--user is required"
 [ -n "$DEPLOY_PATH" ] || die "--deploy-path cannot be empty"
+[[ "$DEPLOY_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "--deploy-path must be a safe absolute path"
 [ "$CONFIGURE_NGINX" = "0" ] || [ -n "$DOMAIN" ] || die "--configure-nginx requires --domain"
 if [ "$CONFIGURE_NGINX" = "1" ]; then
   if [ "$EXTERNAL_TLS_TERMINATION" = "1" ]; then
@@ -213,6 +220,22 @@ esac
 log "uploading VPS deploy script"
 scp "${SCP_OPTS[@]}" "infra/deploy/deploy-release.sh" "$SSH_TARGET:/tmp/${APP_NAME}-deploy-release.sh"
 
+if [ "$CONFIGURE_BACKUPS" = "1" ]; then
+  log "uploading backup and restore automation"
+  for asset in \
+    infra/backup/litestream.yml \
+    infra/backup/backup.env.example \
+    infra/backup/create-recovery-point.sh \
+    infra/backup/restore-primary.sh \
+    infra/systemd/seoblog-litestream.service \
+    infra/systemd/seoblog-backup-verify.service \
+    infra/systemd/seoblog-backup-verify.timer \
+    infra/systemd/seoblog-backup-monthly.service \
+    infra/systemd/seoblog-backup-monthly.timer; do
+    scp "${SCP_OPTS[@]}" "$asset" "$SSH_TARGET:/tmp/${APP_NAME}-$(basename "$asset")"
+  done
+fi
+
 REMOTE_SETUP_SCRIPT="/tmp/${APP_NAME}-setup-vps.sh"
 log "uploading VPS setup helper"
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat > $(quote "$REMOTE_SETUP_SCRIPT")" <<'REMOTE'
@@ -246,6 +269,19 @@ for cmd in node pm2 tar; do
   fi
 done
 [ "$missing_runtime" -eq 0 ] || exit 1
+
+if [ "$CONFIGURE_BACKUPS" = "1" ]; then
+  missing_backup_runtime=0
+  for cmd in aws flock litestream sha256sum sqlite3; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      echo "$cmd is required before --configure-backups can install services" >&2
+      missing_backup_runtime=1
+    fi
+  done
+  [ "$missing_backup_runtime" -eq 0 ] || exit 1
+  litestream version | grep -q 'v0.5.11' || { echo "Litestream v0.5.11 is required" >&2; exit 1; }
+  LITESTREAM_BIN="$(command -v litestream)"
+fi
 
 if ! node -e "const [major] = process.versions.node.split('.').map(Number); process.exit(major >= 22 ? 0 : 1)"; then
   echo "Node.js 22+ is required on the VPS for the Nuxt server output" >&2
@@ -284,9 +320,9 @@ SEOBLOG_AI_MODEL=
 SEOBLOG_AI_TIMEOUT=90s
 SEOBLOG_AI_MAX_INPUT_BYTES=262144
 SEOBLOG_AI_MAX_OUTPUT_TOKENS=4096
-SEOBLOG_DEPLOY_BACKUP_COMMAND=
+SEOBLOG_DEPLOY_BACKUP_COMMAND=${DEPLOY_PATH}/backup/create-recovery-point.sh pre-release
 SEOBLOG_DEPLOY_BACKUP_VERIFY_COMMAND=
-SEOBLOG_DEPLOY_REQUIRE_BACKUP=false
+SEOBLOG_DEPLOY_REQUIRE_BACKUP=true
 SEOBLOG_DEPLOY_SKIP_BACKUP=false
 SEOBLOG_DEPLOY_DRAIN_COMMAND=
 SEOBLOG_DEPLOY_CONTENT_SMOKE_COMMAND=
@@ -297,6 +333,39 @@ SEOBLOG_RELEASE_ROOT=${DEPLOY_PATH}/current
 ENV
 else
   log "$SHARED_ENV already exists; leaving it unchanged"
+fi
+
+if [ "$CONFIGURE_BACKUPS" = "1" ]; then
+  BACKUP_DIR="$DEPLOY_PATH/backup"
+  REMOTE_DEPLOY_GROUP="$(id -gn "$REMOTE_DEPLOY_USER")"
+  $SUDO mkdir -p "$BACKUP_DIR" "$DEPLOY_PATH/shared/backup-evidence"
+  $SUDO chown "$REMOTE_DEPLOY_USER:$REMOTE_DEPLOY_GROUP" "$DEPLOY_PATH/shared/backup-evidence"
+  $SUDO chmod 700 "$DEPLOY_PATH/shared/backup-evidence"
+  $SUDO install -o "$REMOTE_DEPLOY_USER" -g "$REMOTE_DEPLOY_GROUP" -m 755 "/tmp/${APP_NAME}-create-recovery-point.sh" "$BACKUP_DIR/create-recovery-point.sh"
+  $SUDO install -o "$REMOTE_DEPLOY_USER" -g "$REMOTE_DEPLOY_GROUP" -m 755 "/tmp/${APP_NAME}-restore-primary.sh" "$BACKUP_DIR/restore-primary.sh"
+  sed "s#/srv/seoblog#${DEPLOY_PATH//&/\\&}#g" "/tmp/${APP_NAME}-litestream.yml" | $SUDO tee "$BACKUP_DIR/litestream.yml" >/dev/null
+  $SUDO chown "$REMOTE_DEPLOY_USER:$REMOTE_DEPLOY_GROUP" "$BACKUP_DIR/litestream.yml"
+  $SUDO chmod 640 "$BACKUP_DIR/litestream.yml"
+
+  BACKUP_ENV="$DEPLOY_PATH/shared/backup.env"
+  if [ ! -f "$BACKUP_ENV" ]; then
+    sed "s#/srv/seoblog#${DEPLOY_PATH//&/\\&}#g" "/tmp/${APP_NAME}-backup.env.example" | $SUDO tee "$BACKUP_ENV" >/dev/null
+    $SUDO chown "$REMOTE_DEPLOY_USER:$REMOTE_DEPLOY_GROUP" "$BACKUP_ENV"
+    $SUDO chmod 600 "$BACKUP_ENV"
+  else
+    log "$BACKUP_ENV already exists; leaving it unchanged"
+  fi
+
+  for unit_name in seoblog-litestream.service seoblog-backup-verify.service seoblog-backup-verify.timer seoblog-backup-monthly.service seoblog-backup-monthly.timer; do
+    sed -e "s#User=seoblog#User=${REMOTE_DEPLOY_USER//&/\\&}#" \
+      -e "s#Group=seoblog#Group=${REMOTE_DEPLOY_GROUP//&/\\&}#" \
+      -e "s#/usr/local/bin/litestream#${LITESTREAM_BIN//&/\\&}#g" \
+      -e "s#/srv/seoblog#${DEPLOY_PATH//&/\\&}#g" \
+      "/tmp/${APP_NAME}-${unit_name}" | $SUDO tee "/etc/systemd/system/${unit_name}" >/dev/null
+    $SUDO chmod 644 "/etc/systemd/system/${unit_name}"
+  done
+  $SUDO systemctl daemon-reload
+  log "backup units installed but not enabled; configure $BACKUP_ENV and complete the documented preflight first"
 fi
 
 if [ "$CONFIGURE_NGINX" = "1" ]; then
@@ -470,7 +539,7 @@ ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "chmod 700 $(quote "$REMOTE_SETUP_SCRIPT")"
 
 log "preparing $DEPLOY_PATH on the VPS"
 ssh -tt "${SSH_OPTS[@]}" "$SSH_TARGET" \
-  "APP_NAME=$(quote "$APP_NAME") DEPLOY_PATH=$(quote "$DEPLOY_PATH") REMOTE_DEPLOY_USER=$(quote "$REMOTE_USER") ADMIN_PORT=$(quote "$ADMIN_PORT") API_PORT=$(quote "$API_PORT") DOMAIN=$(quote "$DOMAIN") CONFIGURE_NGINX=$(quote "$CONFIGURE_NGINX") TLS_CERT_PATH=$(quote "$TLS_CERT_PATH") TLS_KEY_PATH=$(quote "$TLS_KEY_PATH") EXTERNAL_TLS_TERMINATION=$(quote "$EXTERNAL_TLS_TERMINATION") bash $(quote "$REMOTE_SETUP_SCRIPT"); status=\$?; rm -f $(quote "$REMOTE_SETUP_SCRIPT"); exit \$status"
+  "APP_NAME=$(quote "$APP_NAME") DEPLOY_PATH=$(quote "$DEPLOY_PATH") REMOTE_DEPLOY_USER=$(quote "$REMOTE_USER") ADMIN_PORT=$(quote "$ADMIN_PORT") API_PORT=$(quote "$API_PORT") DOMAIN=$(quote "$DOMAIN") CONFIGURE_NGINX=$(quote "$CONFIGURE_NGINX") CONFIGURE_BACKUPS=$(quote "$CONFIGURE_BACKUPS") TLS_CERT_PATH=$(quote "$TLS_CERT_PATH") TLS_KEY_PATH=$(quote "$TLS_KEY_PATH") EXTERNAL_TLS_TERMINATION=$(quote "$EXTERNAL_TLS_TERMINATION") bash $(quote "$REMOTE_SETUP_SCRIPT"); status=\$?; rm -f $(quote "$REMOTE_SETUP_SCRIPT"); exit \$status"
 
 KNOWN_HOSTS="$(ssh-keyscan -p "$SSH_PORT" "$REMOTE_HOST" 2>/dev/null || true)"
 

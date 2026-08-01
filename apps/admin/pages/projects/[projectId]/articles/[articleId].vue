@@ -70,19 +70,19 @@
 
           <nav class="article-workspace__tabs" aria-label="Article workspace">
             <button v-if="canWriteArticles" type="button" :class="{ 'is-active': workspaceTab === 'write' }" :aria-current="workspaceTab === 'write' ? 'page' : undefined" @click="workspaceTab = 'write'">
-              <FilePenLine :size="17" /> Write
+              <FilePenLine :size="17" /><span>Write</span>
             </button>
             <button type="button" :class="{ 'is-active': workspaceTab === 'overview' }" :aria-current="workspaceTab === 'overview' ? 'page' : undefined" @click="workspaceTab = 'overview'">
-              <Hash :size="17" /> Overview
+              <Hash :size="17" /><span>Overview</span>
             </button>
             <button v-if="canPublishArticles" type="button" :class="{ 'is-active': workspaceTab === 'publish' }" :aria-current="workspaceTab === 'publish' ? 'page' : undefined" @click="workspaceTab = 'publish'">
-              <UploadCloud :size="17" /> Publish
+              <UploadCloud :size="17" /><span>Publish</span>
             </button>
             <button type="button" :class="{ 'is-active': workspaceTab === 'review' }" :aria-current="workspaceTab === 'review' ? 'page' : undefined" @click="workspaceTab = 'review'">
-              <UserCheck :size="17" /> Review <span v-if="openAssignmentCount + openCommentCount" class="article-workspace__count">{{ openAssignmentCount + openCommentCount }}</span>
+              <UserCheck :size="17" /><span>Review</span><span v-if="openAssignmentCount + openCommentCount" class="article-workspace__count">{{ openAssignmentCount + openCommentCount }}</span>
             </button>
             <button type="button" :class="{ 'is-active': workspaceTab === 'history' }" :aria-current="workspaceTab === 'history' ? 'page' : undefined" @click="workspaceTab = 'history'">
-              <History :size="17" /> History
+              <History :size="17" /><span>History</span>
             </button>
           </nav>
 
@@ -3171,6 +3171,7 @@ function apiErrorStatus(error: unknown) {
 
 .article-workspace {
   display: grid;
+  min-width: 0;
   gap: 20px;
 }
 
@@ -3230,31 +3231,45 @@ function apiErrorStatus(error: unknown) {
 .article-workspace__tabs {
   position: sticky;
   z-index: 20;
-  top: 0;
+  top: 84px;
   display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: stretch;
   gap: 3px;
   overflow-x: auto;
+  overscroll-behavior-inline: contain;
   padding: 5px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   box-shadow: var(--shadow-sm);
+  scrollbar-width: none;
   backdrop-filter: blur(12px);
+}
+
+.article-workspace__tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .article-workspace__tabs button {
   display: inline-flex;
   min-height: 38px;
-  flex: 0 0 auto;
+  min-width: max-content;
+  flex: 1 0 max-content;
   align-items: center;
+  justify-content: center;
   gap: 7px;
   padding: 0 13px;
   border: 0 !important;
-  border-radius: 7px;
+  border-radius: 7px !important;
   background: transparent;
   color: var(--text-soft);
   font-size: 13px;
   font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
 }
 
 .article-workspace__tabs button:hover {
@@ -3266,6 +3281,11 @@ function apiErrorStatus(error: unknown) {
   background: var(--primary-soft);
   color: var(--primary);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+.article-workspace__tabs button:focus-visible {
+  position: relative;
+  z-index: 1;
 }
 
 .article-workspace__count {
@@ -3591,6 +3611,12 @@ function apiErrorStatus(error: unknown) {
   }
 }
 
+@media (max-width: 620px) {
+  .article-workspace__tabs {
+    top: 76px;
+  }
+}
+
 @media (max-width: 560px) {
   .article-workspace__title h1 {
     font-size: 24px;
@@ -3602,6 +3628,7 @@ function apiErrorStatus(error: unknown) {
   }
 
   .article-workspace__tabs button {
+    flex: 0 0 auto;
     padding-right: 10px;
     padding-left: 10px;
   }

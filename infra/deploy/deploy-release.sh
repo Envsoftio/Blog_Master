@@ -167,9 +167,9 @@ SEOBLOG_SMTP_FROM=noreply@proctorplus.io
 SEOBLOG_SMTP_FROM_NAME='Example Team'
 SEOBLOG_WEBHOOK_ENCRYPTION_KEY=${webhook_encryption_key}
 SEOBLOG_WEBHOOK_ALLOWED_HOSTS=
-SEOBLOG_DEPLOY_BACKUP_COMMAND=
+SEOBLOG_DEPLOY_BACKUP_COMMAND=${DEPLOY_PATH}/backup/create-recovery-point.sh pre-release
 SEOBLOG_DEPLOY_BACKUP_VERIFY_COMMAND=
-SEOBLOG_DEPLOY_REQUIRE_BACKUP=false
+SEOBLOG_DEPLOY_REQUIRE_BACKUP=true
 SEOBLOG_DEPLOY_SKIP_BACKUP=false
 SEOBLOG_DEPLOY_DRAIN_COMMAND=
 SEOBLOG_DEPLOY_CONTENT_SMOKE_COMMAND=
@@ -262,11 +262,14 @@ create_recovery_point() {
     return
   fi
   if [ "${SEOBLOG_DEPLOY_SKIP_BACKUP:-false}" = "true" ]; then
+    if [ "${SEOBLOG_DEPLOY_REQUIRE_BACKUP:-true}" = "true" ]; then
+      fail "production backup gate cannot be skipped while SEOBLOG_DEPLOY_REQUIRE_BACKUP=true"
+    fi
     log "pre-migration recovery point skipped by SEOBLOG_DEPLOY_SKIP_BACKUP=true"
     return
   fi
   if [ -z "${SEOBLOG_DEPLOY_BACKUP_COMMAND:-}" ]; then
-    if [ "${SEOBLOG_DEPLOY_REQUIRE_BACKUP:-false}" = "true" ]; then
+    if [ "${SEOBLOG_DEPLOY_REQUIRE_BACKUP:-true}" = "true" ]; then
       fail "SEOBLOG_DEPLOY_BACKUP_COMMAND is required for an existing production database"
     fi
     log "SEOBLOG_DEPLOY_BACKUP_COMMAND is not set; continuing for backward-compatible deploy"

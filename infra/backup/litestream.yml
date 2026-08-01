@@ -1,0 +1,42 @@
+# Litestream v0.5.11 configuration for the production SQLite primary.
+# Credentials are read from LITESTREAM_ACCESS_KEY_ID and
+# LITESTREAM_SECRET_ACCESS_KEY in the systemd EnvironmentFile.
+addr: "127.0.0.1:9090"
+
+socket:
+  enabled: true
+  path: ${SEOBLOG_LITESTREAM_SOCKET}
+  permissions: 0660
+
+logging:
+  level: info
+  type: json
+  stderr: true
+
+# Remote deletion is deliberately disabled. Retention of the continuous chain
+# is controlled by reviewed B2 lifecycle rules, using credentials without the
+# deleteFiles capability.
+retention:
+  enabled: false
+
+snapshot:
+  interval: 24h
+  retention: 720h
+
+validation:
+  interval: 5m
+
+sync-interval: 1s
+shutdown-sync-timeout: 120s
+
+dbs:
+  - path: ${SEOBLOG_DB_PATH}
+    replica:
+      type: s3
+      bucket: ${SEOBLOG_BACKUP_BUCKET}
+      path: ${SEOBLOG_BACKUP_LITESTREAM_PREFIX}
+      endpoint: ${SEOBLOG_BACKUP_ENDPOINT}
+      region: ${SEOBLOG_BACKUP_REGION}
+      force-path-style: true
+      sign-payload: true
+      require-content-md5: true

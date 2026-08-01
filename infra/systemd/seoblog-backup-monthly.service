@@ -1,0 +1,16 @@
+[Unit]
+Description=Create and verify a long-retention SEO Blog SQLite recovery point
+After=network-online.target seoblog-litestream.service
+Requires=seoblog-litestream.service
+
+[Service]
+Type=oneshot
+User=seoblog
+Group=seoblog
+EnvironmentFile=/srv/seoblog/shared/backup.env
+ExecStart=/srv/seoblog/backup/create-recovery-point.sh monthly
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/srv/seoblog/shared
+

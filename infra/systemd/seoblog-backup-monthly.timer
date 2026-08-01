@@ -1,0 +1,12 @@
+[Unit]
+Description=Monthly long-retention SEO Blog recovery point
+
+[Timer]
+OnCalendar=*-*-01 03:20:00 UTC
+Persistent=true
+RandomizedDelaySec=20m
+Unit=seoblog-backup-monthly.service
+
+[Install]
+WantedBy=timers.target
+

@@ -53,6 +53,11 @@ tasks:
     cmds:
       - go run ./cmd/admincli migrate
 
+  backup:check:
+    desc: Validate backup, restore and service automation
+    cmds:
+      - infra/backup/tests/run.sh
+
   contracts:generate:
     desc: Generate the OpenAPI contract from the backend route registry
     dir: apps/backend

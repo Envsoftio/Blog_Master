@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily verified SEO Blog recovery point
+
+[Timer]
+OnCalendar=*-*-* 02:20:00 UTC
+Persistent=true
+RandomizedDelaySec=20m
+Unit=seoblog-backup-verify.service
+
+[Install]
+WantedBy=timers.target
+

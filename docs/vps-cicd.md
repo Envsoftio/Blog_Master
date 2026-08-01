@@ -77,9 +77,9 @@ SEOBLOG_AI_MODEL=
 SEOBLOG_AI_TIMEOUT=90s
 SEOBLOG_AI_MAX_INPUT_BYTES=262144
 SEOBLOG_AI_MAX_OUTPUT_TOKENS=4096
-SEOBLOG_DEPLOY_BACKUP_COMMAND=
+SEOBLOG_DEPLOY_BACKUP_COMMAND=/srv/seoblog/backup/create-recovery-point.sh pre-release
 SEOBLOG_DEPLOY_BACKUP_VERIFY_COMMAND=
-SEOBLOG_DEPLOY_REQUIRE_BACKUP=false
+SEOBLOG_DEPLOY_REQUIRE_BACKUP=true
 SEOBLOG_DEPLOY_SKIP_BACKUP=false
 SEOBLOG_DEPLOY_DRAIN_COMMAND=
 SEOBLOG_DEPLOY_CONTENT_SMOKE_COMMAND=
@@ -97,7 +97,7 @@ AI execution is disabled unless the base URL, API key, and model are all set. Th
 
 `task deploy:prod RELEASE=<immutable-release-id>` calls the VPS deploy script with `/tmp/seoblog-release-<release-id>.tar.gz` unless `ARCHIVE=<path>` is supplied. The archive must contain `release.json`, and the deploy script verifies every listed checksum before installing it.
 
-For an existing SQLite database, set `SEOBLOG_DEPLOY_BACKUP_COMMAND` to a host-local command that creates a WAL-aware recovery point in the dedicated backup target. Set `SEOBLOG_DEPLOY_BACKUP_VERIFY_COMMAND` when the backup command does not already verify the recovery point. To make this a hard production gate, set `SEOBLOG_DEPLOY_REQUIRE_BACKUP=true`; until then, the deploy script logs a compatibility warning and continues if no backup hook is configured.
+For an existing SQLite database, the default `SEOBLOG_DEPLOY_BACKUP_COMMAND` forces the Litestream replica current, creates an immutable B2 snapshot, downloads it and verifies SQLite before returning success. `SEOBLOG_DEPLOY_REQUIRE_BACKUP=true` is the default and makes this a hard production gate; the deploy script rejects the skip flag while the gate is required. Provision credentials, timers and restore access using [the backup and recovery runbook](backup-recovery.md) before the next deployment of an existing database.
 
 The deploy script stops the worker before migrations, runs the new release's `backend/admincli migrate` before switching `/srv/seoblog/current`, restarts only `seoblog-admin`, `seoblog-api` and `seoblog-worker`, checks API readiness, API health and Nuxt SSR, then records the result in `/srv/seoblog/shared/deployments.jsonl`.
 
