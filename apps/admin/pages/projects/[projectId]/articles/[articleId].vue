@@ -289,8 +289,23 @@
                   </div>
                 </div>
 
+                <div class="grid gap-3 text-sm sm:grid-cols-3">
+                  <div class="rounded-md border border-[#b9dcc9] bg-[#f4fbf7] p-3 dark:border-[#315648] dark:bg-[#14251f]">
+                    <p class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Changed fields</p>
+                    <p class="mt-1 text-2xl font-semibold">{{ comparisonStats.changed }}</p>
+                  </div>
+                  <div class="rounded-md border border-[#d7ded8] bg-white p-3 dark:border-[#3f4843] dark:bg-[#171b18]">
+                    <p class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Unchanged fields</p>
+                    <p class="mt-1 text-2xl font-semibold">{{ comparisonStats.unchanged }}</p>
+                  </div>
+                  <label class="flex min-h-[74px] items-center justify-between gap-3 rounded-md border border-[#d7ded8] bg-white p-3 text-sm dark:border-[#3f4843] dark:bg-[#171b18]">
+                    <span class="font-medium">Changed only</span>
+                    <input v-model="showOnlyChangedComparisonFields" class="h-5 w-5 accent-[#165a4a]" type="checkbox" />
+                  </label>
+                </div>
+
                 <article
-                  v-for="field in comparisonFields"
+                  v-for="field in visibleComparisonFields"
                   :key="field.key"
                   class="rounded-lg border p-4"
                   :class="field.changed
@@ -342,6 +357,13 @@
                     </ol>
                   </details>
                 </article>
+
+                <p
+                  v-if="visibleComparisonFields.length === 0"
+                  class="rounded-md border border-[#d7ded8] bg-white px-4 py-6 text-center text-sm text-[#5d6a61] dark:border-[#3f4843] dark:bg-[#171b18] dark:text-[#aeb8b0]"
+                >
+                  No changed fields to show.
+                </p>
               </div>
             </section>
 
@@ -1133,6 +1155,7 @@ const assignments = ref<ReviewAssignment[]>([])
 const revisions = ref<AdminRevisionSummary[]>([])
 const comparisonBefore = ref<AdminRevisionDetail | null>(null)
 const comparisonAfter = ref<AdminRevisionDetail | null>(null)
+const showOnlyChangedComparisonFields = ref(false)
 const pending = ref(true)
 const creatingRevision = ref(false)
 const copyingArticle = ref(false)
@@ -1334,6 +1357,17 @@ const comparisonFields = computed<ComparisonField[]>(() => {
     comparisonField('changeSummary', 'Change summary', before.changeSummary || '', after.changeSummary || '')
   ]
 })
+const comparisonStats = computed(() => {
+  const changed = comparisonFields.value.filter(field => field.changed).length
+  return {
+    changed,
+    unchanged: comparisonFields.value.length - changed
+  }
+})
+const visibleComparisonFields = computed(() => showOnlyChangedComparisonFields.value
+  ? comparisonFields.value.filter(field => field.changed)
+  : comparisonFields.value
+)
 const comparisonSummary = computed(() => {
   if (!comparisonBefore.value || !comparisonAfter.value) return ''
   const revisionSummary = `Revision ${comparisonBefore.value.revisionNumber} compared with revision ${comparisonAfter.value.revisionNumber}.`

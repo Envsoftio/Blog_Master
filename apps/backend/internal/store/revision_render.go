@@ -38,6 +38,7 @@ var allowedRevisionElements = map[string]struct{}{
 	"blockquote": {}, "pre": {}, "code": {}, "a": {}, "br": {}, "hr": {},
 	"figure": {}, "figcaption": {}, "img": {}, "table": {}, "thead": {},
 	"tbody": {}, "tfoot": {}, "tr": {}, "th": {}, "td": {}, "sup": {}, "sub": {}, "aside": {}, "cite": {},
+	"div": {}, "section": {},
 }
 
 var droppedRevisionElements = map[string]struct{}{
@@ -153,6 +154,19 @@ func validateStructuredRevisionNode(node map[string]any) error {
 		if href, _ := attrs["href"].(string); href != "" && !safeRevisionURL(href, true) {
 			return fmt.Errorf("%w: structured citation URLs must use HTTPS or a root-relative URL", ErrValidation)
 		}
+	case "relatedreference":
+		attrs, _ := node["attrs"].(map[string]any)
+		articleID, _ := attrs["articleId"].(string)
+		if !safeReferenceIDPattern.MatchString(articleID) {
+			return fmt.Errorf("%w: structured related references require a valid article reference", ErrValidation)
+		}
+	case "embedreference":
+		attrs, _ := node["attrs"].(map[string]any)
+		provider, _ := attrs["provider"].(string)
+		embedURL, _ := attrs["url"].(string)
+		if !safeEmbedURL(embedURL, provider) {
+			return fmt.Errorf("%w: structured embeds must use an allowlisted HTTPS provider URL", ErrValidation)
+		}
 	}
 	if marks, ok := node["marks"].([]any); ok {
 		for _, rawMark := range marks {
@@ -259,10 +273,38 @@ func sanitizeRevisionElement(node *html.Node) error {
 		case "aside":
 			if name == "data-editorial-block" && safeEditorialBlockKind(value) {
 				attributes = append(attributes, html.Attribute{Key: name, Val: value})
+			} else if name == "data-related-reference" && strings.EqualFold(value, "true") {
+				attributes = append(attributes, html.Attribute{Key: name, Val: "true"})
+			} else if name == "data-related-article-id" && safeReferenceIDPattern.MatchString(value) {
+				attributes = append(attributes, html.Attribute{Key: name, Val: value})
 			}
 		case "cite":
 			if name == "data-source-id" && safeReferenceIDPattern.MatchString(value) {
 				attributes = append(attributes, html.Attribute{Key: name, Val: value})
+			}
+		case "div":
+			if name == "data-gallery" && strings.EqualFold(value, "true") {
+				attributes = append(attributes, html.Attribute{Key: name, Val: "true"})
+			}
+		case "section":
+			if name == "data-transcript" && strings.EqualFold(value, "true") {
+				attributes = append(attributes, html.Attribute{Key: name, Val: "true"})
+			}
+		case "figure":
+			if name == "data-attributed-quote" && strings.EqualFold(value, "true") {
+				attributes = append(attributes, html.Attribute{Key: name, Val: "true"})
+			} else if name == "data-embed-provider" && safeEmbedProvider(value) {
+				attributes = append(attributes, html.Attribute{Key: name, Val: value})
+			} else if name == "data-embed-url" && safeRevisionURL(value, false) {
+				attributes = append(attributes, html.Attribute{Key: name, Val: value})
+			}
+		case "li":
+			if name == "data-checked" && (value == "true" || value == "false") {
+				attributes = append(attributes, html.Attribute{Key: name, Val: value})
+			}
+		case "ul":
+			if name == "data-task-list" && strings.EqualFold(value, "true") {
+				attributes = append(attributes, html.Attribute{Key: name, Val: "true"})
 			}
 		case "a":
 			if name == "href" && safeRevisionURL(value, true) {
@@ -294,6 +336,10 @@ func sanitizeRevisionElement(node *html.Node) error {
 			if (name == "colspan" || name == "rowspan") && boundedSpan(value) {
 				attributes = append(attributes, html.Attribute{Key: name, Val: value})
 			}
+		case "table":
+			if name == "data-comparison-table" && strings.EqualFold(value, "true") {
+				attributes = append(attributes, html.Attribute{Key: name, Val: "true"})
+			}
 		case "code":
 			if name == "class" && strings.HasPrefix(value, "language-") && len(value) <= 80 {
 				attributes = append(attributes, html.Attribute{Key: "class", Val: value})
@@ -317,6 +363,13 @@ func sanitizeRevisionElement(node *html.Node) error {
 		}
 		attributes = upsertAttribute(attributes, "loading", "lazy")
 	}
+	if tag == "figure" && attributeValueFrom(attributes, "data-embed-provider") != "" {
+		provider := attributeValueFrom(attributes, "data-embed-provider")
+		embedURL := attributeValueFrom(attributes, "data-embed-url")
+		if !safeEmbedURL(embedURL, provider) {
+			return fmt.Errorf("%w: embeds must use an allowlisted HTTPS provider URL", ErrValidation)
+		}
+	}
 	node.Attr = attributes
 	return nil
 }
@@ -325,6 +378,36 @@ func safeEditorialBlockKind(value string) bool {
 	switch value {
 	case "callout", "takeaway", "steps", "pros-cons", "cta", "faq":
 		return true
+	default:
+		return false
+	}
+}
+
+func safeEmbedProvider(value string) bool {
+	switch value {
+	case "youtube", "vimeo", "wistia":
+		return true
+	default:
+		return false
+	}
+}
+
+func safeEmbedURL(raw, provider string) bool {
+	if !safeEmbedProvider(provider) || !safeRevisionURL(raw, false) {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	switch provider {
+	case "youtube":
+		return host == "youtube.com" || host == "www.youtube.com" || host == "youtu.be" || host == "www.youtu.be"
+	case "vimeo":
+		return host == "vimeo.com" || host == "www.vimeo.com" || host == "player.vimeo.com"
+	case "wistia":
+		return host == "wistia.com" || host == "www.wistia.com" || host == "fast.wistia.com"
 	default:
 		return false
 	}

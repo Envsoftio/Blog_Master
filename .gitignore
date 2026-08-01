@@ -17,3 +17,4 @@ tmp/
 *.db-wal
 apps/backend/bin/
 apps/backend/seoblog.db*
+.cache/

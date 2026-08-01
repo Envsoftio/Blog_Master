@@ -222,8 +222,8 @@ func TestRenderRevisionBodyPreservesSupportedEditorialBlocks(t *testing.T) {
 	document := map[string]any{
 		"type": "doc",
 		"content": []any{map[string]any{
-			"type": "editorialBlock",
-			"attrs": map[string]any{"kind": "takeaway"},
+			"type":    "editorialBlock",
+			"attrs":   map[string]any{"kind": "takeaway"},
 			"content": []any{map[string]any{"type": "paragraph", "content": []any{map[string]any{"type": "text", "text": "Keep the source nearby."}}}},
 		}},
 	}
@@ -241,7 +241,7 @@ func TestRenderRevisionBodyPreservesSupportedEditorialBlocks(t *testing.T) {
 
 func TestRenderRevisionBodyRejectsUnknownEditorialBlockKind(t *testing.T) {
 	err := validateStructuredRevisionDocument(map[string]any{
-		"type": "doc",
+		"type":    "doc",
 		"content": []any{map[string]any{"type": "editorialBlock", "attrs": map[string]any{"kind": "unsafe"}}},
 	})
 	if err == nil {
@@ -255,8 +255,8 @@ func TestRenderRevisionBodyPreservesProjectCitation(t *testing.T) {
 		"content": []any{map[string]any{
 			"type": "paragraph",
 			"content": []any{map[string]any{
-				"type": "citation",
-				"attrs": map[string]any{"sourceId": "source-123", "href": "https://example.test/evidence"},
+				"type":    "citation",
+				"attrs":   map[string]any{"sourceId": "source-123", "href": "https://example.test/evidence"},
 				"content": []any{map[string]any{"type": "text", "text": "Primary evidence"}},
 			}},
 		}},
@@ -277,10 +277,94 @@ func TestRenderRevisionBodyPreservesProjectCitation(t *testing.T) {
 
 func TestRenderRevisionBodyRejectsInvalidCitationReference(t *testing.T) {
 	err := validateStructuredRevisionDocument(map[string]any{
-		"type": "doc",
+		"type":    "doc",
 		"content": []any{map[string]any{"type": "citation", "attrs": map[string]any{"sourceId": "../../source"}}},
 	})
 	if err == nil {
 		t.Fatal("expected invalid source reference to be rejected")
+	}
+}
+
+func TestRenderRevisionBodyPreservesSpecializedSemanticBlocks(t *testing.T) {
+	document := map[string]any{
+		"type":          "doc",
+		"schemaVersion": "tiptap-v1",
+		"content": []any{
+			map[string]any{"type": "taskList", "content": []any{map[string]any{"type": "taskItem", "attrs": map[string]any{"checked": true}}}},
+			map[string]any{"type": "attributedQuote"},
+			map[string]any{"type": "gallery"},
+			map[string]any{"type": "transcript"},
+			map[string]any{"type": "relatedReference", "attrs": map[string]any{"articleId": "art_related-1"}},
+			map[string]any{"type": "embedReference", "attrs": map[string]any{"provider": "youtube", "url": "https://www.youtube.com/watch?v=abc123"}},
+		},
+	}
+	rendered, err := renderRevisionBody(document, `
+		<ul data-task-list="true"><li data-checked="true" onclick="bad()"><p>Done</p></li><li data-checked="false"><p>Next</p></li></ul>
+		<figure data-attributed-quote="true" style="bad"><blockquote><p>Use exact words.</p></blockquote><figcaption>Editor</figcaption></figure>
+		<table data-comparison-table="true"><tbody><tr><th scope="col">Criteria</th><th scope="col">A</th></tr><tr><td>Fit</td><td>Strong</td></tr></tbody></table>
+		<div data-gallery="true" onclick="bad()"><figure><img src="/media/one.jpg" alt="One"><figcaption>One</figcaption></figure></div>
+		<section data-transcript="true"><h3>Transcript</h3><p>Speaker: Text.</p></section>
+		<aside data-related-reference="true" data-related-article-id="art_related-1"><p>Related context.</p></aside>
+		<figure data-embed-provider="youtube" data-embed-url="https://www.youtube.com/watch?v=abc123"><p>YouTube embed</p></figure>
+	`, "Fallback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`<ul data-task-list="true">`,
+		`<li data-checked="true">`,
+		`<figure data-attributed-quote="true">`,
+		`<table data-comparison-table="true">`,
+		`<div data-gallery="true">`,
+		`<section data-transcript="true">`,
+		`<aside data-related-reference="true" data-related-article-id="art_related-1">`,
+		`<figure data-embed-provider="youtube" data-embed-url="https://www.youtube.com/watch?v=abc123">`,
+	} {
+		if !strings.Contains(rendered.HTML, expected) {
+			t.Fatalf("semantic block contract missing %q: %s", expected, rendered.HTML)
+		}
+	}
+	for _, forbidden := range []string{"onclick", "style=", "<iframe", "<script"} {
+		if strings.Contains(strings.ToLower(rendered.HTML), forbidden) {
+			t.Fatalf("unsafe semantic block attribute survived %q: %s", forbidden, rendered.HTML)
+		}
+	}
+}
+
+func TestRenderRevisionBodyRejectsUnsafeSpecializedReferences(t *testing.T) {
+	tests := []struct {
+		name     string
+		document any
+		html     string
+	}{
+		{
+			name: "bad related reference",
+			document: map[string]any{
+				"type":    "doc",
+				"content": []any{map[string]any{"type": "relatedReference", "attrs": map[string]any{"articleId": "../bad"}}},
+			},
+			html: `<p>Body</p>`,
+		},
+		{
+			name: "bad embed provider host",
+			document: map[string]any{
+				"type":    "doc",
+				"content": []any{map[string]any{"type": "embedReference", "attrs": map[string]any{"provider": "youtube", "url": "https://evil.example.test/watch?v=abc"}}},
+			},
+			html: `<p>Body</p>`,
+		},
+		{
+			name:     "bad embed HTML",
+			document: map[string]any{"type": "doc", "content": []any{}},
+			html:     `<figure data-embed-provider="youtube" data-embed-url="https://evil.example.test/watch?v=abc"><p>Unsafe</p></figure>`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := renderRevisionBody(test.document, test.html, "Fallback")
+			if !errors.Is(err, ErrValidation) {
+				t.Fatalf("expected validation error, got %v", err)
+			}
+		})
 	}
 }

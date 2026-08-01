@@ -74,6 +74,16 @@
         <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a FAQ section" @click="insertEditorialBlock('faq')">FAQ</button>
       </span>
 
+      <span class="structured-editor__group" aria-label="Specialized blocks">
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a task checklist" @click="insertTaskList">Tasks</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert an attributed quote" @click="insertAttributedQuote">Quote + cite</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a comparison table" @click="insertComparisonTable">Compare</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert an image gallery" @click="insertGallery">Gallery</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a transcript" @click="insertTranscript">Transcript</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a related article reference" @click="insertRelatedReference">Related</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert an allowlisted embed reference" @click="insertEmbed">Embed</button>
+      </span>
+
       <span v-if="editor.isActive('table')" class="structured-editor__group" aria-label="Table controls">
         <button type="button" class="structured-editor__button" :disabled="disabled" @click="editor.chain().focus().addRowAfter().run()">+ Row</button>
         <button type="button" class="structured-editor__button" :disabled="disabled" @click="editor.chain().focus().addColumnAfter().run()">+ Column</button>
@@ -102,7 +112,7 @@
 import { Editor, EditorContent, Mark, Node, mergeAttributes } from '@tiptap/vue-3'
 import Heading from '@tiptap/extension-heading'
 import Image from '@tiptap/extension-image'
-import { TableKit } from '@tiptap/extension-table/kit'
+import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import StarterKit from '@tiptap/starter-kit'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { AdminMediaAsset, AdminSource } from '~/composables/useAdminApi'
@@ -237,6 +247,113 @@ const EditorialBlock = Node.create({
   renderHTML: ({ HTMLAttributes }) => ['aside', mergeAttributes(HTMLAttributes), 0]
 })
 
+const SemanticTable = Table.extend({
+  addAttributes() {
+    return {
+      ...(this.parent?.() || {}),
+      comparison: {
+        default: false,
+        parseHTML: element => element.getAttribute('data-comparison-table') === 'true',
+        renderHTML: attributes => attributes.comparison ? { 'data-comparison-table': 'true' } : {}
+      }
+    }
+  }
+}).configure({ resizable: true })
+
+const TaskList = Node.create({
+  name: 'taskList',
+  group: 'block',
+  content: 'taskItem+',
+  defining: true,
+  parseHTML: () => [{ tag: 'ul[data-task-list]' }],
+  renderHTML: ({ HTMLAttributes }) => ['ul', mergeAttributes(HTMLAttributes, { 'data-task-list': 'true' }), 0]
+})
+
+const TaskItem = Node.create({
+  name: 'taskItem',
+  content: 'paragraph block*',
+  defining: true,
+  addAttributes() {
+    return {
+      checked: {
+        default: false,
+        parseHTML: element => element.getAttribute('data-checked') === 'true',
+        renderHTML: attributes => ({ 'data-checked': attributes.checked ? 'true' : 'false' })
+      }
+    }
+  },
+  parseHTML: () => [{ tag: 'li[data-checked]' }],
+  renderHTML: ({ HTMLAttributes }) => ['li', mergeAttributes(HTMLAttributes), 0]
+})
+
+const AttributedQuote = Node.create({
+  name: 'attributedQuote',
+  group: 'block',
+  content: 'blockquote figcaption?',
+  defining: true,
+  parseHTML: () => [{ tag: 'figure[data-attributed-quote]' }],
+  renderHTML: ({ HTMLAttributes }) => ['figure', mergeAttributes(HTMLAttributes, { 'data-attributed-quote': 'true' }), 0]
+})
+
+const Gallery = Node.create({
+  name: 'gallery',
+  group: 'block',
+  content: 'figure+',
+  defining: true,
+  parseHTML: () => [{ tag: 'div[data-gallery]' }],
+  renderHTML: ({ HTMLAttributes }) => ['div', mergeAttributes(HTMLAttributes, { 'data-gallery': 'true' }), 0]
+})
+
+const Transcript = Node.create({
+  name: 'transcript',
+  group: 'block',
+  content: 'block+',
+  defining: true,
+  parseHTML: () => [{ tag: 'section[data-transcript]' }],
+  renderHTML: ({ HTMLAttributes }) => ['section', mergeAttributes(HTMLAttributes, { 'data-transcript': 'true' }), 0]
+})
+
+const RelatedReference = Node.create({
+  name: 'relatedReference',
+  group: 'block',
+  content: 'block+',
+  defining: true,
+  addAttributes() {
+    return {
+      articleId: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-related-article-id'),
+        renderHTML: attributes => safeReferenceID(attributes.articleId) ? { 'data-related-article-id': attributes.articleId } : {}
+      }
+    }
+  },
+  parseHTML: () => [{ tag: 'aside[data-related-reference]' }],
+  renderHTML: ({ HTMLAttributes }) => ['aside', mergeAttributes(HTMLAttributes, { 'data-related-reference': 'true' }), 0]
+})
+
+const EmbedReference = Node.create({
+  name: 'embedReference',
+  group: 'block',
+  content: 'paragraph+',
+  defining: true,
+  addAttributes() {
+    return {
+      provider: {
+        default: 'youtube',
+        parseHTML: element => safeEmbedProvider(element.getAttribute('data-embed-provider') || '') ? element.getAttribute('data-embed-provider') : 'youtube',
+        renderHTML: attributes => ({ 'data-embed-provider': safeEmbedProvider(attributes.provider) ? attributes.provider : 'youtube' })
+      },
+      url: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-embed-url'),
+        renderHTML: attributes => isSafeEmbedURL(attributes.url, attributes.provider) ? { 'data-embed-url': attributes.url } : {}
+      }
+    }
+  },
+  parseHTML: () => [{ tag: 'figure[data-embed-provider][data-embed-url]' }],
+  renderHTML: ({ HTMLAttributes }) => ['figure', mergeAttributes(HTMLAttributes), 0]
+})
+
 const Citation = Node.create({
   name: 'citation',
   group: 'inline',
@@ -302,10 +419,20 @@ onMounted(() => {
       Figure,
       Figcaption,
       EditorialBlock,
+      TaskList,
+      TaskItem,
+      AttributedQuote,
+      Gallery,
+      Transcript,
+      RelatedReference,
+      EmbedReference,
       Citation,
       Superscript,
       Subscript,
-      TableKit.configure({ table: { resizable: true } })
+      SemanticTable,
+      TableRow,
+      TableHeader,
+      TableCell
     ],
     content: initialContent(),
     onCreate: ({ editor: createdEditor }) => {
@@ -452,6 +579,128 @@ function insertEditorialBlock(kind: EditorialBlockKind) {
   }).run()
 }
 
+function insertTaskList() {
+  editor.value?.chain().focus().insertContent({
+    type: 'taskList',
+    content: [
+      taskItem('Confirm source evidence', false),
+      taskItem('Add expert review notes', false),
+      taskItem('Prepare publishing checks', false)
+    ]
+  }).run()
+}
+
+function taskItem(text: string, checked: boolean) {
+  return {
+    type: 'taskItem',
+    attrs: { checked },
+    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }]
+  }
+}
+
+function insertAttributedQuote() {
+  editor.value?.chain().focus().insertContent({
+    type: 'attributedQuote',
+    content: [
+      { type: 'blockquote', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Add the exact quote.' }] }] },
+      { type: 'figcaption', content: [{ type: 'text', text: 'Attribution, role or source' }] }
+    ]
+  }).run()
+}
+
+function insertComparisonTable() {
+  editor.value?.chain().focus().insertContent({
+    type: 'table',
+    attrs: { comparison: true },
+    content: [
+      tableRow('tableHeader', ['Criteria', 'Option A', 'Option B']),
+      tableRow('tableCell', ['Best for', 'Add details', 'Add details']),
+      tableRow('tableCell', ['Tradeoff', 'Add details', 'Add details'])
+    ]
+  }).run()
+}
+
+function tableRow(cellType: 'tableHeader' | 'tableCell', labels: string[]) {
+  return {
+    type: 'tableRow',
+    content: labels.map(label => ({
+      type: cellType,
+      attrs: cellType === 'tableHeader' ? { scope: 'col' } : {},
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: label }] }]
+    }))
+  }
+}
+
+function insertGallery() {
+  const asset = insertableMedia.value[0]
+  const image = asset?.url
+    ? { src: asset.url, alt: asset.altText || 'Gallery image', decorative: asset.decorative }
+    : { src: '/media/gallery-placeholder.jpg', alt: 'Gallery image', decorative: false }
+  editor.value?.chain().focus().insertContent({
+    type: 'gallery',
+    content: [
+      galleryFigure(image.src, image.alt, image.decorative, asset?.caption || 'Gallery caption'),
+      galleryFigure(image.src, image.alt, image.decorative, 'Second gallery caption')
+    ]
+  }).run()
+}
+
+function galleryFigure(src: string, alt: string, decorative: boolean, caption: string) {
+  return {
+    type: 'figure',
+    content: [
+      { type: 'image', attrs: { src, alt, decorative } },
+      { type: 'figcaption', content: [{ type: 'text', text: caption }] }
+    ]
+  }
+}
+
+function insertTranscript() {
+  editor.value?.chain().focus().insertContent({
+    type: 'transcript',
+    content: [
+      { type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Transcript' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'Speaker: Add timestamped transcript text.' }] }
+    ]
+  }).run()
+}
+
+function insertRelatedReference() {
+  if (!editor.value || !import.meta.client) return
+  editorError.value = ''
+  const articleId = window.prompt('Related article ID')
+  if (articleId === null) return
+  const trimmed = articleId.trim()
+  if (!safeReferenceID(trimmed)) {
+    editorError.value = 'Related article IDs may only contain letters, numbers, hyphens, and underscores.'
+    return
+  }
+  editor.value.chain().focus().insertContent({
+    type: 'relatedReference',
+    attrs: { articleId: trimmed },
+    content: [
+      { type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Related reading' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'Summarize why this article is relevant.' }] }
+    ]
+  }).run()
+}
+
+function insertEmbed() {
+  if (!editor.value || !import.meta.client) return
+  editorError.value = ''
+  const provider = (window.prompt('Embed provider (youtube, vimeo, wistia)', 'youtube') || '').trim().toLowerCase()
+  const url = (window.prompt('Embed URL (HTTPS from the selected provider)') || '').trim()
+  if (!safeEmbedProvider(provider) || !isSafeEmbedURL(url, provider)) {
+    editorError.value = 'Embeds must use an allowlisted provider URL: YouTube, Vimeo, or Wistia.'
+    return
+  }
+  editor.value.chain().focus().insertContent({
+    type: 'embedReference',
+    attrs: { provider, url },
+    content: [{ type: 'paragraph', content: [{ type: 'text', text: `${providerLabel(provider)} embed` }] }]
+  }).run()
+}
+
 function insertSelectedMedia() {
   const asset = insertableMedia.value.find(candidate => candidate.id === selectedMediaID.value)
   if (!editor.value || !asset?.url) return
@@ -541,6 +790,26 @@ function isSafeEditorialURL(raw: string, allowLinkSchemes: boolean) {
     return false
   }
 }
+
+function safeEmbedProvider(value: unknown): value is string {
+  return typeof value === 'string' && ['youtube', 'vimeo', 'wistia'].includes(value)
+}
+
+function isSafeEmbedURL(raw: unknown, provider: unknown) {
+  if (typeof raw !== 'string' || typeof provider !== 'string' || !safeEmbedProvider(provider) || !isSafeEditorialURL(raw, false)) return false
+  try {
+    const host = new URL(raw).hostname.toLowerCase()
+    if (provider === 'youtube') return ['youtube.com', 'www.youtube.com', 'youtu.be', 'www.youtu.be'].includes(host)
+    if (provider === 'vimeo') return ['vimeo.com', 'www.vimeo.com', 'player.vimeo.com'].includes(host)
+    return ['wistia.com', 'www.wistia.com', 'fast.wistia.com'].includes(host)
+  } catch {
+    return false
+  }
+}
+
+function providerLabel(provider: string) {
+  return provider === 'youtube' ? 'YouTube' : provider === 'vimeo' ? 'Vimeo' : 'Wistia'
+}
 </script>
 
 <style scoped>
@@ -579,7 +848,13 @@ function isSafeEditorialURL(raw: string, allowLinkSchemes: boolean) {
 :deep(.tiptap pre),
 :deep(.tiptap table),
 :deep(.tiptap figure),
-:deep(.tiptap aside[data-editorial-block]) { margin: 0 0 12px; }
+:deep(.tiptap aside[data-editorial-block]),
+:deep(.tiptap ul[data-task-list]),
+:deep(.tiptap figure[data-attributed-quote]),
+:deep(.tiptap div[data-gallery]),
+:deep(.tiptap section[data-transcript]),
+:deep(.tiptap aside[data-related-reference]),
+:deep(.tiptap figure[data-embed-provider]) { margin: 0 0 12px; }
 :deep(.tiptap h2),
 :deep(.tiptap h3),
 :deep(.tiptap h4) { margin: 20px 0 8px; font-weight: 700; line-height: 1.25; }
@@ -600,6 +875,18 @@ function isSafeEditorialURL(raw: string, allowLinkSchemes: boolean) {
 :deep(.tiptap aside[data-editorial-block]) { padding: 14px; border: 1px solid var(--border, #c9d4cc); border-left: 4px solid var(--primary, #165a4a); border-radius: 6px; background: var(--surface-subtle, #f2f5f3); }
 :deep(.tiptap aside[data-editorial-block='takeaway']) { border-left-color: #1d6c9f; }
 :deep(.tiptap aside[data-editorial-block='cta']) { border-left-color: #9b5a18; }
+:deep(.tiptap ul[data-task-list]) { padding-left: 0; list-style: none; }
+:deep(.tiptap li[data-checked]) { position: relative; margin-bottom: 8px; padding-left: 26px; }
+:deep(.tiptap li[data-checked]::before) { position: absolute; top: 4px; left: 0; display: grid; width: 16px; height: 16px; place-items: center; border: 1px solid var(--border-strong, #9faea4); border-radius: 4px; color: white; font-size: 11px; line-height: 1; content: ''; }
+:deep(.tiptap li[data-checked='true']::before) { border-color: var(--primary, #165a4a); background: var(--primary, #165a4a); content: '✓'; }
+:deep(.tiptap li[data-checked] > :last-child) { margin-bottom: 0; }
+:deep(.tiptap figure[data-attributed-quote]) { border-left: 4px solid #6b5797; background: color-mix(in srgb, #6b5797 8%, var(--surface, #fff)); }
+:deep(.tiptap table[data-comparison-table]) { border: 2px solid color-mix(in srgb, var(--primary, #165a4a) 40%, var(--border, #d7ded8)); }
+:deep(.tiptap div[data-gallery]) { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 10px; border: 1px solid var(--border, #d7ded8); border-radius: 6px; }
+:deep(.tiptap div[data-gallery] figure) { margin: 0; }
+:deep(.tiptap section[data-transcript]) { padding: 12px; border: 1px dashed var(--border-strong, #9faea4); border-radius: 6px; background: var(--surface-subtle, #f2f5f3); }
+:deep(.tiptap aside[data-related-reference]) { padding: 12px; border: 1px solid #b9cde8; border-left: 4px solid #3162a3; border-radius: 6px; background: #f2f7ff; }
+:deep(.tiptap figure[data-embed-provider]) { padding: 12px; border: 1px solid #d8d0e8; border-left: 4px solid #6b5797; background: #f7f4fc; }
 :deep(.tiptap .tableWrapper) { overflow-x: auto; margin-bottom: 12px; }
 :deep(.tiptap table) { width: 100%; border-collapse: collapse; table-layout: fixed; }
 :deep(.tiptap th),

@@ -1441,6 +1441,17 @@ function structuredBlockNodes(parent: ParentNode): StructuredNode[] {
         attrs: { level: Number(tag.slice(1)), id: child.id || structuredHeadingID(text) },
         content: structuredInlineNodes(child)
       })
+    } else if (tag === 'ul' && child.dataset.taskList === 'true') {
+      nodes.push({
+        type: 'taskList',
+        content: [...child.children]
+          .filter(item => item.tagName.toLowerCase() === 'li')
+          .map(item => ({
+            type: 'taskItem',
+            attrs: { checked: (item as HTMLElement).dataset.checked === 'true' },
+            content: structuredListItem(item as HTMLElement)
+          }))
+      })
     } else if (tag === 'ul' || tag === 'ol') {
       nodes.push(structuredListNode(child))
     } else if (tag === 'blockquote') {
@@ -1458,9 +1469,49 @@ function structuredBlockNodes(parent: ParentNode): StructuredNode[] {
     } else if (tag === 'img') {
       nodes.push(structuredImageNode(child as HTMLImageElement))
     } else if (tag === 'figure') {
-      nodes.push({ type: 'figure', content: structuredFigureNodes(child) })
+      if (child.dataset.attributedQuote === 'true') {
+        nodes.push({
+          type: 'attributedQuote',
+          content: [
+            ...[...child.children]
+              .filter(element => element.tagName.toLowerCase() === 'blockquote')
+              .map(element => ({ type: 'blockquote', content: structuredBlockNodes(element) })),
+            ...[...child.children]
+              .filter(element => element.tagName.toLowerCase() === 'figcaption')
+              .map(element => ({ type: 'figcaption', content: structuredInlineNodes(element) }))
+          ]
+        })
+      } else if (child.dataset.embedProvider && child.dataset.embedUrl) {
+        nodes.push({
+          type: 'embedReference',
+          attrs: { provider: child.dataset.embedProvider, url: child.dataset.embedUrl },
+          content: structuredBlockNodes(child)
+        })
+      } else {
+        nodes.push({ type: 'figure', content: structuredFigureNodes(child) })
+      }
     } else if (tag === 'table') {
-      nodes.push({ type: 'table', content: structuredTableRows(child) })
+      nodes.push({
+        type: 'table',
+        attrs: child.dataset.comparisonTable === 'true' ? { comparison: true } : {},
+        content: structuredTableRows(child)
+      })
+    } else if (tag === 'div' && child.dataset.gallery === 'true') {
+      nodes.push({ type: 'gallery', content: [...child.children].filter(element => element.tagName.toLowerCase() === 'figure').map(element => ({ type: 'figure', content: structuredFigureNodes(element as HTMLElement) })) })
+    } else if (tag === 'section' && child.dataset.transcript === 'true') {
+      nodes.push({ type: 'transcript', content: structuredBlockNodes(child) })
+    } else if (tag === 'aside' && child.dataset.relatedReference === 'true') {
+      nodes.push({
+        type: 'relatedReference',
+        attrs: { articleId: child.dataset.relatedArticleId || '' },
+        content: structuredBlockNodes(child)
+      })
+    } else if (tag === 'aside' && child.dataset.editorialBlock) {
+      nodes.push({
+        type: 'editorialBlock',
+        attrs: { kind: child.dataset.editorialBlock },
+        content: structuredBlockNodes(child)
+      })
     } else {
       nodes.push(...structuredBlockNodes(child))
     }
