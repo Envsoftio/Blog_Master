@@ -30,13 +30,14 @@ type tableOfContentsEntry struct {
 }
 
 var safeHTMLIDPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,127}$`)
+var safeReferenceIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
 var allowedRevisionElements = map[string]struct{}{
 	"p": {}, "h2": {}, "h3": {}, "h4": {},
 	"ul": {}, "ol": {}, "li": {}, "strong": {}, "em": {}, "u": {}, "s": {},
 	"blockquote": {}, "pre": {}, "code": {}, "a": {}, "br": {}, "hr": {},
 	"figure": {}, "figcaption": {}, "img": {}, "table": {}, "thead": {},
-	"tbody": {}, "tfoot": {}, "tr": {}, "th": {}, "td": {}, "sup": {}, "sub": {}, "aside": {},
+	"tbody": {}, "tfoot": {}, "tr": {}, "th": {}, "td": {}, "sup": {}, "sub": {}, "aside": {}, "cite": {},
 }
 
 var droppedRevisionElements = map[string]struct{}{
@@ -143,6 +144,15 @@ func validateStructuredRevisionNode(node map[string]any) error {
 				return fmt.Errorf("%w: structured editorial blocks must use a supported kind", ErrValidation)
 			}
 		}
+	case "citation":
+		attrs, _ := node["attrs"].(map[string]any)
+		sourceID, _ := attrs["sourceId"].(string)
+		if !safeReferenceIDPattern.MatchString(sourceID) {
+			return fmt.Errorf("%w: structured citations require a valid project source reference", ErrValidation)
+		}
+		if href, _ := attrs["href"].(string); href != "" && !safeRevisionURL(href, true) {
+			return fmt.Errorf("%w: structured citation URLs must use HTTPS or a root-relative URL", ErrValidation)
+		}
 	}
 	if marks, ok := node["marks"].([]any); ok {
 		for _, rawMark := range marks {
@@ -248,6 +258,10 @@ func sanitizeRevisionElement(node *html.Node) error {
 		switch tag {
 		case "aside":
 			if name == "data-editorial-block" && safeEditorialBlockKind(value) {
+				attributes = append(attributes, html.Attribute{Key: name, Val: value})
+			}
+		case "cite":
+			if name == "data-source-id" && safeReferenceIDPattern.MatchString(value) {
 				attributes = append(attributes, html.Attribute{Key: name, Val: value})
 			}
 		case "a":

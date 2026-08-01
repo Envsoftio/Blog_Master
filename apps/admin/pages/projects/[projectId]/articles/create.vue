@@ -152,6 +152,8 @@
               v-model:html="articleForm.html"
               v-model:body-document="createBodyDocument"
               label="Opening article body"
+              :media-assets="mediaAssets"
+              :sources="sources"
             />
           </div>
         </section>
@@ -254,7 +256,7 @@ import {
   Save,
   Users
 } from 'lucide-vue-next'
-import type { AdminArticle, AdminAuthor, AdminProject, RevisionContributorInput, SEOInputPayload, TaxonomyTerm } from '~/composables/useAdminApi'
+import type { AdminArticle, AdminAuthor, AdminMediaAsset, AdminProject, AdminSource, RevisionContributorInput, SEOInputPayload, TaxonomyTerm } from '~/composables/useAdminApi'
 import {
   ARTICLE_TYPES,
   articleBodyDocumentFromHTML,
@@ -276,6 +278,8 @@ const projectID = computed(() => {
 const project = ref<AdminProject | null>(null)
 const categories = ref<TaxonomyTerm[]>([])
 const authors = ref<AdminAuthor[]>([])
+const mediaAssets = ref<AdminMediaAsset[]>([])
+const sources = ref<AdminSource[]>([])
 const recentArticles = ref<AdminArticle[]>([])
 const pending = ref(true)
 const creatingArticle = ref(false)
@@ -388,11 +392,13 @@ async function refresh() {
   pending.value = true
   clearMessages()
   try {
-    const [projectResponse, categoryResponse, authorResponse, articleResponse] = await Promise.all([
+    const [projectResponse, categoryResponse, authorResponse, articleResponse, mediaResponse, sourceResponse] = await Promise.all([
       api.getProject(projectID.value),
       api.listCategories(projectID.value),
       api.listAuthors(projectID.value),
-      api.listArticles(projectID.value, 20)
+      api.listArticles(projectID.value, 20),
+      api.listMedia(projectID.value),
+      api.listSources(projectID.value)
     ])
     project.value = projectResponse.data
     categories.value = [...categoryResponse.data].sort((left, right) => categoryPathLabel(left).localeCompare(categoryPathLabel(right)))
@@ -400,6 +406,8 @@ async function refresh() {
       .filter(author => author.status === 'active')
       .sort((left, right) => left.displayName.localeCompare(right.displayName))
     recentArticles.value = articleResponse.data
+    mediaAssets.value = mediaResponse.data
+    sources.value = sourceResponse.data
     if (!articleForm.primaryCategoryId && categories.value[0]) {
       articleForm.primaryCategoryId = categories.value[0].id
     }

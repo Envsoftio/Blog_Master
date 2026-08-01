@@ -49,6 +49,22 @@
         <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert image from URL" @click="insertImage">Image</button>
       </span>
 
+      <span v-if="mediaAssets.length" class="structured-editor__group structured-editor__picker" aria-label="Project media">
+        <select v-model="selectedMediaID" class="structured-editor__select" aria-label="Project image" :disabled="disabled">
+          <option value="">Project image…</option>
+          <option v-for="asset in insertableMedia" :key="asset.id" :value="asset.id">{{ mediaLabel(asset) }}</option>
+        </select>
+        <button type="button" class="structured-editor__button" :disabled="disabled || !selectedMediaID" @click="insertSelectedMedia">Insert</button>
+      </span>
+
+      <span v-if="sources.length" class="structured-editor__group structured-editor__picker" aria-label="Project citations">
+        <select v-model="selectedSourceID" class="structured-editor__select" aria-label="Project source" :disabled="disabled">
+          <option value="">Citation…</option>
+          <option v-for="source in sources" :key="source.id" :value="source.id">{{ source.title }}</option>
+        </select>
+        <button type="button" class="structured-editor__button" :disabled="disabled || !selectedSourceID" @click="insertSelectedCitation">Cite</button>
+      </span>
+
       <span class="structured-editor__group" aria-label="Editorial blocks">
         <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a callout" @click="insertEditorialBlock('callout')">Callout</button>
         <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a key takeaway" @click="insertEditorialBlock('takeaway')">Takeaway</button>
@@ -89,16 +105,21 @@ import Image from '@tiptap/extension-image'
 import { TableKit } from '@tiptap/extension-table/kit'
 import StarterKit from '@tiptap/starter-kit'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
+import type { AdminMediaAsset, AdminSource } from '~/composables/useAdminApi'
 
 const props = withDefaults(defineProps<{
   html: string
   bodyDocument?: unknown
   disabled?: boolean
   label?: string
+  mediaAssets?: AdminMediaAsset[]
+  sources?: AdminSource[]
 }>(), {
   bodyDocument: undefined,
   disabled: false,
-  label: 'Article body'
+  label: 'Article body',
+  mediaAssets: () => [],
+  sources: () => []
 })
 
 const emit = defineEmits<{
@@ -108,7 +129,10 @@ const emit = defineEmits<{
 
 const editor = shallowRef<Editor | null>(null)
 const editorError = ref('')
+const selectedMediaID = ref('')
+const selectedSourceID = ref('')
 const normalizeHeadingIDsKey = new PluginKey('normalize-article-heading-ids')
+const insertableMedia = computed(() => props.mediaAssets.filter(asset => asset.status === 'ready' && asset.contentType.startsWith('image/') && isSafeEditorialURL(asset.url || '', false)))
 
 const StableHeading = Heading.extend({
   addAttributes() {
@@ -213,6 +237,33 @@ const EditorialBlock = Node.create({
   renderHTML: ({ HTMLAttributes }) => ['aside', mergeAttributes(HTMLAttributes), 0]
 })
 
+const Citation = Node.create({
+  name: 'citation',
+  group: 'inline',
+  inline: true,
+  content: 'text*',
+  atom: true,
+  addAttributes() {
+    return {
+      sourceId: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-source-id'),
+        renderHTML: attributes => safeReferenceID(attributes.sourceId) ? { 'data-source-id': attributes.sourceId } : {}
+      },
+      href: {
+        default: null,
+        parseHTML: element => element.querySelector('a')?.getAttribute('href') || null,
+        rendered: false
+      }
+    }
+  },
+  parseHTML: () => [{ tag: 'cite[data-source-id]' }],
+  renderHTML: ({ node, HTMLAttributes }) => {
+    const href = isSafeEditorialURL(node.attrs.href || '', true) ? node.attrs.href : ''
+    return ['cite', mergeAttributes(HTMLAttributes), href ? ['a', { href }, 0] : 0]
+  }
+})
+
 function semanticMark(name: string, tag: string) {
   return Mark.create({
     name,
@@ -251,6 +302,7 @@ onMounted(() => {
       Figure,
       Figcaption,
       EditorialBlock,
+      Citation,
       Superscript,
       Subscript,
       TableKit.configure({ table: { resizable: true } })
@@ -400,6 +452,41 @@ function insertEditorialBlock(kind: EditorialBlockKind) {
   }).run()
 }
 
+function insertSelectedMedia() {
+  const asset = insertableMedia.value.find(candidate => candidate.id === selectedMediaID.value)
+  if (!editor.value || !asset?.url) return
+  editorError.value = ''
+  const alt = (asset.altText || '').trim()
+  if (!alt && !asset.decorative) {
+    editorError.value = 'This project image needs alt text in the media library before it can be inserted.'
+    return
+  }
+  const image = { type: 'image', attrs: { src: asset.url, alt, decorative: asset.decorative } }
+  const caption = (asset.caption || '').trim()
+  editor.value.chain().focus().insertContent(caption
+    ? { type: 'figure', content: [image, { type: 'figcaption', content: [{ type: 'text', text: caption }] }] }
+    : image).run()
+  selectedMediaID.value = ''
+}
+
+function insertSelectedCitation() {
+  const source = props.sources.find(candidate => candidate.id === selectedSourceID.value)
+  if (!editor.value || !source || !safeReferenceID(source.id)) return
+  editorError.value = ''
+  const href = source.url && isSafeEditorialURL(source.url, true) ? source.url : null
+  editor.value.chain().focus().insertContent({
+    type: 'citation',
+    attrs: { sourceId: source.id, href },
+    content: [{ type: 'text', text: source.title }]
+  }).run()
+  selectedSourceID.value = ''
+}
+
+function mediaLabel(asset: AdminMediaAsset) {
+  const dimensions = asset.width && asset.height ? ` · ${asset.width}×${asset.height}` : ''
+  return `${asset.filename}${dimensions}`
+}
+
 function isStructuredDocument(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && (value as Record<string, unknown>).type === 'doc' && Array.isArray((value as Record<string, unknown>).content))
 }
@@ -410,6 +497,10 @@ function normalizeHTML(value: string) {
 
 function safeHeadingID(value: string) {
   return /^[A-Za-z][A-Za-z0-9_-]{0,127}$/.test(value)
+}
+
+function safeReferenceID(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value)
 }
 
 function headingIDFromText(value: string) {
@@ -502,6 +593,7 @@ function isSafeEditorialURL(raw: string, allowLinkSchemes: boolean) {
 :deep(.tiptap code) { padding: 1px 3px; border-radius: 3px; background: var(--surface-subtle, #f2f5f3); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 :deep(.tiptap pre code) { padding: 0; background: transparent; }
 :deep(.tiptap a) { color: var(--primary, #165a4a); text-decoration: underline; }
+:deep(.tiptap cite[data-source-id]) { padding: 1px 4px; border-radius: 3px; background: var(--primary-soft, #e6f2ec); color: var(--primary, #165a4a); font-style: normal; }
 :deep(.tiptap img) { max-width: 100%; height: auto; border-radius: 6px; }
 :deep(.tiptap figure) { padding: 8px; border: 1px solid var(--border, #d7ded8); border-radius: 6px; }
 :deep(.tiptap figcaption) { margin-top: 6px; color: var(--text-faint, #667169); font-size: 12px; }

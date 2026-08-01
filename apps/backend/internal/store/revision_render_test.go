@@ -248,3 +248,39 @@ func TestRenderRevisionBodyRejectsUnknownEditorialBlockKind(t *testing.T) {
 		t.Fatal("expected unsupported editorial block kind to be rejected")
 	}
 }
+
+func TestRenderRevisionBodyPreservesProjectCitation(t *testing.T) {
+	document := map[string]any{
+		"type": "doc",
+		"content": []any{map[string]any{
+			"type": "paragraph",
+			"content": []any{map[string]any{
+				"type": "citation",
+				"attrs": map[string]any{"sourceId": "source-123", "href": "https://example.test/evidence"},
+				"content": []any{map[string]any{"type": "text", "text": "Primary evidence"}},
+			}},
+		}},
+	}
+	rendered, err := renderRevisionBody(document, `<p><cite data-source-id="source-123" onclick="bad()"><a href="https://example.test/evidence">Primary evidence</a></cite></p>`, "Fallback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`<cite data-source-id="source-123">`, `href="https://example.test/evidence" rel="noopener noreferrer"`} {
+		if !strings.Contains(rendered.HTML, expected) {
+			t.Fatalf("citation contract missing %q: %s", expected, rendered.HTML)
+		}
+	}
+	if strings.Contains(rendered.HTML, "onclick") {
+		t.Fatalf("unsafe citation attribute survived: %s", rendered.HTML)
+	}
+}
+
+func TestRenderRevisionBodyRejectsInvalidCitationReference(t *testing.T) {
+	err := validateStructuredRevisionDocument(map[string]any{
+		"type": "doc",
+		"content": []any{map[string]any{"type": "citation", "attrs": map[string]any{"sourceId": "../../source"}}},
+	})
+	if err == nil {
+		t.Fatal("expected invalid source reference to be rejected")
+	}
+}

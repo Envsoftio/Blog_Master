@@ -666,6 +666,8 @@
                 v-model:html="revisionForm.html"
                 v-model:body-document="revisionBodyDocument"
                 label="Revision body"
+                :media-assets="mediaAssets"
+                :sources="sources"
               />
 
               <button
@@ -907,7 +909,7 @@ import {
   UserCheck,
   XCircle
 } from 'lucide-vue-next'
-import type { AdminAuthor, RevisionContributorInput } from '~/composables/useAdminApi'
+import type { AdminAuthor, AdminMediaAsset, AdminSource, RevisionContributorInput } from '~/composables/useAdminApi'
 import { articleBodyDocumentFromHTML, hasValidRevisionContributors, htmlToPlainText } from '~/composables/useAdminApi'
 
 type APIEnvelope<T> = {
@@ -1119,6 +1121,8 @@ const projects = ref<AdminProject[]>([])
 const article = ref<AdminArticle | null>(null)
 const categories = ref<TaxonomyTerm[]>([])
 const authors = ref<AdminAuthor[]>([])
+const mediaAssets = ref<AdminMediaAsset[]>([])
+const sources = ref<AdminSource[]>([])
 const copyDestinationCategories = ref<TaxonomyTerm[]>([])
 const copyDestinationAuthors = ref<AdminAuthor[]>([])
 const copySourceRevision = ref<AdminRevisionDetail | null>(null)
@@ -1393,7 +1397,7 @@ async function refresh() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, projectListResponse, memberResponse, categoryResponse, authorResponse, articleResponse, assignmentResponse, commentResponse, revisionResponse, autosaveResponse] = await Promise.all([
+    const [projectResponse, projectListResponse, memberResponse, categoryResponse, authorResponse, articleResponse, assignmentResponse, commentResponse, revisionResponse, autosaveResponse, mediaResponse, sourceResponse] = await Promise.all([
       $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
       fetchAllCopyProjects(),
       fetchAllReviewAssignees(),
@@ -1412,13 +1416,17 @@ async function refresh() {
         credentials: 'include',
         query: { limit: 50 }
       }),
-      fetchArticleAutosave()
+      fetchArticleAutosave(),
+      $fetch<APIListEnvelope<AdminMediaAsset>>(`/api/v1/projects/${projectID.value}/media`, { credentials: 'include' }),
+      $fetch<APIListEnvelope<AdminSource>>(`/api/v1/projects/${projectID.value}/sources`, { credentials: 'include', query: { limit: 100 } })
     ])
     project.value = projectResponse.data
     projects.value = projectListResponse
     members.value = memberResponse
     categories.value = sortCategories(categoryResponse)
     authors.value = apiListData(authorResponse).sort((left, right) => left.displayName.localeCompare(right.displayName))
+    mediaAssets.value = apiListData(mediaResponse)
+    sources.value = apiListData(sourceResponse)
     setArticle(articleResponse.data)
     assignments.value = apiListData(assignmentResponse)
     nextAssignmentCursor.value = assignmentResponse.meta?.nextCursor || ''
