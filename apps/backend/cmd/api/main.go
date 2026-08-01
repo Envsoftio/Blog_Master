@@ -8,6 +8,7 @@ import (
 
 	"seoblog/apps/backend/internal/config"
 	"seoblog/apps/backend/internal/httpapi"
+	"seoblog/apps/backend/internal/observability"
 	"seoblog/apps/backend/internal/platform/database"
 	redisclient "seoblog/apps/backend/internal/platform/redis"
 	"seoblog/apps/backend/internal/store"
@@ -15,7 +16,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("service", "seoblog-api", "environment", cfg.Env)
 
 	db, err := database.OpenSQLite(cfg.DBPath)
 	if err != nil {
@@ -46,11 +47,13 @@ func main() {
 		cancel()
 	}
 
+	metrics := observability.NewRegistry(db, cfg.DBPath, "seoblog-api", cfg.Env)
 	srv := httpapi.New(httpapi.Options{
-		Config: cfg,
-		Logger: logger,
-		Store:  store.New(db, store.WithWebhookEncryptionKey(cfg.WebhookEncryptionKey)),
-		Cache:  responseCache,
+		Config:  cfg,
+		Logger:  logger,
+		Store:   store.New(db, store.WithWebhookEncryptionKey(cfg.WebhookEncryptionKey)),
+		Cache:   responseCache,
+		Metrics: metrics,
 	})
 
 	logger.Info("starting api", "addr", cfg.HTTPAddr)

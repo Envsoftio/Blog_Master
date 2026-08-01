@@ -15,6 +15,7 @@ TLS_KEY_PATH=""
 EXTERNAL_TLS_TERMINATION="0"
 SET_GITHUB_SECRETS="0"
 CONFIGURE_BACKUPS="0"
+CONFIGURE_OBSERVABILITY="0"
 GH_REPO=""
 KEY_PATH=""
 
@@ -34,6 +35,7 @@ Options:
   --tls-key <remote-path>      TLS private key on the VPS
   --external-tls               TLS terminates at a trusted upstream proxy
   --configure-backups          Install backup scripts and systemd units (credentials are configured separately)
+  --configure-observability    Install pinned Alloy config, runtime exporter and systemd units
   --repo <owner/repo>          GitHub repo for setting secrets
   --set-github-secrets         Use gh CLI to set GitHub Actions secrets
   --key-path <path>            Local deploy key path. Default: .deploy/seoblog_github_actions_ed25519
@@ -127,6 +129,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --configure-backups)
       CONFIGURE_BACKUPS="1"
+      shift
+      ;;
+    --configure-observability)
+      CONFIGURE_OBSERVABILITY="1"
       shift
       ;;
     --repo)
@@ -236,6 +242,19 @@ if [ "$CONFIGURE_BACKUPS" = "1" ]; then
   done
 fi
 
+if [ "$CONFIGURE_OBSERVABILITY" = "1" ]; then
+  log "uploading observability automation"
+  for asset in \
+    infra/observability/alloy.config \
+    infra/observability/observability.env.example \
+    infra/observability/export-runtime-metrics.mjs \
+    infra/systemd/seoblog-alloy.service \
+    infra/systemd/seoblog-observability-export.service \
+    infra/systemd/seoblog-observability-export.timer; do
+    scp "${SCP_OPTS[@]}" "$asset" "$SSH_TARGET:/tmp/${APP_NAME}-$(basename "$asset")"
+  done
+fi
+
 REMOTE_SETUP_SCRIPT="/tmp/${APP_NAME}-setup-vps.sh"
 log "uploading VPS setup helper"
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "cat > $(quote "$REMOTE_SETUP_SCRIPT")" <<'REMOTE'
@@ -283,6 +302,14 @@ if [ "$CONFIGURE_BACKUPS" = "1" ]; then
   LITESTREAM_BIN="$(command -v litestream)"
 fi
 
+if [ "$CONFIGURE_OBSERVABILITY" = "1" ]; then
+  command -v alloy >/dev/null 2>&1 || { echo "Grafana Alloy v1.18.0 is required before --configure-observability" >&2; exit 1; }
+  alloy --version | grep -q 'v1.18.0' || { echo "Grafana Alloy v1.18.0 is required" >&2; exit 1; }
+  ALLOY_BIN="$(command -v alloy)"
+  NODE_BIN="$(command -v node)"
+  PM2_BIN="$(command -v pm2)"
+fi
+
 if ! node -e "const [major] = process.versions.node.split('.').map(Number); process.exit(major >= 22 ? 0 : 1)"; then
   echo "Node.js 22+ is required on the VPS for the Nuxt server output" >&2
   exit 1
@@ -301,6 +328,7 @@ if [ ! -f "$SHARED_ENV" ]; then
   cat > "$SHARED_ENV" <<ENV
 SEOBLOG_ENV=production
 SEOBLOG_HTTP_ADDR=127.0.0.1:${API_PORT}
+SEOBLOG_WORKER_METRICS_ADDR=127.0.0.1:9092
 SEOBLOG_DB_PATH=${DEPLOY_PATH}/shared/seoblog.db
 SEOBLOG_DEV_AUTH=false
 SEOBLOG_TRUSTED_PROXIES=127.0.0.1
@@ -333,6 +361,46 @@ SEOBLOG_RELEASE_ROOT=${DEPLOY_PATH}/current
 ENV
 else
   log "$SHARED_ENV already exists; leaving it unchanged"
+fi
+
+if [ "$CONFIGURE_OBSERVABILITY" = "1" ]; then
+  OBSERVABILITY_DIR="$DEPLOY_PATH/observability"
+  METRICS_DIR="$DEPLOY_PATH/shared/metrics"
+  REMOTE_DEPLOY_GROUP="$(id -gn "$REMOTE_DEPLOY_USER")"
+  $SUDO mkdir -p "$OBSERVABILITY_DIR" "$METRICS_DIR"
+  $SUDO chown -R "$REMOTE_DEPLOY_USER:$REMOTE_DEPLOY_GROUP" "$OBSERVABILITY_DIR" "$METRICS_DIR"
+  $SUDO chmod 750 "$OBSERVABILITY_DIR" "$METRICS_DIR"
+  sed \
+    -e "s#127.0.0.1:8080#127.0.0.1:${API_PORT}#g" \
+    -e "s#/srv/seoblog#${DEPLOY_PATH//&/\\&}#g" \
+    "/tmp/${APP_NAME}-alloy.config" | $SUDO tee "$OBSERVABILITY_DIR/alloy.config" >/dev/null
+  $SUDO chown "$REMOTE_DEPLOY_USER:$REMOTE_DEPLOY_GROUP" "$OBSERVABILITY_DIR/alloy.config"
+  $SUDO chmod 640 "$OBSERVABILITY_DIR/alloy.config"
+  $SUDO install -o "$REMOTE_DEPLOY_USER" -g "$REMOTE_DEPLOY_GROUP" -m 755 "/tmp/${APP_NAME}-export-runtime-metrics.mjs" "$OBSERVABILITY_DIR/export-runtime-metrics.mjs"
+
+  OBSERVABILITY_ENV="$DEPLOY_PATH/shared/observability.env"
+  if [ ! -f "$OBSERVABILITY_ENV" ]; then
+    sed \
+      -e "s#/home/seoblog#$(getent passwd "$REMOTE_DEPLOY_USER" | cut -d: -f6 | sed 's/[&/]/\\&/g')#g" \
+      "/tmp/${APP_NAME}-observability.env.example" | $SUDO tee "$OBSERVABILITY_ENV" >/dev/null
+    $SUDO chown "$REMOTE_DEPLOY_USER:$REMOTE_DEPLOY_GROUP" "$OBSERVABILITY_ENV"
+    $SUDO chmod 600 "$OBSERVABILITY_ENV"
+  else
+    log "$OBSERVABILITY_ENV already exists; leaving it unchanged"
+  fi
+
+  for unit_name in seoblog-alloy.service seoblog-observability-export.service seoblog-observability-export.timer; do
+    sed -e "s#User=seoblog#User=${REMOTE_DEPLOY_USER//&/\\&}#" \
+      -e "s#Group=seoblog#Group=${REMOTE_DEPLOY_GROUP//&/\\&}#" \
+      -e "s#/usr/bin/alloy#${ALLOY_BIN//&/\\&}#g" \
+      -e "s#/usr/bin/node#${NODE_BIN//&/\\&}#g" \
+      -e "s#/usr/bin/pm2#${PM2_BIN//&/\\&}#g" \
+      -e "s#/srv/seoblog#${DEPLOY_PATH//&/\\&}#g" \
+      "/tmp/${APP_NAME}-${unit_name}" | $SUDO tee "/etc/systemd/system/${unit_name}" >/dev/null
+    $SUDO chmod 644 "/etc/systemd/system/${unit_name}"
+  done
+  $SUDO systemctl daemon-reload
+  log "observability units installed but not enabled; configure $OBSERVABILITY_ENV and complete the documented preflight first"
 fi
 
 if [ "$CONFIGURE_BACKUPS" = "1" ]; then
@@ -539,7 +607,7 @@ ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "chmod 700 $(quote "$REMOTE_SETUP_SCRIPT")"
 
 log "preparing $DEPLOY_PATH on the VPS"
 ssh -tt "${SSH_OPTS[@]}" "$SSH_TARGET" \
-  "APP_NAME=$(quote "$APP_NAME") DEPLOY_PATH=$(quote "$DEPLOY_PATH") REMOTE_DEPLOY_USER=$(quote "$REMOTE_USER") ADMIN_PORT=$(quote "$ADMIN_PORT") API_PORT=$(quote "$API_PORT") DOMAIN=$(quote "$DOMAIN") CONFIGURE_NGINX=$(quote "$CONFIGURE_NGINX") CONFIGURE_BACKUPS=$(quote "$CONFIGURE_BACKUPS") TLS_CERT_PATH=$(quote "$TLS_CERT_PATH") TLS_KEY_PATH=$(quote "$TLS_KEY_PATH") EXTERNAL_TLS_TERMINATION=$(quote "$EXTERNAL_TLS_TERMINATION") bash $(quote "$REMOTE_SETUP_SCRIPT"); status=\$?; rm -f $(quote "$REMOTE_SETUP_SCRIPT"); exit \$status"
+  "APP_NAME=$(quote "$APP_NAME") DEPLOY_PATH=$(quote "$DEPLOY_PATH") REMOTE_DEPLOY_USER=$(quote "$REMOTE_USER") ADMIN_PORT=$(quote "$ADMIN_PORT") API_PORT=$(quote "$API_PORT") DOMAIN=$(quote "$DOMAIN") CONFIGURE_NGINX=$(quote "$CONFIGURE_NGINX") CONFIGURE_BACKUPS=$(quote "$CONFIGURE_BACKUPS") CONFIGURE_OBSERVABILITY=$(quote "$CONFIGURE_OBSERVABILITY") TLS_CERT_PATH=$(quote "$TLS_CERT_PATH") TLS_KEY_PATH=$(quote "$TLS_KEY_PATH") EXTERNAL_TLS_TERMINATION=$(quote "$EXTERNAL_TLS_TERMINATION") bash $(quote "$REMOTE_SETUP_SCRIPT"); status=\$?; rm -f $(quote "$REMOTE_SETUP_SCRIPT"); exit \$status"
 
 KNOWN_HOSTS="$(ssh-keyscan -p "$SSH_PORT" "$REMOTE_HOST" 2>/dev/null || true)"
 

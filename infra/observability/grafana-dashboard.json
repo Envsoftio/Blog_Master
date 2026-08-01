@@ -1,0 +1,130 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [{ "expr": "sum by (status) (rate(seoblog_http_requests_total[$__rate_interval]))", "legendFormat": "{{status}}", "refId": "A" }],
+      "title": "API request rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "id": 2,
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le, route) (rate(seoblog_http_request_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "{{route}}", "refId": "A" }],
+      "title": "API p95 latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "id": 3,
+      "targets": [{ "expr": "sum(rate(seoblog_content_cache_events_total{outcome=\"hit\"}[$__rate_interval])) / clamp_min(sum(rate(seoblog_content_cache_events_total{outcome=~\"hit|miss\"}[$__rate_interval])), 0.001)", "legendFormat": "hit rate", "refId": "A" }],
+      "title": "Redis content-cache hit rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "id": 4,
+      "targets": [{ "expr": "max(seoblog_outbox_oldest_pending_age_seconds)", "legendFormat": "oldest event", "refId": "A" }],
+      "title": "Publication outbox age",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "id": 5,
+      "targets": [{ "expr": "max by (status) (seoblog_webhook_attempts)", "legendFormat": "{{status}}", "refId": "A" }],
+      "title": "Webhook delivery state",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "id": 6,
+      "targets": [{ "expr": "sum by (component, outcome) (increase(seoblog_worker_cycles_total[$__rate_interval]))", "legendFormat": "{{component}} {{outcome}}", "refId": "A" }],
+      "title": "Worker cycles",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "id": 7,
+      "targets": [
+        { "expr": "max by (file) (seoblog_sqlite_database_bytes)", "legendFormat": "SQLite {{file}}", "refId": "A" },
+        { "expr": "node_filesystem_avail_bytes{mountpoint=\"/\"}", "legendFormat": "root free", "refId": "B" }
+      ],
+      "title": "Database and host storage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "mappings": [{ "options": { "0": { "color": "red", "text": "DOWN" }, "1": { "color": "green", "text": "UP" } }, "type": "value" }] }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "id": 8,
+      "targets": [{ "expr": "seoblog_pm2_process_up", "legendFormat": "{{name}}", "refId": "A" }],
+      "title": "Required PM2 processes",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "dateTimeFromNow" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "id": 9,
+      "targets": [{ "expr": "max(seoblog_backup_last_verified_timestamp_seconds) * 1000", "legendFormat": "verified recovery point", "refId": "A" }],
+      "title": "Last verified backup",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "id": 10,
+      "targets": [
+        { "expr": "max by (status) (seoblog_ai_jobs)", "legendFormat": "AI {{status}}", "refId": "A" },
+        { "expr": "max by (status) (seoblog_media_assets)", "legendFormat": "media {{status}}", "refId": "B" },
+        { "expr": "max by (status) (seoblog_email_notifications)", "legendFormat": "email {{status}}", "refId": "C" }
+      ],
+      "title": "Provider and processing state",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "id": 11,
+      "targets": [
+        { "expr": "redis_up", "legendFormat": "Redis", "refId": "A" },
+        { "expr": "up{job=~\"seoblog-(api|worker|litestream)\"}", "legendFormat": "{{job}}", "refId": "B" }
+      ],
+      "title": "Service health",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["seoblog", "operations"],
+  "templating": {
+    "list": [{ "current": {}, "label": "Prometheus", "name": "DS_PROMETHEUS", "query": "prometheus", "type": "datasource" }]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "SEO Blog Operations",
+  "uid": "seoblog-operations",
+  "version": 1
+}
+

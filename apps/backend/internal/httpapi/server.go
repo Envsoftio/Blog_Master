@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -14,6 +16,7 @@ import (
 
 	"seoblog/apps/backend/internal/config"
 	"seoblog/apps/backend/internal/mailer"
+	"seoblog/apps/backend/internal/observability"
 	"seoblog/apps/backend/internal/platform/b2"
 	"seoblog/apps/backend/internal/store"
 )
@@ -25,6 +28,7 @@ type Options struct {
 	Store        *store.Store
 	Cache        ResponseCache
 	MediaStorage mediaStorage
+	Metrics      *observability.Registry
 }
 
 type Server struct {
@@ -38,6 +42,7 @@ type Server struct {
 	cache        ResponseCache
 	cacheFill    cacheFlightGroup
 	mediaStorage mediaStorage
+	metrics      *observability.Registry
 }
 
 type mediaStorage interface {
@@ -64,11 +69,62 @@ func New(opts Options) *Server {
 		fiberConfig.TrustProxyConfig = fiber.TrustProxyConfig{Proxies: opts.Config.TrustedProxies}
 	}
 	app := fiber.New(fiberConfig)
+	if opts.Logger == nil {
+		opts.Logger = slog.Default()
+	}
 	app.Use(requestid.New())
 	app.Use(func(c fiber.Ctx) error {
 		requestID := requestid.FromContext(c)
 		c.SetContext(store.WithRequestID(c.Context(), requestID))
 		return c.Next()
+	})
+	app.Use(func(c fiber.Ctx) error {
+		startedAt := time.Now()
+		err := c.Next()
+		status := c.Response().StatusCode()
+		if err != nil && status < fiber.StatusBadRequest {
+			status = fiber.StatusInternalServerError
+			var fiberError *fiber.Error
+			if errors.As(err, &fiberError) {
+				status = fiberError.Code
+			}
+		}
+		route := c.Route().Path
+		duration := time.Since(startedAt)
+		if opts.Metrics != nil {
+			opts.Metrics.RecordHTTPRequest(c.Method(), route, status, duration)
+		}
+		level := slog.LevelInfo
+		category := "none"
+		outcome := "success"
+		if status >= fiber.StatusInternalServerError {
+			level = slog.LevelError
+			category = "server_error"
+			outcome = "error"
+		} else if status >= fiber.StatusBadRequest {
+			level = slog.LevelWarn
+			category = "client_error"
+			outcome = "rejected"
+		}
+		attributes := []any{
+			"request_id", requestid.FromContext(c),
+			"method", c.Method(),
+			"route", route,
+			"status", status,
+			"outcome", outcome,
+			"duration_ms", duration.Milliseconds(),
+			"error_category", category,
+		}
+		if project, ok := contentProject(c); ok {
+			attributes = append(attributes, "project_id", project.ProjectID, "api_key_id", project.KeyID)
+		} else if projectID := c.Params("projectID"); projectID != "" {
+			attributes = append(attributes, "project_id", projectID)
+		}
+		if user, ok := adminUser(c); ok {
+			attributes = append(attributes, "actor_user_id", user.ID)
+		}
+		opts.Logger.Log(c.Context(), level, "http request completed", attributes...)
+		return err
 	})
 	app.Use(recover.New(recover.Config{EnableStackTrace: false}))
 
@@ -110,6 +166,7 @@ func New(opts Options) *Server {
 		store:        opts.Store,
 		cache:        opts.Cache,
 		mediaStorage: mediaStorage,
+		metrics:      opts.Metrics,
 	}
 	s.registerRoutes()
 	return s
@@ -146,6 +203,19 @@ func (s *Server) registerRoutes() {
 			return problem(c, fiber.StatusServiceUnavailable, "Database unavailable", "SQLite did not respond")
 		}
 		return writeJSON(c, fiber.StatusOK, HealthResponse{Status: "ok", Service: "seoblog-api", Version: "0.1.0"})
+	})
+
+	s.app.Get("/metrics", func(c fiber.Ctx) error {
+		if s.metrics == nil {
+			return c.SendStatus(fiber.StatusNotFound)
+		}
+		var output bytes.Buffer
+		if err := s.metrics.Render(c.Context(), &output); err != nil {
+			s.logger.Error("collect metrics", "error_category", "metrics_collection", "error", err)
+			return problem(c, fiber.StatusServiceUnavailable, "Metrics unavailable", "Operational metrics could not be collected")
+		}
+		c.Set(fiber.HeaderContentType, "text/plain; version=0.0.4; charset=utf-8")
+		return c.Send(output.Bytes())
 	})
 
 	s.registerAdminRoutes()

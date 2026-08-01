@@ -1,0 +1,221 @@
+groups:
+  - name: seoblog-availability
+    rules:
+      - alert: SEOBlogAPIMetricsMissing
+        expr: up{job="seoblog-api"} == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: SEO Blog API is not observable
+          runbook_url: docs/operations-runbook.md#api-admin-or-worker-outage
+      - alert: SEOBlogWorkerMetricsMissing
+        expr: up{job="seoblog-worker"} == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: SEO Blog worker is offline or cannot be scraped
+          runbook_url: docs/operations-runbook.md#api-admin-or-worker-outage
+      - alert: SEOBlogHostMetricsMissing
+        expr: up{job="seoblog-host"} == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: SEO Blog host metrics are unavailable
+          runbook_url: docs/operations-runbook.md#api-admin-or-worker-outage
+      - alert: SEOBlogLitestreamMetricsMissing
+        expr: up{job="seoblog-litestream"} == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Litestream is offline or cannot be scraped
+          runbook_url: docs/operations-runbook.md#backup-or-primary-host-recovery
+      - alert: SEOBlogElevated5xxRate
+        expr: sum(rate(seoblog_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(seoblog_http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: More than 5% of API requests are returning 5xx
+          runbook_url: docs/operations-runbook.md#api-admin-or-worker-outage
+      - alert: SEOBlogAuthorizationRejectionSurge
+        expr: sum(rate(seoblog_http_requests_total{status=~"401|403"}[5m])) > 1
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: Authentication or authorization rejections are elevated
+          runbook_url: docs/operations-runbook.md#lost-session-or-leaked-credential
+      - alert: SEOBlogContentAPILatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(seoblog_http_request_duration_seconds_bucket{route=~"/content/.*"}[10m]))) > 0.5
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: Content API p95 latency exceeds the uncached target
+          runbook_url: docs/operations-runbook.md#sqlite-busy-corruption-disk-full-or-host-loss
+
+  - name: seoblog-delivery
+    rules:
+      - alert: SEOBlogPublicationOutboxDelayed
+        expr: max(seoblog_outbox_oldest_pending_age_seconds) > 120
+        labels: { severity: warning }
+        annotations:
+          summary: Oldest publication event has waited more than two minutes
+          runbook_url: docs/operations-runbook.md#outbox-or-dead-letter-backlog
+      - alert: SEOBlogPublicationOutboxCriticallyDelayed
+        expr: max(seoblog_outbox_oldest_pending_age_seconds) > 900
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Publication propagation is delayed more than fifteen minutes
+          runbook_url: docs/operations-runbook.md#outbox-or-dead-letter-backlog
+      - alert: SEOBlogWebhookDeadLetterPresent
+        expr: max(seoblog_webhook_attempts{status="dead_letter"}) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: One or more webhook deliveries exhausted retries
+          runbook_url: docs/operations-runbook.md#stale-cdn-or-failed-landing-revalidation
+      - alert: SEOBlogWorkerCycleErrors
+        expr: sum(increase(seoblog_worker_cycles_total{outcome="error"}[10m])) > 2
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: A worker subsystem is repeatedly failing
+          runbook_url: docs/operations-runbook.md#outbox-or-dead-letter-backlog
+
+  - name: seoblog-data-and-providers
+    rules:
+      - alert: SEOBlogSQLiteWaitSurge
+        expr: sum(rate(seoblog_sqlite_wait_total[5m])) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: The single SQLite connection is experiencing sustained contention
+          runbook_url: docs/operations-runbook.md#sqlite-busy-corruption-disk-full-or-host-loss
+      - alert: SEOBlogRedisUnavailable
+        expr: redis_up == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Redis is unavailable; authoritative reads should be using SQLite
+          runbook_url: docs/operations-runbook.md#redis-outage-or-cache-poisoning
+      - alert: SEOBlogRedisEvictionSurge
+        expr: increase(redis_evicted_keys_total[10m]) > 100
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Redis is evicting an unusual number of cache entries
+          runbook_url: docs/operations-runbook.md#redis-outage-or-cache-poisoning
+      - alert: SEOBlogMediaProcessingFailures
+        expr: max(seoblog_media_assets{status="failed"}) > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: Media assets are in failed state
+          runbook_url: docs/operations-runbook.md#api-admin-or-worker-outage
+      - alert: SEOBlogEmailDeadLetterPresent
+        expr: max(seoblog_email_notifications{status="dead_letter"}) > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: Transactional email delivery has exhausted retries
+          runbook_url: docs/operations-runbook.md#transactional-email-outage
+      - alert: SEOBlogAIProviderFailures
+        expr: max(seoblog_ai_jobs{status="failed"}) > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: AI jobs are failing
+          runbook_url: docs/operations-runbook.md#ai-provider-or-cost-incident
+      - alert: SEOBlogAISpendSurge
+        expr: increase(seoblog_ai_estimated_cost_cents_total[1h]) > 10000
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Recorded estimated AI spend rose by more than 100 USD in one hour
+          runbook_url: docs/operations-runbook.md#ai-provider-or-cost-incident
+
+  - name: seoblog-host-and-recovery
+    rules:
+      - alert: SEOBlogVerifiedBackupTooOld
+        expr: time() - seoblog_backup_last_verified_timestamp_seconds > 88200
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: No verified daily recovery point exists inside its schedule plus grace window
+          runbook_url: docs/operations-runbook.md#backup-or-primary-host-recovery
+      - alert: SEOBlogBackupVerificationFailed
+        expr: seoblog_backup_last_verification_success != 1
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Latest backup evidence is absent or invalid
+          runbook_url: docs/operations-runbook.md#backup-or-primary-host-recovery
+      - alert: SEOBlogPM2ProcessOffline
+        expr: seoblog_pm2_process_up != 1
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: Required PM2 process {{ $labels.name }} is offline
+          runbook_url: docs/operations-runbook.md#pm2-daemon-process-list-restart-loop-or-reboot
+      - alert: SEOBlogPM2SavedListMismatch
+        expr: seoblog_pm2_saved_process_present != 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: Required PM2 process {{ $labels.name }} is absent from dump.pm2
+          runbook_url: docs/operations-runbook.md#pm2-daemon-process-list-restart-loop-or-reboot
+      - alert: SEOBlogPM2RestartLoop
+        expr: increase(seoblog_pm2_process_restarts_total[10m]) > 2
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: Required PM2 process {{ $labels.name }} restarted repeatedly
+          runbook_url: docs/operations-runbook.md#pm2-daemon-process-list-restart-loop-or-reboot
+      - alert: SEOBlogRuntimeEvidenceExportFailed
+        expr: seoblog_observability_export_success != 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: PM2, backup or deployment evidence could not be exported
+          runbook_url: docs/operations-runbook.md#pm2-daemon-process-list-restart-loop-or-reboot
+      - alert: SEOBlogRuntimeEvidenceStale
+        expr: time() - seoblog_observability_export_timestamp_seconds > 180
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: PM2, backup and release evidence has not refreshed for three minutes
+          runbook_url: docs/operations-runbook.md#pm2-daemon-process-list-restart-loop-or-reboot
+      - alert: SEOBlogRuntimeEvidenceUnitFailed
+        expr: node_systemd_unit_state{name="seoblog-observability-export.service",state="failed"} == 1
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: Runtime evidence export systemd unit failed
+          runbook_url: docs/operations-runbook.md#pm2-daemon-process-list-restart-loop-or-reboot
+      - alert: SEOBlogDiskNearlyFull
+        expr: node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} < 0.15
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: Root filesystem has less than 15% free space
+          runbook_url: docs/operations-runbook.md#sqlite-busy-corruption-disk-full-or-host-loss
+      - alert: SEOBlogInodeExhaustion
+        expr: node_filesystem_files_free{mountpoint="/"} / node_filesystem_files{mountpoint="/"} < 0.15
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: Root filesystem has less than 15% free inodes
+          runbook_url: docs/operations-runbook.md#sqlite-busy-corruption-disk-full-or-host-loss
+      - alert: SEOBlogInfrastructureServiceFailed
+        expr: node_systemd_unit_state{name=~"nginx.service|redis(-server)?.service|seoblog-litestream.service",state="active"} != 1
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Required host service {{ $labels.name }} is not active
+          runbook_url: docs/operations-runbook.md#nginx-tls-or-domain-incident
+      - alert: SEOBlogProductionReleaseFailed
+        expr: seoblog_deployment_last_status{status="failed"} == 1 and time() - seoblog_deployment_last_timestamp_seconds < 3600
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: The latest production release failed or rolled back
+          runbook_url: docs/operations-runbook.md#failed-migration-or-release

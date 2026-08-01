@@ -58,6 +58,11 @@ tasks:
     cmds:
       - infra/backup/tests/run.sh
 
+  observability:check:
+    desc: Validate metrics, dashboard and alert contracts
+    cmds:
+      - infra/observability/tests/run.sh
+
   contracts:generate:
     desc: Generate the OpenAPI contract from the backend route registry
     dir: apps/backend

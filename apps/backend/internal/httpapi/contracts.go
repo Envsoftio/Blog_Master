@@ -168,6 +168,7 @@ func documentFiberRoutes(api huma.API, app *fiber.App) {
 	for _, methodRoutes := range app.Stack() {
 		for _, route := range methodRoutes {
 			if route.Path == "/healthz" ||
+				route.Path == "/metrics" ||
 				strings.HasPrefix(route.Path, "/openapi") ||
 				strings.HasPrefix(route.Path, "/docs") ||
 				strings.HasPrefix(route.Path, "/schemas") ||

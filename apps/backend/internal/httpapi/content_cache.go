@@ -152,19 +152,34 @@ func (s *Server) contentCacheKey(projectID string, generation int64, namespace s
 
 func (s *Server) cacheGetJSON(ctx context.Context, key string, destination any) bool {
 	if s.cache == nil || key == "" {
+		if s.metrics != nil {
+			s.metrics.RecordCache("disabled")
+		}
 		return false
 	}
 	raw, ok, err := s.cache.Get(ctx, key)
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.RecordCache("fallback")
+		}
 		s.logCache("content cache get failed", slog.LevelWarn, "key", key, "error", err)
 		return false
 	}
 	if !ok {
+		if s.metrics != nil {
+			s.metrics.RecordCache("miss")
+		}
 		return false
 	}
 	if err := json.Unmarshal(raw, destination); err != nil {
+		if s.metrics != nil {
+			s.metrics.RecordCache("fallback")
+		}
 		s.logCache("content cache decode failed", slog.LevelWarn, "key", key, "error", err)
 		return false
+	}
+	if s.metrics != nil {
+		s.metrics.RecordCache("hit")
 	}
 	return true
 }
@@ -179,6 +194,9 @@ func (s *Server) cacheSetJSON(ctx context.Context, key string, value any, ttl ti
 		return
 	}
 	if err := s.cache.Set(ctx, key, raw, jitterTTL(key, ttl)); err != nil {
+		if s.metrics != nil {
+			s.metrics.RecordCache("fallback")
+		}
 		s.logCache("content cache set failed", slog.LevelWarn, "key", key, "error", err)
 	}
 }

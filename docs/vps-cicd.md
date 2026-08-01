@@ -81,6 +81,7 @@ SEOBLOG_DEPLOY_BACKUP_COMMAND=/srv/seoblog/backup/create-recovery-point.sh pre-r
 SEOBLOG_DEPLOY_BACKUP_VERIFY_COMMAND=
 SEOBLOG_DEPLOY_REQUIRE_BACKUP=true
 SEOBLOG_DEPLOY_SKIP_BACKUP=false
+SEOBLOG_WORKER_METRICS_ADDR=127.0.0.1:9092
 SEOBLOG_DEPLOY_DRAIN_COMMAND=
 SEOBLOG_DEPLOY_CONTENT_SMOKE_COMMAND=
 NITRO_HOST=127.0.0.1
@@ -90,6 +91,8 @@ SEOBLOG_RELEASE_ROOT=/srv/seoblog/current
 ```
 
 Set the public admin URL and ZeptoMail API-key password before enabling invitation or password-recovery email. Generate `SEOBLOG_WEBHOOK_ENCRYPTION_KEY` as 32 random bytes encoded with standard Base64 and provide the same value to the API and worker. Staging must also set `SEOBLOG_WEBHOOK_ALLOWED_HOSTS` to its non-production receiver hosts; an empty staging allowlist blocks all delivery. Production SMTP requires STARTTLS and the API never returns reset tokens in an API response. The signing and receiver contract is documented in [webhooks.md](webhooks.md).
+
+The API metrics route uses the loopback API listener, and the worker metrics listener must remain loopback-only. Install the pinned collector and runtime evidence units with `--configure-observability`, then follow [observability operations](observability.md) to provision protected managed-service credentials, dashboard/alert definitions and preflight tests before enabling the units.
 
 AI execution is disabled unless the base URL, API key, and model are all set. The worker calls an OpenAI-compatible chat-completions endpoint, enforces input/output bounds, and persists generated JSON as a review-only proposal with its run provenance. Use HTTPS for remote providers; plain HTTP is accepted only for a loopback development endpoint.
 

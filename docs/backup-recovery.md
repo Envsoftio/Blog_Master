@@ -55,7 +55,7 @@ The deployment stops before migrations if that command fails. A required backup 
 
 The daily timer forces Litestream to synchronously reach the current transaction, restores to an isolated file with the read-only credential, validates SQLite, uploads a separately locked snapshot, downloads it with the restore credential and validates it again. Evidence is appended to `backup-evidence/recovery-points.jsonl` without credentials.
 
-Alert when the timer fails, Litestream is inactive, the last verified record is older than five minutes beyond its scheduled window, the replica sync transaction lags the primary, or disk space threatens SQLite/Litestream operation. Observability wiring is tracked in the next implementation slice.
+Alert when the timer fails, Litestream is inactive, the last verified record is older than five minutes beyond its scheduled window, the replica sync transaction lags the primary, or disk space threatens SQLite/Litestream operation. The checked-in collector, dashboard and rules are provisioned through [observability operations](observability.md).
 
 ## Isolated restore test
 

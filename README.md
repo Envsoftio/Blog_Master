@@ -41,7 +41,7 @@ Production releases are deployed as immutable, checksummed artifacts through:
 task deploy:prod RELEASE=<release-id> ARCHIVE=/tmp/seoblog-release-<release-id>.tar.gz
 ```
 
-The VPS deploy script verifies `release.json`, requires a verified recovery point before migrations for existing databases, switches the application symlink only after migrations succeed and restarts only the three `seoblog-*` PM2 processes. Litestream/B2 installation, immutable snapshots and guarded restoration are covered in [the backup and recovery runbook](docs/backup-recovery.md).
+The VPS deploy script verifies `release.json`, requires a verified recovery point before migrations for existing databases, switches the application symlink only after migrations succeed and restarts only the three `seoblog-*` PM2 processes. Litestream/B2 installation, immutable snapshots and guarded restoration are covered in [the backup and recovery runbook](docs/backup-recovery.md). Private metrics, managed alert/dashboard provisioning and incident response are covered in [observability operations](docs/observability.md) and [the production incident runbook](docs/operations-runbook.md).
 
 Create the first admin owner with the one-time CLI command after migrations:
 

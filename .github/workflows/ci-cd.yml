@@ -93,6 +93,9 @@ jobs:
       - name: Validate backup and restore automation
         run: infra/backup/tests/run.sh
 
+      - name: Validate observability contracts
+        run: infra/observability/tests/run.sh
+
       - name: Verify generated OpenAPI contract
         working-directory: apps/backend
         run: |

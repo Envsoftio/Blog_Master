@@ -75,6 +75,7 @@ module.exports = {
       env_production: {
         SEOBLOG_ENV: process.env.SEOBLOG_ENV || 'production',
         SEOBLOG_HTTP_ADDR: apiAddr,
+        SEOBLOG_WORKER_METRICS_ADDR: process.env.SEOBLOG_WORKER_METRICS_ADDR || '127.0.0.1:9092',
         SEOBLOG_DB_PATH: dbPath,
         SEOBLOG_DEV_AUTH: process.env.SEOBLOG_DEV_AUTH || 'false',
         SEOBLOG_TRUSTED_PROXIES: process.env.SEOBLOG_TRUSTED_PROXIES || '127.0.0.1',

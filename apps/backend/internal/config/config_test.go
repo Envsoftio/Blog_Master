@@ -51,6 +51,13 @@ func TestLoadRedisConfig(t *testing.T) {
 	}
 }
 
+func TestLoadWorkerMetricsAddress(t *testing.T) {
+	t.Setenv("SEOBLOG_WORKER_METRICS_ADDR", "127.0.0.1:9192")
+	if got := Load().WorkerMetricsAddr; got != "127.0.0.1:9192" {
+		t.Fatalf("expected configured worker metrics address, got %q", got)
+	}
+}
+
 func TestLoadWebhookSecurityConfig(t *testing.T) {
 	t.Setenv("SEOBLOG_WEBHOOK_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
 	t.Setenv("SEOBLOG_WEBHOOK_ALLOWED_HOSTS", "hooks.staging.example, *.preview.example")

@@ -21,7 +21,7 @@ func main() {
 	}
 
 	cfg := config.Load()
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("service", "seoblog-admincli", "environment", cfg.Env)
 
 	switch os.Args[1] {
 	case "migrate":

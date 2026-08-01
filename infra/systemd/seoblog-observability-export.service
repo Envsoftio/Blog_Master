@@ -1,0 +1,15 @@
+[Unit]
+Description=Export SEO Blog PM2, backup and release evidence metrics
+After=network.target
+
+[Service]
+Type=oneshot
+User=seoblog
+Group=seoblog
+Environment=SEOBLOG_DEPLOY_PATH=/srv/seoblog
+Environment=SEOBLOG_PM2_BIN=/usr/bin/pm2
+ExecStart=/usr/bin/node /srv/seoblog/observability/export-runtime-metrics.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/srv/seoblog/shared/metrics

@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Env                   string
 	HTTPAddr              string
+	WorkerMetricsAddr     string
 	DBPath                string
 	DevAuth               bool
 	TrustedProxies        []string
@@ -48,6 +49,7 @@ func Load() Config {
 	return Config{
 		Env:                   env("SEOBLOG_ENV", "development"),
 		HTTPAddr:              env("SEOBLOG_HTTP_ADDR", ":8080"),
+		WorkerMetricsAddr:     env("SEOBLOG_WORKER_METRICS_ADDR", "127.0.0.1:9092"),
 		DBPath:                env("SEOBLOG_DB_PATH", "./seoblog.db"),
 		DevAuth:               os.Getenv("SEOBLOG_DEV_AUTH") == "true",
 		TrustedProxies:        stringList(os.Getenv("SEOBLOG_TRUSTED_PROXIES")),

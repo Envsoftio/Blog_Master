@@ -1,0 +1,21 @@
+[Unit]
+Description=SEO Blog host metrics and log collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=seoblog
+Group=seoblog
+EnvironmentFile=/srv/seoblog/shared/observability.env
+ExecStart=/usr/bin/alloy run --server.http.listen-addr=127.0.0.1:12345 --storage.path=/var/lib/seoblog-alloy /srv/seoblog/observability/alloy.config
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+StateDirectory=seoblog-alloy
+
+[Install]
+WantedBy=multi-user.target
+
