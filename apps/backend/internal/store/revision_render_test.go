@@ -217,3 +217,34 @@ func TestRenderRevisionBodyAcceptsStructuredEditorOutput(t *testing.T) {
 		t.Fatalf("unexpected editor Markdown export: %q", rendered.Markdown)
 	}
 }
+
+func TestRenderRevisionBodyPreservesSupportedEditorialBlocks(t *testing.T) {
+	document := map[string]any{
+		"type": "doc",
+		"content": []any{map[string]any{
+			"type": "editorialBlock",
+			"attrs": map[string]any{"kind": "takeaway"},
+			"content": []any{map[string]any{"type": "paragraph", "content": []any{map[string]any{"type": "text", "text": "Keep the source nearby."}}}},
+		}},
+	}
+	rendered, err := renderRevisionBody(document, `<aside data-editorial-block="takeaway" onclick="bad()"><p>Keep the source nearby.</p></aside>`, "Fallback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered.HTML, `<aside data-editorial-block="takeaway"><p>Keep the source nearby.</p></aside>`) {
+		t.Fatalf("editorial block contract missing: %s", rendered.HTML)
+	}
+	if strings.Contains(rendered.HTML, "onclick") {
+		t.Fatalf("unsafe editorial block attribute survived: %s", rendered.HTML)
+	}
+}
+
+func TestRenderRevisionBodyRejectsUnknownEditorialBlockKind(t *testing.T) {
+	err := validateStructuredRevisionDocument(map[string]any{
+		"type": "doc",
+		"content": []any{map[string]any{"type": "editorialBlock", "attrs": map[string]any{"kind": "unsafe"}}},
+	})
+	if err == nil {
+		t.Fatal("expected unsupported editorial block kind to be rejected")
+	}
+}

@@ -33,6 +33,7 @@
       <span class="structured-editor__group" aria-label="Links">
         <button type="button" :class="buttonClass('link')" :aria-pressed="editor.isActive('link')" :disabled="disabled" title="Add or edit link" @click="editLink">Link</button>
         <button type="button" class="structured-editor__button" :disabled="disabled || !editor.isActive('link')" title="Remove link" @click="editor.chain().focus().unsetLink().run()">Unlink</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled || !editor.isActive('heading')" title="Set this heading's anchor" @click="editHeadingAnchor">Anchor</button>
       </span>
 
       <span class="structured-editor__group" aria-label="Blocks">
@@ -46,6 +47,15 @@
         <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert horizontal rule" @click="editor.chain().focus().setHorizontalRule().run()">Rule</button>
         <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a 3 by 3 table" @click="editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()">Table</button>
         <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert image from URL" @click="insertImage">Image</button>
+      </span>
+
+      <span class="structured-editor__group" aria-label="Editorial blocks">
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a callout" @click="insertEditorialBlock('callout')">Callout</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a key takeaway" @click="insertEditorialBlock('takeaway')">Takeaway</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a steps section" @click="insertEditorialBlock('steps')">Steps</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a pros and cons section" @click="insertEditorialBlock('pros-cons')">Pros / cons</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a call to action" @click="insertEditorialBlock('cta')">CTA</button>
+        <button type="button" class="structured-editor__button" :disabled="disabled" title="Insert a FAQ section" @click="insertEditorialBlock('faq')">FAQ</button>
       </span>
 
       <span v-if="editor.isActive('table')" class="structured-editor__group" aria-label="Table controls">
@@ -179,6 +189,30 @@ const Figcaption = Node.create({
   renderHTML: ({ HTMLAttributes }) => ['figcaption', mergeAttributes(HTMLAttributes), 0]
 })
 
+const editorialBlockKinds = ['callout', 'takeaway', 'steps', 'pros-cons', 'cta', 'faq'] as const
+type EditorialBlockKind = typeof editorialBlockKinds[number]
+
+const EditorialBlock = Node.create({
+  name: 'editorialBlock',
+  group: 'block',
+  content: 'block+',
+  defining: true,
+  addAttributes() {
+    return {
+      kind: {
+        default: 'callout',
+        parseHTML: element => {
+          const kind = element.getAttribute('data-editorial-block')
+          return editorialBlockKinds.includes(kind as EditorialBlockKind) ? kind : 'callout'
+        },
+        renderHTML: attributes => ({ 'data-editorial-block': editorialBlockKinds.includes(attributes.kind) ? attributes.kind : 'callout' })
+      }
+    }
+  },
+  parseHTML: () => [{ tag: 'aside[data-editorial-block]' }],
+  renderHTML: ({ HTMLAttributes }) => ['aside', mergeAttributes(HTMLAttributes), 0]
+})
+
 function semanticMark(name: string, tag: string) {
   return Mark.create({
     name,
@@ -216,6 +250,7 @@ onMounted(() => {
       AccessibleImage,
       Figure,
       Figcaption,
+      EditorialBlock,
       Superscript,
       Subscript,
       TableKit.configure({ table: { resizable: true } })
@@ -291,6 +326,29 @@ function editLink() {
   editor.value.chain().focus().extendMarkRange('link').setLink({ href }).run()
 }
 
+function editHeadingAnchor() {
+  if (!editor.value || !import.meta.client || !editor.value.isActive('heading')) return
+  editorError.value = ''
+  const current = String(editor.value.getAttributes('heading').id || '')
+  const requested = window.prompt('Heading anchor (letters, numbers, hyphens, and underscores)', current)
+  if (requested === null) return
+  const id = requested.trim()
+  if (!safeHeadingID(id)) {
+    editorError.value = 'Anchors must start with a letter and use only letters, numbers, hyphens, or underscores.'
+    return
+  }
+  const currentPosition = editor.value.state.selection.$from.before(editor.value.state.selection.$from.depth)
+  let conflict = false
+  editor.value.state.doc.descendants((node, position) => {
+    if (node.type.name === 'heading' && position !== currentPosition && node.attrs.id === id) conflict = true
+  })
+  if (conflict) {
+    editorError.value = `The anchor “${id}” is already used by another heading.`
+    return
+  }
+  editor.value.chain().focus().updateAttributes('heading', { id }).run()
+}
+
 function insertImage() {
   if (!editor.value || !import.meta.client) return
   editorError.value = ''
@@ -320,6 +378,26 @@ function insertImage() {
         ]
       }
     : image).run()
+}
+
+function insertEditorialBlock(kind: EditorialBlockKind) {
+  if (!editor.value) return
+  const labels: Record<EditorialBlockKind, string> = {
+    callout: 'Callout',
+    takeaway: 'Key takeaway',
+    steps: 'Steps',
+    'pros-cons': 'Pros and cons',
+    cta: 'Next step',
+    faq: 'Frequently asked question'
+  }
+  editor.value.chain().focus().insertContent({
+    type: 'editorialBlock',
+    attrs: { kind },
+    content: [
+      { type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: labels[kind] }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'Add editorial content.' }] }
+    ]
+  }).run()
 }
 
 function isStructuredDocument(value: unknown): value is Record<string, unknown> {
@@ -409,7 +487,8 @@ function isSafeEditorialURL(raw: string, allowLinkSchemes: boolean) {
 :deep(.tiptap blockquote),
 :deep(.tiptap pre),
 :deep(.tiptap table),
-:deep(.tiptap figure) { margin: 0 0 12px; }
+:deep(.tiptap figure),
+:deep(.tiptap aside[data-editorial-block]) { margin: 0 0 12px; }
 :deep(.tiptap h2),
 :deep(.tiptap h3),
 :deep(.tiptap h4) { margin: 20px 0 8px; font-weight: 700; line-height: 1.25; }
@@ -426,6 +505,9 @@ function isSafeEditorialURL(raw: string, allowLinkSchemes: boolean) {
 :deep(.tiptap img) { max-width: 100%; height: auto; border-radius: 6px; }
 :deep(.tiptap figure) { padding: 8px; border: 1px solid var(--border, #d7ded8); border-radius: 6px; }
 :deep(.tiptap figcaption) { margin-top: 6px; color: var(--text-faint, #667169); font-size: 12px; }
+:deep(.tiptap aside[data-editorial-block]) { padding: 14px; border: 1px solid var(--border, #c9d4cc); border-left: 4px solid var(--primary, #165a4a); border-radius: 6px; background: var(--surface-subtle, #f2f5f3); }
+:deep(.tiptap aside[data-editorial-block='takeaway']) { border-left-color: #1d6c9f; }
+:deep(.tiptap aside[data-editorial-block='cta']) { border-left-color: #9b5a18; }
 :deep(.tiptap .tableWrapper) { overflow-x: auto; margin-bottom: 12px; }
 :deep(.tiptap table) { width: 100%; border-collapse: collapse; table-layout: fixed; }
 :deep(.tiptap th),

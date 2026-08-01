@@ -36,7 +36,7 @@ var allowedRevisionElements = map[string]struct{}{
 	"ul": {}, "ol": {}, "li": {}, "strong": {}, "em": {}, "u": {}, "s": {},
 	"blockquote": {}, "pre": {}, "code": {}, "a": {}, "br": {}, "hr": {},
 	"figure": {}, "figcaption": {}, "img": {}, "table": {}, "thead": {},
-	"tbody": {}, "tfoot": {}, "tr": {}, "th": {}, "td": {}, "sup": {}, "sub": {},
+	"tbody": {}, "tfoot": {}, "tr": {}, "th": {}, "td": {}, "sup": {}, "sub": {}, "aside": {},
 }
 
 var droppedRevisionElements = map[string]struct{}{
@@ -135,6 +135,12 @@ func validateStructuredRevisionNode(node map[string]any) error {
 		if attrs, ok := node["attrs"].(map[string]any); ok {
 			if src, _ := attrs["src"].(string); src != "" && !safeRevisionURL(src, false) {
 				return fmt.Errorf("%w: structured image URLs must use HTTPS or a root-relative URL", ErrValidation)
+			}
+		}
+	case "editorialblock":
+		if attrs, ok := node["attrs"].(map[string]any); ok {
+			if kind, _ := attrs["kind"].(string); !safeEditorialBlockKind(kind) {
+				return fmt.Errorf("%w: structured editorial blocks must use a supported kind", ErrValidation)
 			}
 		}
 	}
@@ -240,6 +246,10 @@ func sanitizeRevisionElement(node *html.Node) error {
 		name := strings.ToLower(attr.Key)
 		value := strings.TrimSpace(attr.Val)
 		switch tag {
+		case "aside":
+			if name == "data-editorial-block" && safeEditorialBlockKind(value) {
+				attributes = append(attributes, html.Attribute{Key: name, Val: value})
+			}
 		case "a":
 			if name == "href" && safeRevisionURL(value, true) {
 				attributes = append(attributes, html.Attribute{Key: "href", Val: value})
@@ -295,6 +305,15 @@ func sanitizeRevisionElement(node *html.Node) error {
 	}
 	node.Attr = attributes
 	return nil
+}
+
+func safeEditorialBlockKind(value string) bool {
+	switch value {
+	case "callout", "takeaway", "steps", "pros-cons", "cta", "faq":
+		return true
+	default:
+		return false
+	}
 }
 
 func safeRevisionURL(raw string, allowAnchor bool) bool {
