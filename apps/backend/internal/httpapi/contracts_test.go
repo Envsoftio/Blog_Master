@@ -14,14 +14,14 @@ func TestProblemResponsesUseProblemJSON(t *testing.T) {
 	server, _ := newAdminTestServer(t)
 	request := httptest.NewRequest(
 		http.MethodGet,
-		"/api/v1/projects/project/articles/article/revisions",
+		"/api/v1/projects/project/articles/article",
 		nil,
 	)
 	response := mustTest(t, server, request)
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected unauthenticated revision history to return 401, got %d", response.StatusCode)
+		t.Fatalf("expected unauthenticated article read to return 401, got %d", response.StatusCode)
 	}
 	if contentType := response.Header.Get("Content-Type"); contentType != problemMediaType {
 		t.Fatalf("expected problem response content type %q, got %q", problemMediaType, contentType)
@@ -51,12 +51,7 @@ func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
 		{http.MethodGet, "/api/v1/projects/{projectID}/ai/jobs/{jobID}/events", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/ai/runs", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/quality-checks", "200"},
-		{http.MethodGet, "/api/v1/projects/{projectID}/review-assignees", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/restore", "200"},
-		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/assignments", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/assignments", "201"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/assignments/{assignmentID}/complete", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/assignments/{assignmentID}/cancel", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/voice-profile", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/voice-profile", "201"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/evidence-packets", "200"},
@@ -70,18 +65,12 @@ func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
 		{http.MethodHead, "/api/v1/projects/{projectID}/sources", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/sources", "201"},
 		{http.MethodPatch, "/api/v1/projects/{projectID}/sources/{sourceID}", "200"},
-		{http.MethodGet, "/api/v1/projects/{projectID}/revisions/{revisionID}/claims", "200"},
-		{http.MethodHead, "/api/v1/projects/{projectID}/revisions/{revisionID}/claims", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/revisions/{revisionID}/claims", "201"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/claims/{claimID}/verify", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "200"},
 		{http.MethodHead, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "201"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "200"},
 		{http.MethodHead, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "201"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/preview-tokens", "201"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/preview-tokens/{tokenID}/revoke", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/webhook-attempts", "200"},
 		{http.MethodHead, "/api/v1/projects/{projectID}/webhook-attempts", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/webhook-attempts/{attemptID}/replay", "202"},
@@ -115,31 +104,17 @@ func TestCoreArticleAdministrationContractsAreImplemented(t *testing.T) {
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles", "201"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}", "200"},
+		{http.MethodPut, "/api/v1/projects/{projectID}/articles/{articleID}", "200"},
 		{http.MethodDelete, "/api/v1/projects/{projectID}/articles/{articleID}", "204"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/restore", "200"},
-		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/revisions", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/revisions", "201"},
-		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/revisions/{revisionID}", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/autosave", "200"},
 		{http.MethodHead, "/api/v1/projects/{projectID}/articles/{articleID}/autosave", "200"},
 		{http.MethodPut, "/api/v1/projects/{projectID}/articles/{articleID}/autosave", "200"},
 		{http.MethodDelete, "/api/v1/projects/{projectID}/articles/{articleID}/autosave", "204"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/revisions/{revisionID}/submit", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/revisions/{revisionID}/request-changes", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/revisions/{revisionID}/approve", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/publish", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/schedule", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/unpublish", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/rollback", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/copy-to-project", "201"},
-		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/comments", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/comments", "201"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/comments/{commentID}/resolve", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/comments/{commentID}/reopen", "200"},
-		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/assignments", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/assignments", "201"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/assignments/{assignmentID}/complete", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/assignments/{assignmentID}/cancel", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "201"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "200"},
@@ -219,7 +194,7 @@ func TestAdminArticleListAndRestoreContractsAreExplicit(t *testing.T) {
 		t.Fatal("expected the explicit admin article-list operation")
 	}
 	assertRequiredParameter(t, listOperation, "projectID", "path")
-	for _, parameter := range []string{"cursor", "limit", "q", "editorialState", "publicationState", "includeArchived"} {
+	for _, parameter := range []string{"cursor", "limit", "q", "publicationState", "includeArchived"} {
 		operationParameter(t, listOperation, parameter, "query")
 	}
 	if query := operationParameter(t, listOperation, "q", "query"); query.Schema == nil || query.Schema.MaxLength == nil || *query.Schema.MaxLength != 100 {
@@ -348,52 +323,26 @@ func TestPasswordResetOpenAPIContracts(t *testing.T) {
 	}
 }
 
-func TestRollbackOpenAPIContract(t *testing.T) {
+func TestRemovedEditorialWorkflowRoutesAreNotDocumented(t *testing.T) {
 	server, _ := newAdminTestServer(t)
-	assertAdminSessionSecurityScheme(t, server)
-
-	item := server.openAPI.Paths["/api/v1/projects/{projectID}/articles/{articleID}/rollback"]
-	if item == nil || item.Post == nil {
-		t.Fatal("expected rollback POST operation")
-	}
-	operation := item.Post
-	if operation.OperationID != "rollbackArticle" {
-		t.Fatalf("expected explicit rollback operation ID, got %q", operation.OperationID)
-	}
-	assertAdminSessionSecurity(t, operation)
-	assertRequiredParameter(t, operation, "projectID", "path")
-	assertRequiredParameter(t, operation, "articleID", "path")
-	assertRequiredParameter(t, operation, "X-CSRF-Token", "header")
-	if operation.RequestBody == nil || !operation.RequestBody.Required {
-		t.Fatal("expected required rollback request body")
-	}
-	mediaType := operation.RequestBody.Content["application/json"]
-	if mediaType == nil || mediaType.Schema == nil {
-		t.Fatal("expected rollback JSON request schema")
-	}
-	requestSchema := resolveContractSchema(t, server, mediaType.Schema)
-	if _, ok := requestSchema.Properties["revisionId"]; !ok {
-		t.Fatal("expected rollback request to document revisionId")
-	}
-	if _, ok := requestSchema.Properties["slug"]; ok {
-		t.Fatal("rollback request must not document slug")
-	}
-	if _, ok := requestSchema.Properties["canonicalUrl"]; ok {
-		t.Fatal("rollback request must not document canonicalUrl")
-	}
-	if !containsString(requestSchema.Required, "revisionId") {
-		t.Fatal("expected revisionId to be required")
-	}
-	if _, ok := operation.Responses["409"]; !ok {
-		t.Fatal("expected rollback contract to document workflow conflicts")
-	}
-	if _, ok := operation.Responses["501"]; ok {
-		t.Fatal("implemented rollback operation must not advertise 501")
-	}
-	assertProblemResponseMediaTypes(t, server, operation, "400", "401", "403", "404", "409", "500")
-	success := operation.Responses["200"]
-	if success == nil || success.Content["application/json"] == nil || success.Content["application/json"].Schema == nil {
-		t.Fatal("expected rollback success response schema")
+	for _, path := range []string{
+		"/api/v1/projects/{projectID}/articles/{articleID}/revisions",
+		"/api/v1/projects/{projectID}/articles/{articleID}/revisions/{revisionID}",
+		"/api/v1/projects/{projectID}/revisions/{revisionID}/submit",
+		"/api/v1/projects/{projectID}/revisions/{revisionID}/request-changes",
+		"/api/v1/projects/{projectID}/revisions/{revisionID}/approve",
+		"/api/v1/projects/{projectID}/articles/{articleID}/rollback",
+		"/api/v1/projects/{projectID}/review-assignees",
+		"/api/v1/projects/{projectID}/articles/{articleID}/comments",
+		"/api/v1/projects/{projectID}/comments/{commentID}/resolve",
+		"/api/v1/projects/{projectID}/comments/{commentID}/reopen",
+		"/api/v1/projects/{projectID}/articles/{articleID}/assignments",
+		"/api/v1/projects/{projectID}/assignments/{assignmentID}/complete",
+		"/api/v1/projects/{projectID}/assignments/{assignmentID}/cancel",
+	} {
+		if server.openAPI.Paths[path] != nil {
+			t.Fatalf("removed workflow route remains documented: %s", path)
+		}
 	}
 }
 
@@ -426,7 +375,6 @@ func TestCopyArticleOpenAPIContract(t *testing.T) {
 	requestSchema := resolveContractSchema(t, server, mediaType.Schema)
 	for _, property := range []string{
 		"destinationProjectId",
-		"sourceRevisionId",
 		"primaryCategoryId",
 		"slug",
 		"canonicalDecision",
@@ -437,7 +385,6 @@ func TestCopyArticleOpenAPIContract(t *testing.T) {
 	}
 	for _, property := range []string{
 		"destinationProjectId",
-		"sourceRevisionId",
 		"primaryCategoryId",
 		"slug",
 		"canonicalDecision",
@@ -475,20 +422,20 @@ func TestCopyArticleOpenAPIContract(t *testing.T) {
 	}
 }
 
-func TestCreateRevisionOpenAPIContract(t *testing.T) {
+func TestSaveArticleOpenAPIContract(t *testing.T) {
 	server, _ := newAdminTestServer(t)
 	assertAdminSessionSecurityScheme(t, server)
 
-	item := server.openAPI.Paths["/api/v1/projects/{projectID}/articles/{articleID}/revisions"]
-	if item == nil || item.Post == nil {
-		t.Fatal("expected create revision POST operation")
+	item := server.openAPI.Paths["/api/v1/projects/{projectID}/articles/{articleID}"]
+	if item == nil || item.Put == nil {
+		t.Fatal("expected save article PUT operation")
 	}
-	operation := item.Post
-	if operation.OperationID != "createArticleRevision" {
-		t.Fatalf("unexpected create revision operation ID %q", operation.OperationID)
+	operation := item.Put
+	if operation.OperationID != "saveAdminArticle" {
+		t.Fatalf("unexpected save article operation ID %q", operation.OperationID)
 	}
 	if _, ok := operation.Responses["501"]; ok {
-		t.Fatal("implemented create revision operation must not advertise 501")
+		t.Fatal("implemented article save must not advertise 501")
 	}
 	assertAdminSessionSecurity(t, operation)
 	assertRequiredParameter(t, operation, "projectID", "path")
@@ -496,134 +443,40 @@ func TestCreateRevisionOpenAPIContract(t *testing.T) {
 	assertRequiredParameter(t, operation, "X-CSRF-Token", "header")
 
 	if operation.RequestBody == nil || !operation.RequestBody.Required {
-		t.Fatal("expected required create revision request body")
+		t.Fatal("expected required article save request body")
 	}
 	requestMediaType := operation.RequestBody.Content["application/json"]
 	if requestMediaType == nil || requestMediaType.Schema == nil {
-		t.Fatal("expected create revision JSON request schema")
+		t.Fatal("expected article save JSON request schema")
 	}
 	requestSchema := resolveContractSchema(t, server, requestMediaType.Schema)
 	for _, property := range []string{"baseRevisionId", "title", "bodyDocument", "html"} {
 		contractProperty(t, requestSchema, property)
 	}
-	for _, property := range []string{"baseRevisionId", "title"} {
+	for _, property := range []string{"title"} {
 		if !containsString(requestSchema.Required, property) {
-			t.Fatalf("expected create revision property %q to be required", property)
+			t.Fatalf("expected article save property %q to be required", property)
 		}
 	}
-	for _, property := range []string{"primaryCategoryId", "deck", "excerpt", "shortAnswer", "bodyDocument", "html"} {
+	for _, property := range []string{"baseRevisionId", "primaryCategoryId", "deck", "excerpt", "shortAnswer", "bodyDocument", "html"} {
 		if containsString(requestSchema.Required, property) {
-			t.Fatalf("expected create revision property %q to be optional", property)
+			t.Fatalf("expected article save property %q to be optional", property)
 		}
 	}
 
 	assertProblemResponseMediaTypes(t, server, operation, "400", "401", "403", "404", "409", "500")
-	success := operation.Responses["201"]
+	success := operation.Responses["200"]
 	if success == nil || success.Content["application/json"] == nil || success.Content["application/json"].Schema == nil {
-		t.Fatal("expected create revision 201 response schema")
+		t.Fatal("expected article save 200 response schema")
 	}
 	responseEnvelopeSchema := resolveContractSchema(t, server, success.Content["application/json"].Schema)
-	revisionSchema := resolveContractSchema(t, server, contractProperty(t, responseEnvelopeSchema, "data"))
-	for _, property := range []string{"id", "articleId", "revisionNumber", "editorialState"} {
-		contractProperty(t, revisionSchema, property)
+	articleSchema := resolveContractSchema(t, server, contractProperty(t, responseEnvelopeSchema, "data"))
+	for _, property := range []string{"id", "title", "bodyDocument", "html", "primaryCategoryId", "contributors", "seo", "latestRevision"} {
+		contractProperty(t, articleSchema, property)
 	}
 }
 
-func TestRevisionHistoryOpenAPIContract(t *testing.T) {
-	server, _ := newAdminTestServer(t)
-	assertAdminSessionSecurityScheme(t, server)
-
-	listItem := server.openAPI.Paths["/api/v1/projects/{projectID}/articles/{articleID}/revisions"]
-	if listItem == nil || listItem.Get == nil {
-		t.Fatal("expected revision history GET operation")
-	}
-	listOperation := listItem.Get
-	if listOperation.OperationID != "listArticleRevisions" {
-		t.Fatalf("unexpected revision list operation ID %q", listOperation.OperationID)
-	}
-	if _, ok := listOperation.Responses["501"]; ok {
-		t.Fatal("implemented revision history must not advertise 501")
-	}
-	assertAdminSessionSecurity(t, listOperation)
-	assertRequiredParameter(t, listOperation, "projectID", "path")
-	assertRequiredParameter(t, listOperation, "articleID", "path")
-	cursorParameter := operationParameter(t, listOperation, "cursor", "query")
-	if cursorParameter.Required || cursorParameter.Schema == nil || cursorParameter.Schema.Type != "string" {
-		t.Fatal("expected an optional string revision-history cursor")
-	}
-	limitParameter := operationParameter(t, listOperation, "limit", "query")
-	if limitParameter.Required || limitParameter.Schema == nil || limitParameter.Schema.Type != "integer" {
-		t.Fatal("expected an optional integer revision-history limit")
-	}
-	if limitParameter.Schema.Minimum == nil || *limitParameter.Schema.Minimum != 1 {
-		t.Fatal("expected revision-history limit minimum 1")
-	}
-	if limitParameter.Schema.Maximum == nil || *limitParameter.Schema.Maximum != 100 {
-		t.Fatal("expected revision-history limit maximum 100")
-	}
-	assertProblemResponseMediaTypes(t, server, listOperation, "400", "401", "403", "404", "500")
-
-	listSuccess := listOperation.Responses["200"]
-	if listSuccess == nil || listSuccess.Content["application/json"] == nil || listSuccess.Content["application/json"].Schema == nil {
-		t.Fatal("expected revision history success response schema")
-	}
-	listEnvelopeSchema := resolveContractSchema(t, server, listSuccess.Content["application/json"].Schema)
-	listDataSchema := contractProperty(t, listEnvelopeSchema, "data")
-	if listDataSchema.Items == nil {
-		t.Fatal("expected revision history data to document array items")
-	}
-	revisionSummarySchema := resolveContractSchema(t, server, listDataSchema.Items)
-	for _, property := range []string{"id", "articleId", "revisionNumber", "baseRevisionId", "published"} {
-		contractProperty(t, revisionSummarySchema, property)
-	}
-	if !containsString(revisionSummarySchema.Required, "published") {
-		t.Fatal("expected published to be required in revision summaries")
-	}
-	assertRevisionHeadOperation(t, listItem.Head, "headArticleRevisions", true)
-
-	detailItem := server.openAPI.Paths["/api/v1/projects/{projectID}/articles/{articleID}/revisions/{revisionID}"]
-	if detailItem == nil || detailItem.Get == nil {
-		t.Fatal("expected revision detail GET operation")
-	}
-	detailOperation := detailItem.Get
-	if detailOperation.OperationID != "getArticleRevision" {
-		t.Fatalf("unexpected revision detail operation ID %q", detailOperation.OperationID)
-	}
-	if _, ok := detailOperation.Responses["501"]; ok {
-		t.Fatal("implemented revision detail must not advertise 501")
-	}
-	assertAdminSessionSecurity(t, detailOperation)
-	assertRequiredParameter(t, detailOperation, "projectID", "path")
-	assertRequiredParameter(t, detailOperation, "articleID", "path")
-	assertRequiredParameter(t, detailOperation, "revisionID", "path")
-	assertProblemResponseMediaTypes(t, server, detailOperation, "401", "403", "404", "500")
-
-	detailSuccess := detailOperation.Responses["200"]
-	if detailSuccess == nil || detailSuccess.Content["application/json"] == nil || detailSuccess.Content["application/json"].Schema == nil {
-		t.Fatal("expected revision detail success response schema")
-	}
-	detailEnvelopeSchema := resolveContractSchema(t, server, detailSuccess.Content["application/json"].Schema)
-	detailSchema := resolveContractSchema(t, server, contractProperty(t, detailEnvelopeSchema, "data"))
-	for _, property := range []string{
-		"id",
-		"baseRevisionId",
-		"bodyDocument",
-		"plainText",
-		"taxonomySnapshot",
-		"seoSnapshot",
-		"published",
-	} {
-		contractProperty(t, detailSchema, property)
-	}
-	for _, property := range []string{"bodyDocument", "plainText", "taxonomySnapshot", "seoSnapshot", "published"} {
-		if !containsString(detailSchema.Required, property) {
-			t.Fatalf("expected revision detail property %q to be required", property)
-		}
-	}
-	assertRevisionHeadOperation(t, detailItem.Head, "headArticleRevision", false)
-}
-
-func TestRevisionHeadRoutesUseImplementedHandlers(t *testing.T) {
+func TestRemovedRevisionRoutesReturnNotFound(t *testing.T) {
 	server, _ := newAdminTestServer(t)
 	for _, path := range []string{
 		"/api/v1/projects/project/articles/article/revisions",
@@ -632,8 +485,8 @@ func TestRevisionHeadRoutesUseImplementedHandlers(t *testing.T) {
 		request := httptest.NewRequest(http.MethodHead, path, nil)
 		response := mustTest(t, server, request)
 		response.Body.Close()
-		if response.StatusCode != http.StatusUnauthorized {
-			t.Fatalf("expected unauthenticated HEAD %s to return 401, got %d", path, response.StatusCode)
+		if response.StatusCode != http.StatusNotFound {
+			t.Fatalf("expected removed HEAD %s to return 404, got %d", path, response.StatusCode)
 		}
 	}
 }

@@ -74,7 +74,7 @@ type AdminProject struct {
 	PublisherName            string   `json:"publisherName,omitempty"`
 	PublisherURL             string   `json:"publisherUrl,omitempty"`
 	DefaultRobotsPolicy      string   `json:"defaultRobotsPolicy"`
-	SoloOwnerApprovalEnabled bool     `json:"soloOwnerApprovalEnabled"`
+	SoloOwnerApprovalEnabled bool     `json:"-"`
 	Role                     string   `json:"role,omitempty"`
 	CreatedAt                string   `json:"createdAt"`
 	UpdatedAt                string   `json:"updatedAt"`

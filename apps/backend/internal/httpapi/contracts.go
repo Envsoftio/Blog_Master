@@ -18,141 +18,121 @@ var operationIDPart = regexp.MustCompile(`[^A-Za-z0-9]+`)
 const adminSessionSecuritySchemeName = "adminSession"
 
 var implementedAdminRouteStatuses = map[string]string{
-	"POST /api/v1/auth/login":                                                  "200",
-	"POST /api/v1/auth/forgot-password":                                        "202",
-	"POST /api/v1/auth/reset-password":                                         "200",
-	"POST /api/v1/invitations/{token}/accept":                                  "200",
-	"GET /api/v1/auth/me":                                                      "200",
-	"HEAD /api/v1/auth/me":                                                     "200",
-	"GET /api/v1/auth/csrf":                                                    "200",
-	"HEAD /api/v1/auth/csrf":                                                   "200",
-	"POST /api/v1/auth/reauthenticate":                                         "200",
-	"POST /api/v1/auth/logout":                                                 "204",
-	"GET /api/v1/projects":                                                     "200",
-	"HEAD /api/v1/projects":                                                    "200",
-	"POST /api/v1/projects":                                                    "201",
-	"GET /api/v1/projects/{projectID}":                                         "200",
-	"HEAD /api/v1/projects/{projectID}":                                        "200",
-	"PATCH /api/v1/projects/{projectID}":                                       "200",
-	"POST /api/v1/projects/{projectID}/suspend":                                "200",
-	"POST /api/v1/projects/{projectID}/archive":                                "200",
-	"GET /api/v1/projects/{projectID}/deletion-impact":                         "200",
-	"HEAD /api/v1/projects/{projectID}/deletion-impact":                        "200",
-	"DELETE /api/v1/projects/{projectID}":                                      "204",
-	"GET /api/v1/projects/{projectID}/members":                                 "200",
-	"HEAD /api/v1/projects/{projectID}/members":                                "200",
-	"POST /api/v1/projects/{projectID}/invitations":                            "201",
-	"PATCH /api/v1/projects/{projectID}/members/{userID}":                      "200",
-	"DELETE /api/v1/projects/{projectID}/members/{userID}":                     "204",
-	"POST /api/v1/projects/{projectID}/members/{userID}/disable-login":         "200",
-	"POST /api/v1/projects/{projectID}/members/{userID}/enable-login":          "200",
-	"GET /api/v1/projects/{projectID}/api-keys":                                "200",
-	"HEAD /api/v1/projects/{projectID}/api-keys":                               "200",
-	"POST /api/v1/projects/{projectID}/api-keys":                               "201",
-	"POST /api/v1/projects/{projectID}/api-keys/{keyID}/rotate":                "200",
-	"POST /api/v1/projects/{projectID}/api-keys/{keyID}/revoke":                "200",
-	"GET /api/v1/projects/{projectID}/articles":                                "200",
-	"HEAD /api/v1/projects/{projectID}/articles":                               "200",
-	"POST /api/v1/projects/{projectID}/articles":                               "201",
-	"GET /api/v1/projects/{projectID}/articles/{articleID}":                    "200",
-	"HEAD /api/v1/projects/{projectID}/articles/{articleID}":                   "200",
-	"GET /api/v1/projects/{projectID}/articles/{articleID}/autosave":           "200",
-	"HEAD /api/v1/projects/{projectID}/articles/{articleID}/autosave":          "200",
-	"PUT /api/v1/projects/{projectID}/articles/{articleID}/autosave":           "200",
-	"DELETE /api/v1/projects/{projectID}/articles/{articleID}/autosave":        "204",
-	"DELETE /api/v1/projects/{projectID}/articles/{articleID}":                 "204",
-	"POST /api/v1/projects/{projectID}/articles/{articleID}/restore":           "200",
-	"POST /api/v1/projects/{projectID}/revisions/{revisionID}/submit":          "200",
-	"POST /api/v1/projects/{projectID}/revisions/{revisionID}/request-changes": "200",
-	"POST /api/v1/projects/{projectID}/revisions/{revisionID}/approve":         "200",
-	"POST /api/v1/projects/{projectID}/articles/{articleID}/publish":           "200",
-	"POST /api/v1/projects/{projectID}/articles/{articleID}/schedule":          "200",
-	"POST /api/v1/projects/{projectID}/articles/{articleID}/unpublish":         "200",
-	"GET /api/v1/projects/{projectID}/categories":                              "200",
-	"HEAD /api/v1/projects/{projectID}/categories":                             "200",
-	"POST /api/v1/projects/{projectID}/categories":                             "201",
-	"PATCH /api/v1/projects/{projectID}/categories/{termID}":                   "200",
-	"GET /api/v1/projects/{projectID}/tags":                                    "200",
-	"HEAD /api/v1/projects/{projectID}/tags":                                   "200",
-	"POST /api/v1/projects/{projectID}/tags":                                   "201",
-	"GET /api/v1/projects/{projectID}/authors":                                 "200",
-	"HEAD /api/v1/projects/{projectID}/authors":                                "200",
-	"POST /api/v1/projects/{projectID}/authors":                                "201",
-	"GET /api/v1/projects/{projectID}/authors/{authorID}":                      "200",
-	"HEAD /api/v1/projects/{projectID}/authors/{authorID}":                     "200",
-	"PATCH /api/v1/projects/{projectID}/authors/{authorID}":                    "200",
-	"DELETE /api/v1/projects/{projectID}/authors/{authorID}":                   "200",
-	"GET /api/v1/projects/{projectID}/series":                                  "200",
-	"HEAD /api/v1/projects/{projectID}/series":                                 "200",
-	"POST /api/v1/projects/{projectID}/series":                                 "201",
-	"GET /api/v1/projects/{projectID}/media":                                   "200",
-	"HEAD /api/v1/projects/{projectID}/media":                                  "200",
-	"POST /api/v1/projects/{projectID}/media/uploads":                          "201",
-	"GET /api/v1/projects/{projectID}/media/{assetID}/file":                    "200",
-	"HEAD /api/v1/projects/{projectID}/media/{assetID}/file":                   "200",
-	"GET /api/v1/projects/{projectID}/media/{assetID}":                         "200",
-	"HEAD /api/v1/projects/{projectID}/media/{assetID}":                        "200",
-	"POST /api/v1/projects/{projectID}/media/{assetID}/complete":               "200",
-	"PATCH /api/v1/projects/{projectID}/media/{assetID}":                       "200",
-	"DELETE /api/v1/projects/{projectID}/media/{assetID}":                      "204",
-	"GET /api/v1/projects/{projectID}/ai/jobs":                                 "200",
-	"HEAD /api/v1/projects/{projectID}/ai/jobs":                                "200",
-	"POST /api/v1/projects/{projectID}/ai/jobs":                                "202",
-	"GET /api/v1/projects/{projectID}/ai/jobs/{jobID}":                         "200",
-	"HEAD /api/v1/projects/{projectID}/ai/jobs/{jobID}":                        "200",
-	"POST /api/v1/projects/{projectID}/ai/jobs/{jobID}/cancel":                 "200",
-	"GET /api/v1/projects/{projectID}/ai/jobs/{jobID}/events":                  "200",
-	"HEAD /api/v1/projects/{projectID}/ai/jobs/{jobID}/events":                 "200",
-	"GET /api/v1/projects/{projectID}/ai/runs":                                 "200",
-	"HEAD /api/v1/projects/{projectID}/ai/runs":                                "200",
-	"GET /api/v1/projects/{projectID}/quality-checks":                          "200",
-	"HEAD /api/v1/projects/{projectID}/quality-checks":                         "200",
-	"GET /api/v1/projects/{projectID}/review-assignees":                        "200",
-	"HEAD /api/v1/projects/{projectID}/review-assignees":                       "200",
-	"GET /api/v1/projects/{projectID}/articles/{articleID}/assignments":        "200",
-	"HEAD /api/v1/projects/{projectID}/articles/{articleID}/assignments":       "200",
-	"POST /api/v1/projects/{projectID}/articles/{articleID}/assignments":       "201",
-	"POST /api/v1/projects/{projectID}/assignments/{assignmentID}/complete":    "200",
-	"POST /api/v1/projects/{projectID}/assignments/{assignmentID}/cancel":      "200",
-	"GET /api/v1/projects/{projectID}/voice-profile":                           "200",
-	"HEAD /api/v1/projects/{projectID}/voice-profile":                          "200",
-	"POST /api/v1/projects/{projectID}/voice-profile":                          "201",
-	"GET /api/v1/projects/{projectID}/evidence-packets":                        "200",
-	"HEAD /api/v1/projects/{projectID}/evidence-packets":                       "200",
-	"POST /api/v1/projects/{projectID}/evidence-packets":                       "201",
-	"POST /api/v1/projects/{projectID}/evidence-packets/{packetID}/approve":    "200",
-	"GET /api/v1/projects/{projectID}/sources":                                 "200",
-	"HEAD /api/v1/projects/{projectID}/sources":                                "200",
-	"POST /api/v1/projects/{projectID}/sources":                                "201",
-	"PATCH /api/v1/projects/{projectID}/sources/{sourceID}":                    "200",
-	"GET /api/v1/projects/{projectID}/revisions/{revisionID}/claims":           "200",
-	"HEAD /api/v1/projects/{projectID}/revisions/{revisionID}/claims":          "200",
-	"POST /api/v1/projects/{projectID}/revisions/{revisionID}/claims":          "201",
-	"POST /api/v1/projects/{projectID}/claims/{claimID}/verify":                "200",
-	"GET /api/v1/projects/{projectID}/articles/{articleID}/comments":           "200",
-	"HEAD /api/v1/projects/{projectID}/articles/{articleID}/comments":          "200",
-	"POST /api/v1/projects/{projectID}/articles/{articleID}/comments":          "201",
-	"POST /api/v1/projects/{projectID}/comments/{commentID}/resolve":           "200",
-	"POST /api/v1/projects/{projectID}/comments/{commentID}/reopen":            "200",
-	"GET /api/v1/projects/{projectID}/articles/{articleID}/disclosures":        "200",
-	"HEAD /api/v1/projects/{projectID}/articles/{articleID}/disclosures":       "200",
-	"POST /api/v1/projects/{projectID}/articles/{articleID}/disclosures":       "201",
-	"GET /api/v1/projects/{projectID}/articles/{articleID}/corrections":        "200",
-	"HEAD /api/v1/projects/{projectID}/articles/{articleID}/corrections":       "200",
-	"POST /api/v1/projects/{projectID}/articles/{articleID}/corrections":       "201",
-	"POST /api/v1/projects/{projectID}/preview-tokens":                         "201",
-	"POST /api/v1/projects/{projectID}/preview-tokens/{tokenID}/revoke":        "200",
-	"GET /api/v1/projects/{projectID}/webhook-attempts":                        "200",
-	"HEAD /api/v1/projects/{projectID}/webhook-attempts":                       "200",
-	"POST /api/v1/projects/{projectID}/webhook-attempts/{attemptID}/replay":    "202",
-	"GET /api/v1/projects/{projectID}/webhooks":                                "200",
-	"HEAD /api/v1/projects/{projectID}/webhooks":                               "200",
-	"POST /api/v1/projects/{projectID}/webhooks":                               "201",
-	"POST /api/v1/projects/{projectID}/webhooks/{endpointID}/revoke":           "200",
-	"GET /api/v1/projects/{projectID}/audit-events":                            "200",
-	"HEAD /api/v1/projects/{projectID}/audit-events":                           "200",
-	"GET /api/v1/projects/{projectID}/delivery/status":                         "200",
-	"HEAD /api/v1/projects/{projectID}/delivery/status":                        "200",
+	"POST /api/v1/auth/login":                                               "200",
+	"POST /api/v1/auth/forgot-password":                                     "202",
+	"POST /api/v1/auth/reset-password":                                      "200",
+	"POST /api/v1/invitations/{token}/accept":                               "200",
+	"GET /api/v1/auth/me":                                                   "200",
+	"HEAD /api/v1/auth/me":                                                  "200",
+	"GET /api/v1/auth/csrf":                                                 "200",
+	"HEAD /api/v1/auth/csrf":                                                "200",
+	"POST /api/v1/auth/reauthenticate":                                      "200",
+	"POST /api/v1/auth/logout":                                              "204",
+	"GET /api/v1/projects":                                                  "200",
+	"HEAD /api/v1/projects":                                                 "200",
+	"POST /api/v1/projects":                                                 "201",
+	"GET /api/v1/projects/{projectID}":                                      "200",
+	"HEAD /api/v1/projects/{projectID}":                                     "200",
+	"PATCH /api/v1/projects/{projectID}":                                    "200",
+	"POST /api/v1/projects/{projectID}/suspend":                             "200",
+	"POST /api/v1/projects/{projectID}/archive":                             "200",
+	"GET /api/v1/projects/{projectID}/deletion-impact":                      "200",
+	"HEAD /api/v1/projects/{projectID}/deletion-impact":                     "200",
+	"DELETE /api/v1/projects/{projectID}":                                   "204",
+	"GET /api/v1/projects/{projectID}/members":                              "200",
+	"HEAD /api/v1/projects/{projectID}/members":                             "200",
+	"POST /api/v1/projects/{projectID}/invitations":                         "201",
+	"PATCH /api/v1/projects/{projectID}/members/{userID}":                   "200",
+	"DELETE /api/v1/projects/{projectID}/members/{userID}":                  "204",
+	"POST /api/v1/projects/{projectID}/members/{userID}/disable-login":      "200",
+	"POST /api/v1/projects/{projectID}/members/{userID}/enable-login":       "200",
+	"GET /api/v1/projects/{projectID}/api-keys":                             "200",
+	"HEAD /api/v1/projects/{projectID}/api-keys":                            "200",
+	"POST /api/v1/projects/{projectID}/api-keys":                            "201",
+	"POST /api/v1/projects/{projectID}/api-keys/{keyID}/rotate":             "200",
+	"POST /api/v1/projects/{projectID}/api-keys/{keyID}/revoke":             "200",
+	"GET /api/v1/projects/{projectID}/articles":                             "200",
+	"HEAD /api/v1/projects/{projectID}/articles":                            "200",
+	"POST /api/v1/projects/{projectID}/articles":                            "201",
+	"GET /api/v1/projects/{projectID}/articles/{articleID}":                 "200",
+	"HEAD /api/v1/projects/{projectID}/articles/{articleID}":                "200",
+	"PUT /api/v1/projects/{projectID}/articles/{articleID}":                 "200",
+	"GET /api/v1/projects/{projectID}/articles/{articleID}/autosave":        "200",
+	"HEAD /api/v1/projects/{projectID}/articles/{articleID}/autosave":       "200",
+	"PUT /api/v1/projects/{projectID}/articles/{articleID}/autosave":        "200",
+	"DELETE /api/v1/projects/{projectID}/articles/{articleID}/autosave":     "204",
+	"DELETE /api/v1/projects/{projectID}/articles/{articleID}":              "204",
+	"POST /api/v1/projects/{projectID}/articles/{articleID}/restore":        "200",
+	"POST /api/v1/projects/{projectID}/articles/{articleID}/publish":        "200",
+	"POST /api/v1/projects/{projectID}/articles/{articleID}/schedule":       "200",
+	"POST /api/v1/projects/{projectID}/articles/{articleID}/unpublish":      "200",
+	"GET /api/v1/projects/{projectID}/categories":                           "200",
+	"HEAD /api/v1/projects/{projectID}/categories":                          "200",
+	"POST /api/v1/projects/{projectID}/categories":                          "201",
+	"PATCH /api/v1/projects/{projectID}/categories/{termID}":                "200",
+	"GET /api/v1/projects/{projectID}/tags":                                 "200",
+	"HEAD /api/v1/projects/{projectID}/tags":                                "200",
+	"POST /api/v1/projects/{projectID}/tags":                                "201",
+	"GET /api/v1/projects/{projectID}/authors":                              "200",
+	"HEAD /api/v1/projects/{projectID}/authors":                             "200",
+	"POST /api/v1/projects/{projectID}/authors":                             "201",
+	"GET /api/v1/projects/{projectID}/authors/{authorID}":                   "200",
+	"HEAD /api/v1/projects/{projectID}/authors/{authorID}":                  "200",
+	"PATCH /api/v1/projects/{projectID}/authors/{authorID}":                 "200",
+	"DELETE /api/v1/projects/{projectID}/authors/{authorID}":                "200",
+	"GET /api/v1/projects/{projectID}/series":                               "200",
+	"HEAD /api/v1/projects/{projectID}/series":                              "200",
+	"POST /api/v1/projects/{projectID}/series":                              "201",
+	"GET /api/v1/projects/{projectID}/media":                                "200",
+	"HEAD /api/v1/projects/{projectID}/media":                               "200",
+	"POST /api/v1/projects/{projectID}/media/uploads":                       "201",
+	"GET /api/v1/projects/{projectID}/media/{assetID}/file":                 "200",
+	"HEAD /api/v1/projects/{projectID}/media/{assetID}/file":                "200",
+	"GET /api/v1/projects/{projectID}/media/{assetID}":                      "200",
+	"HEAD /api/v1/projects/{projectID}/media/{assetID}":                     "200",
+	"POST /api/v1/projects/{projectID}/media/{assetID}/complete":            "200",
+	"PATCH /api/v1/projects/{projectID}/media/{assetID}":                    "200",
+	"DELETE /api/v1/projects/{projectID}/media/{assetID}":                   "204",
+	"GET /api/v1/projects/{projectID}/ai/jobs":                              "200",
+	"HEAD /api/v1/projects/{projectID}/ai/jobs":                             "200",
+	"POST /api/v1/projects/{projectID}/ai/jobs":                             "202",
+	"GET /api/v1/projects/{projectID}/ai/jobs/{jobID}":                      "200",
+	"HEAD /api/v1/projects/{projectID}/ai/jobs/{jobID}":                     "200",
+	"POST /api/v1/projects/{projectID}/ai/jobs/{jobID}/cancel":              "200",
+	"GET /api/v1/projects/{projectID}/ai/jobs/{jobID}/events":               "200",
+	"HEAD /api/v1/projects/{projectID}/ai/jobs/{jobID}/events":              "200",
+	"GET /api/v1/projects/{projectID}/ai/runs":                              "200",
+	"HEAD /api/v1/projects/{projectID}/ai/runs":                             "200",
+	"GET /api/v1/projects/{projectID}/quality-checks":                       "200",
+	"HEAD /api/v1/projects/{projectID}/quality-checks":                      "200",
+	"GET /api/v1/projects/{projectID}/voice-profile":                        "200",
+	"HEAD /api/v1/projects/{projectID}/voice-profile":                       "200",
+	"POST /api/v1/projects/{projectID}/voice-profile":                       "201",
+	"GET /api/v1/projects/{projectID}/evidence-packets":                     "200",
+	"HEAD /api/v1/projects/{projectID}/evidence-packets":                    "200",
+	"POST /api/v1/projects/{projectID}/evidence-packets":                    "201",
+	"POST /api/v1/projects/{projectID}/evidence-packets/{packetID}/approve": "200",
+	"GET /api/v1/projects/{projectID}/sources":                              "200",
+	"HEAD /api/v1/projects/{projectID}/sources":                             "200",
+	"POST /api/v1/projects/{projectID}/sources":                             "201",
+	"PATCH /api/v1/projects/{projectID}/sources/{sourceID}":                 "200",
+	"GET /api/v1/projects/{projectID}/articles/{articleID}/disclosures":     "200",
+	"HEAD /api/v1/projects/{projectID}/articles/{articleID}/disclosures":    "200",
+	"POST /api/v1/projects/{projectID}/articles/{articleID}/disclosures":    "201",
+	"GET /api/v1/projects/{projectID}/articles/{articleID}/corrections":     "200",
+	"HEAD /api/v1/projects/{projectID}/articles/{articleID}/corrections":    "200",
+	"POST /api/v1/projects/{projectID}/articles/{articleID}/corrections":    "201",
+	"GET /api/v1/projects/{projectID}/webhook-attempts":                     "200",
+	"HEAD /api/v1/projects/{projectID}/webhook-attempts":                    "200",
+	"POST /api/v1/projects/{projectID}/webhook-attempts/{attemptID}/replay": "202",
+	"GET /api/v1/projects/{projectID}/webhooks":                             "200",
+	"HEAD /api/v1/projects/{projectID}/webhooks":                            "200",
+	"POST /api/v1/projects/{projectID}/webhooks":                            "201",
+	"POST /api/v1/projects/{projectID}/webhooks/{endpointID}/revoke":        "200",
+	"GET /api/v1/projects/{projectID}/audit-events":                         "200",
+	"HEAD /api/v1/projects/{projectID}/audit-events":                        "200",
+	"GET /api/v1/projects/{projectID}/delivery/status":                      "200",
+	"HEAD /api/v1/projects/{projectID}/delivery/status":                     "200",
 }
 
 // documentFiberRoutes adds the Fiber-owned routes to the same OpenAPI document
@@ -162,9 +142,8 @@ func documentFiberRoutes(api huma.API, app *fiber.App) {
 	documentPasswordResetRoutes(api)
 	documentAPIKeyRoutes(api)
 	documentArticleManagementRoutes(api)
-	documentRollbackRoute(api)
 	documentCopyArticleRoute(api)
-	documentRevisionHistoryRoutes(api)
+	documentArticleAutosaveRoutes(api)
 
 	for _, methodRoutes := range app.Stack() {
 		for _, route := range methodRoutes {
@@ -361,7 +340,13 @@ func documentArticleManagementRoutes(api huma.API) {
 	registry := openAPI.Components.Schemas
 	listSchema := registry.Schema(reflect.TypeOf(ListEnvelope[store.AdminArticle]{}), true, "AdminArticleListResponse")
 	articleSchema := registry.Schema(reflect.TypeOf(Envelope[store.AdminArticle]{}), true, "AdminArticleResponse")
+	saveRequestSchema := registry.Schema(reflect.TypeOf(articleSaveRequest{}), true, "SaveArticleRequest")
 	problemSchema := registry.Schema(reflect.TypeOf(Problem{}), true, "Problem")
+	resolvedSaveRequestSchema := saveRequestSchema
+	if saveRequestSchema.Ref != "" {
+		resolvedSaveRequestSchema = registry.SchemaFromRef(saveRequestSchema.Ref)
+	}
+	resolvedSaveRequestSchema.Required = []string{"title"}
 	problemResponse := func(description string) *huma.Response {
 		return &huma.Response{
 			Description: description,
@@ -396,12 +381,6 @@ func documentArticleManagementRoutes(api huma.API) {
 			In:          "query",
 			Description: "Case-insensitive title, slug, or article-type search; wildcard characters are treated literally",
 			Schema:      &huma.Schema{Type: "string", MaxLength: intPointer(100)},
-		},
-		{
-			Name:        "editorialState",
-			In:          "query",
-			Description: "Exact latest-revision editorial state",
-			Schema:      &huma.Schema{Type: "string", Enum: []any{"draft", "in_review", "changes_requested", "approved"}},
 		},
 		{
 			Name:        "publicationState",
@@ -452,6 +431,84 @@ func documentArticleManagementRoutes(api huma.API) {
 		},
 	})
 
+	articlePath := "/api/v1/projects/{projectID}/articles/{articleID}"
+	articleParameters := []*huma.Param{
+		projectParameter,
+		{
+			Name:        "articleID",
+			In:          "path",
+			Description: "Article identifier",
+			Required:    true,
+			Schema:      &huma.Schema{Type: "string"},
+		},
+	}
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodGet,
+		Path:        articlePath,
+		OperationID: "getAdminArticle",
+		Summary:     "Get an article for editing",
+		Description: "Returns the article's latest editable fields.",
+		Tags:        []string{"Administration"},
+		Parameters:  articleParameters,
+		Security:    adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Editable article", Content: map[string]*huma.MediaType{"application/json": {Schema: articleSchema}}},
+			"401": problemResponse("Authentication required"),
+			"403": problemResponse("Insufficient permission"),
+			"404": problemResponse("Project or article not found"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodHead,
+		Path:        articlePath,
+		OperationID: "headAdminArticle",
+		Summary:     "Check an article",
+		Tags:        []string{"Administration"},
+		Parameters:  articleParameters,
+		Security:    adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Article is available"},
+			"401": {Description: "Authentication required"},
+			"403": {Description: "Insufficient permission"},
+			"404": {Description: "Project or article not found"},
+			"500": {Description: "Internal server error"},
+		},
+	})
+	saveParameters := append(append([]*huma.Param{}, articleParameters...), &huma.Param{
+		Name:        "X-CSRF-Token",
+		In:          "header",
+		Description: "Administrative session CSRF token",
+		Required:    true,
+		Schema:      &huma.Schema{Type: "string"},
+	})
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodPut,
+		Path:        articlePath,
+		OperationID: "saveAdminArticle",
+		Summary:     "Save an article",
+		Description: "Stores the latest editable article fields. baseRevisionId is an optional opaque save token that protects against stale edits.",
+		Tags:        []string{"Administration"},
+		Parameters:  saveParameters,
+		RequestBody: &huma.RequestBody{
+			Description: "Latest editable article fields.",
+			Required:    true,
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: saveRequestSchema},
+			},
+		},
+		Security: adminSessionSecurityRequirement(),
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Saved article", Content: map[string]*huma.MediaType{"application/json": {Schema: articleSchema}}},
+			"400": problemResponse("Invalid article input"),
+			"401": problemResponse("Authentication required"),
+			"403": problemResponse("Insufficient permission"),
+			"404": problemResponse("Project, article, or taxonomy not found"),
+			"409": problemResponse("The supplied save token is stale"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
+
 	restoreParameters := []*huma.Param{
 		projectParameter,
 		{
@@ -474,7 +531,7 @@ func documentArticleManagementRoutes(api huma.API) {
 		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/restore",
 		OperationID: "restoreArchivedArticle",
 		Summary:     "Restore an archived article",
-		Description: "Restores retained content and revisions without republishing it. The publication state becomes unpublished.",
+		Description: "Restores retained saved content without republishing it. The publication state becomes unpublished.",
 		Tags:        []string{"Administration"},
 		Parameters:  restoreParameters,
 		Security:    adminSessionSecurityRequirement(),
@@ -577,22 +634,13 @@ func documentPasswordResetRoutes(api huma.API) {
 	})
 }
 
-func documentRevisionHistoryRoutes(api huma.API) {
+func documentArticleAutosaveRoutes(api huma.API) {
 	openAPI := api.OpenAPI()
 	documentAdminSessionSecurity(openAPI)
 	registry := openAPI.Components.Schemas
-	listSchema := registry.Schema(reflect.TypeOf(ListEnvelope[store.AdminRevisionSummary]{}), true, "RevisionHistoryResponse")
-	detailSchema := registry.Schema(reflect.TypeOf(Envelope[store.AdminRevisionDetail]{}), true, "RevisionDetailResponse")
-	createRequestSchema := registry.Schema(reflect.TypeOf(revisionRequest{}), true, "CreateRevisionRequest")
-	createResponseSchema := registry.Schema(reflect.TypeOf(Envelope[store.AdminRevision]{}), true, "CreateRevisionResponse")
 	autosaveRequestSchema := registry.Schema(reflect.TypeOf(articleAutosaveRequest{}), true, "ArticleAutosaveRequest")
 	autosaveResponseSchema := registry.Schema(reflect.TypeOf(Envelope[store.ArticleAutosave]{}), true, "ArticleAutosaveResponse")
 	problemSchema := registry.Schema(reflect.TypeOf(Problem{}), true, "Problem")
-	resolvedCreateRequestSchema := createRequestSchema
-	if createRequestSchema.Ref != "" {
-		resolvedCreateRequestSchema = registry.SchemaFromRef(createRequestSchema.Ref)
-	}
-	resolvedCreateRequestSchema.Required = []string{"baseRevisionId", "title"}
 	resolvedAutosaveRequestSchema := autosaveRequestSchema
 	if autosaveRequestSchema.Ref != "" {
 		resolvedAutosaveRequestSchema = registry.SchemaFromRef(autosaveRequestSchema.Ref)
@@ -610,8 +658,8 @@ func documentRevisionHistoryRoutes(api huma.API) {
 			},
 		}
 	}
-	pathParameters := func(includeRevision bool) []*huma.Param {
-		parameters := []*huma.Param{
+	pathParameters := func() []*huma.Param {
+		return []*huma.Param{
 			{
 				Name:        "projectID",
 				In:          "path",
@@ -627,56 +675,7 @@ func documentRevisionHistoryRoutes(api huma.API) {
 				Schema:      &huma.Schema{Type: "string"},
 			},
 		}
-		if includeRevision {
-			parameters = append(parameters, &huma.Param{
-				Name:        "revisionID",
-				In:          "path",
-				Description: "Revision identifier",
-				Required:    true,
-				Schema:      &huma.Schema{Type: "string"},
-			})
-		}
-		return parameters
 	}
-
-	listParameters := pathParameters(false)
-	listParameters = append(listParameters,
-		&huma.Param{
-			Name:        "cursor",
-			In:          "query",
-			Description: "Opaque revision-history cursor",
-			Schema:      &huma.Schema{Type: "string"},
-		},
-		&huma.Param{
-			Name:        "limit",
-			In:          "query",
-			Description: "Page size, up to 100",
-			Schema:      &huma.Schema{Type: "integer", Minimum: float64Pointer(1), Maximum: float64Pointer(100)},
-		},
-	)
-	openAPI.AddOperation(&huma.Operation{
-		Method:      http.MethodGet,
-		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/revisions",
-		OperationID: "listArticleRevisions",
-		Summary:     "List article revision history",
-		Description: "Lists immutable revisions newest first, including base-revision and current publication metadata.",
-		Tags:        []string{"Administration"},
-		Parameters:  listParameters,
-		Security:    adminSessionSecurityRequirement(),
-		Responses: map[string]*huma.Response{
-			"200": {
-				Description: "Revision history",
-				Content: map[string]*huma.MediaType{
-					"application/json": {Schema: listSchema},
-				},
-			},
-			"400": problemResponse("Invalid pagination cursor"),
-			"401": problemResponse("Authentication required"),
-			"403": problemResponse("Insufficient permission"),
-			"404": problemResponse("Project or article not found"),
-			"500": problemResponse("Internal server error"),
-		},
-	})
 
 	autosavePath := "/api/v1/projects/{projectID}/articles/{articleID}/autosave"
 	openAPI.AddOperation(&huma.Operation{
@@ -684,9 +683,9 @@ func documentRevisionHistoryRoutes(api huma.API) {
 		Path:        autosavePath,
 		OperationID: "getArticleAutosave",
 		Summary:     "Get the current user's article autosave",
-		Description: "Returns the current user's project-scoped working draft and whether its immutable base revision is stale.",
+		Description: "Returns the current user's project-scoped working draft and whether its save token is stale.",
 		Tags:        []string{"Administration"},
-		Parameters:  pathParameters(false),
+		Parameters:  pathParameters(),
 		Security:    adminSessionSecurityRequirement(),
 		Responses: map[string]*huma.Response{
 			"200": {
@@ -708,7 +707,7 @@ func documentRevisionHistoryRoutes(api huma.API) {
 		Summary:     "Check the current user's article autosave",
 		Description: "Returns the autosave GET status and headers without a response body.",
 		Tags:        []string{"Administration"},
-		Parameters:  pathParameters(false),
+		Parameters:  pathParameters(),
 		Security:    adminSessionSecurityRequirement(),
 		Responses: map[string]*huma.Response{
 			"200": {Description: "Article autosave is available"},
@@ -718,7 +717,7 @@ func documentRevisionHistoryRoutes(api huma.API) {
 			"500": {Description: "Internal server error"},
 		},
 	})
-	mutationParameters := append(pathParameters(false), &huma.Param{
+	mutationParameters := append(pathParameters(), &huma.Param{
 		Name:        "X-CSRF-Token",
 		In:          "header",
 		Description: "Administrative session CSRF token",
@@ -730,11 +729,11 @@ func documentRevisionHistoryRoutes(api huma.API) {
 		Path:        autosavePath,
 		OperationID: "saveArticleAutosave",
 		Summary:     "Save the current user's article working draft",
-		Description: "Upserts a user-scoped working draft using immutable base-revision and optimistic autosave-version guards.",
+		Description: "Upserts a user-scoped working draft using save-token and optimistic autosave-version guards.",
 		Tags:        []string{"Administration"},
 		Parameters:  mutationParameters,
 		RequestBody: &huma.RequestBody{
-			Description: "Base revision, expected autosave version and recoverable working fields.",
+			Description: "Save token, expected autosave version and recoverable working fields.",
 			Required:    true,
 			Content: map[string]*huma.MediaType{
 				"application/json": {Schema: autosaveRequestSchema},
@@ -772,188 +771,6 @@ func documentRevisionHistoryRoutes(api huma.API) {
 			"500": problemResponse("Internal server error"),
 		},
 	})
-	openAPI.AddOperation(&huma.Operation{
-		Method:      http.MethodHead,
-		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/revisions",
-		OperationID: "headArticleRevisions",
-		Summary:     "Check article revision history",
-		Description: "Returns the revision-history GET status and headers without a response body.",
-		Tags:        []string{"Administration"},
-		Parameters:  listParameters,
-		Security:    adminSessionSecurityRequirement(),
-		Responses: map[string]*huma.Response{
-			"200": {Description: "Revision history is available"},
-			"400": {Description: "Invalid pagination cursor"},
-			"401": {Description: "Authentication required"},
-			"403": {Description: "Insufficient permission"},
-			"404": {Description: "Project or article not found"},
-			"500": {Description: "Internal server error"},
-		},
-	})
-	openAPI.AddOperation(&huma.Operation{
-		Method:      http.MethodPost,
-		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/revisions",
-		OperationID: "createArticleRevision",
-		Summary:     "Create an article revision",
-		Description: "Creates an immutable draft revision from the current base revision. A stale base revision is rejected.",
-		Tags:        []string{"Administration"},
-		Parameters: []*huma.Param{
-			{
-				Name:        "projectID",
-				In:          "path",
-				Description: "Project identifier",
-				Required:    true,
-				Schema:      &huma.Schema{Type: "string"},
-			},
-			{
-				Name:        "articleID",
-				In:          "path",
-				Description: "Article identifier",
-				Required:    true,
-				Schema:      &huma.Schema{Type: "string"},
-			},
-			{
-				Name:        "X-CSRF-Token",
-				In:          "header",
-				Description: "Administrative session CSRF token",
-				Required:    true,
-				Schema:      &huma.Schema{Type: "string"},
-			},
-		},
-		RequestBody: &huma.RequestBody{
-			Description: "Current base revision and public fields for the new draft.",
-			Required:    true,
-			Content: map[string]*huma.MediaType{
-				"application/json": {Schema: createRequestSchema},
-			},
-		},
-		Security: adminSessionSecurityRequirement(),
-		Responses: map[string]*huma.Response{
-			"201": {
-				Description: "Article revision created",
-				Content: map[string]*huma.MediaType{
-					"application/json": {Schema: createResponseSchema},
-				},
-			},
-			"400": problemResponse("Invalid revision input"),
-			"401": problemResponse("Authentication required"),
-			"403": problemResponse("Insufficient permission"),
-			"404": problemResponse("Project, article, or taxonomy not found"),
-			"409": problemResponse("Base revision is stale"),
-			"500": problemResponse("Internal server error"),
-		},
-	})
-
-	openAPI.AddOperation(&huma.Operation{
-		Method:      http.MethodGet,
-		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/revisions/{revisionID}",
-		OperationID: "getArticleRevision",
-		Summary:     "Get an article revision",
-		Description: "Returns the immutable public fields, structured body and derived rendering data for revision comparison.",
-		Tags:        []string{"Administration"},
-		Parameters:  pathParameters(true),
-		Security:    adminSessionSecurityRequirement(),
-		Responses: map[string]*huma.Response{
-			"200": {
-				Description: "Revision detail",
-				Content: map[string]*huma.MediaType{
-					"application/json": {Schema: detailSchema},
-				},
-			},
-			"401": problemResponse("Authentication required"),
-			"403": problemResponse("Insufficient permission"),
-			"404": problemResponse("Project, article, or revision not found"),
-			"500": problemResponse("Internal server error"),
-		},
-	})
-	openAPI.AddOperation(&huma.Operation{
-		Method:      http.MethodHead,
-		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/revisions/{revisionID}",
-		OperationID: "headArticleRevision",
-		Summary:     "Check an article revision",
-		Description: "Returns the revision-detail GET status and headers without a response body.",
-		Tags:        []string{"Administration"},
-		Parameters:  pathParameters(true),
-		Security:    adminSessionSecurityRequirement(),
-		Responses: map[string]*huma.Response{
-			"200": {Description: "Revision exists"},
-			"401": {Description: "Authentication required"},
-			"403": {Description: "Insufficient permission"},
-			"404": {Description: "Project, article, or revision not found"},
-			"500": {Description: "Internal server error"},
-		},
-	})
-}
-
-func documentRollbackRoute(api huma.API) {
-	openAPI := api.OpenAPI()
-	documentAdminSessionSecurity(openAPI)
-	registry := openAPI.Components.Schemas
-	requestSchema := registry.Schema(reflect.TypeOf(rollbackRequest{}), true, "RollbackArticleRequest")
-	responseSchema := registry.Schema(reflect.TypeOf(Envelope[store.AdminArticle]{}), true, "RollbackArticleResponse")
-	problemSchema := registry.Schema(reflect.TypeOf(Problem{}), true, "Problem")
-
-	problemResponse := func(description string) *huma.Response {
-		return &huma.Response{
-			Description: description,
-			Content: map[string]*huma.MediaType{
-				problemMediaType: {Schema: problemSchema},
-			},
-		}
-	}
-	openAPI.AddOperation(&huma.Operation{
-		Method:      http.MethodPost,
-		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/rollback",
-		OperationID: "rollbackArticle",
-		Summary:     "Rollback an article",
-		Description: "Publishes a previously approved revision while preserving publication routing metadata and revision history.",
-		Tags:        []string{"Administration"},
-		Security:    adminSessionSecurityRequirement(),
-		Parameters: []*huma.Param{
-			{
-				Name:        "projectID",
-				In:          "path",
-				Description: "Project identifier",
-				Required:    true,
-				Schema:      &huma.Schema{Type: "string"},
-			},
-			{
-				Name:        "articleID",
-				In:          "path",
-				Description: "Article identifier",
-				Required:    true,
-				Schema:      &huma.Schema{Type: "string"},
-			},
-			{
-				Name:        "X-CSRF-Token",
-				In:          "header",
-				Description: "Administrative session CSRF token",
-				Required:    true,
-				Schema:      &huma.Schema{Type: "string"},
-			},
-		},
-		RequestBody: &huma.RequestBody{
-			Description: "Approved revision to restore.",
-			Required:    true,
-			Content: map[string]*huma.MediaType{
-				"application/json": {Schema: requestSchema},
-			},
-		},
-		Responses: map[string]*huma.Response{
-			"200": {
-				Description: "Article publication rolled back",
-				Content: map[string]*huma.MediaType{
-					"application/json": {Schema: responseSchema},
-				},
-			},
-			"400": problemResponse("Invalid request"),
-			"401": problemResponse("Authentication required"),
-			"403": problemResponse("Insufficient permission"),
-			"404": problemResponse("Project, article, or revision not found"),
-			"409": problemResponse("Article or revision is not in a rollback-compatible state"),
-			"500": problemResponse("Internal server error"),
-		},
-	})
 }
 
 func documentCopyArticleRoute(api huma.API) {
@@ -969,7 +786,6 @@ func documentCopyArticleRoute(api huma.API) {
 	}
 	resolvedRequestSchema.Required = []string{
 		"destinationProjectId",
-		"sourceRevisionId",
 		"primaryCategoryId",
 		"slug",
 		"canonicalDecision",
@@ -977,11 +793,11 @@ func documentCopyArticleRoute(api huma.API) {
 	}
 	if decision := resolvedRequestSchema.Properties["canonicalDecision"]; decision != nil {
 		decision.Enum = []any{"canonical_original", "material_adaptation"}
-		decision.Description = "Use the selected source revision's canonical URL, or create a destination-owned material adaptation."
+		decision.Description = "Use the source article's canonical URL, or create a destination-owned material adaptation."
 	}
 	if originalURL := resolvedRequestSchema.Properties["canonicalOriginalUrl"]; originalURL != nil {
 		originalURL.Format = "uri"
-		originalURL.Description = "Optional assertion for canonical_original. When supplied, it must match the selected source revision's source canonical URL; the server always derives the stored canonical from the source publication."
+		originalURL.Description = "Optional assertion for canonical_original. When supplied, it must match the source article's canonical URL; the server always derives the stored canonical from the source publication."
 	}
 
 	problemResponse := func(description string) *huma.Response {
@@ -997,7 +813,7 @@ func documentCopyArticleRoute(api huma.API) {
 		Path:        "/api/v1/projects/{projectID}/articles/{articleID}/copy-to-project",
 		OperationID: "copyArticleToProject",
 		Summary:     "Copy an article to another project",
-		Description: "Creates an independent destination draft from an exact source revision. The caller needs source access and destination content-create permission, must explicitly map every source contributor to an active destination author, and must record a canonical-original or material-adaptation decision. Canonical-original URLs are derived from the selected source revision's publication.",
+		Description: "Creates an independent destination draft from the source article's latest saved content. The caller needs source access and destination content-create permission, must explicitly map every source contributor to an active destination author, and must record a canonical-original or material-adaptation decision.",
 		Tags:        []string{"Administration"},
 		Security:    adminSessionSecurityRequirement(),
 		Parameters: []*huma.Param{
@@ -1040,7 +856,7 @@ func documentCopyArticleRoute(api huma.API) {
 			"400": problemResponse("Invalid copy input or destination routing conflict"),
 			"401": problemResponse("Authentication required"),
 			"403": problemResponse("Insufficient destination permission"),
-			"404": problemResponse("Source, destination, revision, or taxonomy not found"),
+			"404": problemResponse("Source, destination, saved content, or taxonomy not found"),
 			"409": problemResponse("Source or destination project is not active"),
 			"500": problemResponse("Internal server error"),
 		},

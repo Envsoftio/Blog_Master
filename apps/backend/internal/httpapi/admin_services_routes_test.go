@@ -1631,14 +1631,9 @@ func TestAdminAIProvenanceQualityResultsAndApprovalGate(t *testing.T) {
 		t.Fatalf("expected same-second quality results to use insertion order, got %#v", latestChecks)
 	}
 
-	blockedApproval := mustTest(t, server, newMemberMutationRequest(
-		http.MethodPost,
-		"/api/v1/projects/"+project.ID+"/revisions/"+revisionID+"/approve",
-		`{}`,
-		login,
-	))
-	if blockedApproval.StatusCode != http.StatusConflict {
-		t.Fatalf("expected failed blocking quality check to prevent approval, got %d: %s", blockedApproval.StatusCode, readBody(t, blockedApproval))
+	published := publishTestArticle(t, server, login, project.ID, article.ID, article.Slug)
+	if published.PublicationState != "published" {
+		t.Fatalf("expected quality checks to remain advisory during direct publication, got %#v", published)
 	}
 
 	if _, err := db.Exec(`
@@ -1651,11 +1646,6 @@ func TestAdminAIProvenanceQualityResultsAndApprovalGate(t *testing.T) {
 	`, "quality-passed", project.ID, article.ID, revisionID); err != nil {
 		t.Fatal(err)
 	}
-	approved := approveTestRevision(t, server, login, project.ID, revisionID)
-	if approved.EditorialState != "approved" {
-		t.Fatalf("expected newer passing check to allow approval, got %#v", approved)
-	}
-
 	otherProject := createTestProject(t, server, login, `{"slug":"ai-review-other","name":"AI Review Other"}`)
 	if _, err := db.Exec(`
 		INSERT INTO quality_check_results(

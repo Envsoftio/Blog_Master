@@ -46,7 +46,7 @@
         <p v-if="errorMessage" class="rounded-md border border-[#edc6c2] bg-[#fff4f2] px-4 py-3 text-sm text-[#9b2d23] dark:border-[#6d352f] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]" role="alert">
           {{ errorMessage }}
         </p>
-        <p v-if="successMessage" class="rounded-md border border-[#b9dcc9] bg-[#edf9f1] px-4 py-3 text-sm text-[#165a4a] dark:border-[#2d644a] dark:bg-[#13261e] dark:text-[#aee4d0]">
+        <p v-if="successMessage" class="rounded-md border border-[#b9dcc9] bg-[#edf9f1] px-4 py-3 text-sm text-[#165a4a] dark:border-[#2d644a] dark:bg-[#13261e] dark:text-[#aee4d0]" role="status" aria-live="polite">
           {{ successMessage }}
         </p>
 
@@ -63,10 +63,9 @@
               <span>/{{ article.slug }}</span>
             </div>
             <div class="article-workspace__status">
-              <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="editorialClass(article.editorialState)">{{ labelize(article.editorialState) }}</span>
               <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="publicationClass(article.publicationState)">{{ labelize(article.publicationState) }}</span>
               <button
-                v-if="canPublishArticles"
+                v-if="canPublishArticles && workspaceTab !== 'publish'"
                 class="article-workspace__publish-shortcut"
                 type="button"
                 @click="workspaceTab = 'publish'"
@@ -87,15 +86,9 @@
             <button v-if="canPublishArticles" type="button" :class="{ 'is-active': workspaceTab === 'publish' }" :aria-current="workspaceTab === 'publish' ? 'page' : undefined" @click="workspaceTab = 'publish'">
               <UploadCloud :size="17" /><span>Publish</span>
             </button>
-            <button type="button" :class="{ 'is-active': workspaceTab === 'review' }" :aria-current="workspaceTab === 'review' ? 'page' : undefined" @click="workspaceTab = 'review'">
-              <UserCheck :size="17" /><span>Review</span><span v-if="openAssignmentCount + openCommentCount" class="article-workspace__count">{{ openAssignmentCount + openCommentCount }}</span>
-            </button>
-            <button type="button" :class="{ 'is-active': workspaceTab === 'history' }" :aria-current="workspaceTab === 'history' ? 'page' : undefined" @click="workspaceTab = 'history'">
-              <History :size="17" /><span>History</span>
-            </button>
           </nav>
 
-          <div v-show="workspaceTab !== 'write' && workspaceTab !== 'publish'" class="article-workspace__panel-stack">
+          <div v-show="workspaceTab === 'overview'" class="article-workspace__panel-stack">
             <article v-show="workspaceTab === 'overview'" class="article-overview__summary rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div class="min-w-0">
@@ -104,7 +97,6 @@
                   <p class="mt-1 truncate text-sm text-[#5f6a63] dark:text-[#b8c2bb]">{{ article.slug }}</p>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
-                  <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="editorialClass(article.editorialState)">{{ labelize(article.editorialState) }}</span>
                   <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="publicationClass(article.publicationState)">{{ labelize(article.publicationState) }}</span>
                 </div>
               </div>
@@ -137,492 +129,15 @@
                 {{ article.canonicalUrl }}
               </div>
             </article>
-
-            <article v-show="workspaceTab === 'review'" class="article-review__revision rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Latest immutable revision</p>
-                  <h2 class="mt-1 text-xl font-semibold tracking-normal">{{ article.latestRevision ? `Revision #${article.latestRevision.revisionNumber}` : 'No revision' }}</h2>
-                </div>
-                <span v-if="article.latestRevision" class="rounded-full px-2.5 py-1 text-xs font-medium" :class="editorialClass(article.latestRevision.editorialState)">
-                  {{ labelize(article.latestRevision.editorialState) }}
-                </span>
-              </div>
-
-              <dl v-if="article.latestRevision" class="mt-5 grid gap-3 text-sm md:grid-cols-2">
-                <div>
-                  <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Revision ID</dt>
-                  <dd class="truncate font-mono">{{ article.latestRevision.id }}</dd>
-                </div>
-                <div>
-                  <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Content hash</dt>
-                  <dd class="truncate font-mono">{{ article.latestRevision.contentHash }}</dd>
-                </div>
-                <div>
-                  <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Created</dt>
-                  <dd class="truncate">{{ formatDate(article.latestRevision.createdAt) }}</dd>
-                </div>
-              </dl>
-
-              <p v-if="article.latestRevision?.deck" class="mt-4 text-sm text-[#4f5b54] dark:text-[#c5cec8]">{{ article.latestRevision.deck }}</p>
-              <p v-if="article.latestRevision?.excerpt" class="mt-2 text-sm text-[#4f5b54] dark:text-[#c5cec8]">{{ article.latestRevision.excerpt }}</p>
-              <p v-if="article.latestRevision?.shortAnswer" class="mt-2 rounded-md bg-[#f2f5f3] px-3 py-2 text-sm text-[#4f5b54] dark:bg-[#171b18] dark:text-[#c5cec8]">{{ article.latestRevision.shortAnswer }}</p>
-
-              <div class="mt-5 flex flex-wrap gap-2">
-                <button
-                  v-if="canWriteArticles && (article.editorialState === 'draft' || article.editorialState === 'changes_requested')"
-                  class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
-                  type="button"
-                  :disabled="actionPending === 'submit'"
-                  @click="submitRevision"
-                >
-                  <Send class="h-4 w-4" />
-                  Submit
-                </button>
-                <button
-                  v-if="canReviewArticles && article.editorialState === 'in_review'"
-                  class="inline-flex items-center gap-2 rounded-md border border-[#d6bd7a] px-3 py-2 text-sm font-medium text-[#7a4f00] hover:bg-[#fff7e4] disabled:opacity-60 dark:border-[#6b572e] dark:text-[#ffd98a] dark:hover:bg-[#2b2415]"
-                  type="button"
-                  :disabled="actionPending === 'request-changes'"
-                  @click="requestChanges"
-                >
-                  <RotateCcw class="h-4 w-4" />
-                  Request changes
-                </button>
-                <button
-                  v-if="canReviewArticles && article.editorialState === 'in_review'"
-                  class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
-                  type="button"
-                  :disabled="actionPending === 'approve'"
-                  @click="approveRevision"
-                >
-                  <CheckCircle2 class="h-4 w-4" />
-                  Approve
-                </button>
-              </div>
-            </article>
-
-            <ArticleTrustPanel
-              v-if="article.latestRevision && workspaceTab === 'review'"
-              :project-id="projectID"
-              :article-id="articleID"
-              :revision-id="article.latestRevision.id"
-              :role="project?.role || ''"
-            />
-
-            <section v-show="workspaceTab === 'history'" class="article-history rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Immutable history</p>
-                  <h2 class="mt-1 text-xl font-semibold tracking-normal">Compare revisions</h2>
-                </div>
-                <span class="rounded-md bg-[#f2f5f3] px-3 py-2 text-sm text-[#4f5b54] dark:bg-[#171b18] dark:text-[#c5cec8]">
-                  {{ revisions.length }} loaded
-                </span>
-              </div>
-
-              <ol class="mt-5 grid gap-3 sm:grid-cols-2" aria-label="Article revision history">
-                <li
-                  v-for="revision in revisions"
-                  :key="revision.id"
-                  class="rounded-lg border border-[#d7ded8] p-4 dark:border-[#3f4843]"
-                >
-                  <div class="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p class="font-medium">Revision #{{ revision.revisionNumber }}</p>
-                      <p class="mt-1 text-xs text-[#667169] dark:text-[#aeb8b0]">{{ formatDate(revision.createdAt) }}</p>
-                    </div>
-                    <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="editorialClass(revision.editorialState)">
-                      {{ labelize(revision.editorialState) }}
-                    </span>
-                  </div>
-                  <p class="mt-3 line-clamp-2 text-sm text-[#4f5b54] dark:text-[#c5cec8]">{{ revision.title }}</p>
-                  <p v-if="revision.published" class="mt-2 text-xs font-medium text-[#165a4a] dark:text-[#aee4d0]">Published</p>
-                  <div class="mt-3 flex flex-wrap gap-2">
-                    <button
-                      class="rounded-md border border-[#c9d4cc] px-2.5 py-1.5 text-xs font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]"
-                      :class="{ 'bg-[#e6f2ec] text-[#165a4a] dark:bg-[#17352c] dark:text-[#aee4d0]': comparisonForm.beforeRevisionId === revision.id }"
-                      type="button"
-                      :aria-label="`Use revision ${revision.revisionNumber} as comparison A`"
-                      :aria-pressed="comparisonForm.beforeRevisionId === revision.id"
-                      :disabled="comparisonPending"
-                      @click="selectRevisionForComparison('before', revision.id)"
-                    >
-                      Compare from
-                    </button>
-                    <button
-                      class="rounded-md border border-[#c9d4cc] px-2.5 py-1.5 text-xs font-medium hover:bg-[#eef5f1] dark:border-[#414a45] dark:hover:bg-[#2a302d]"
-                      :class="{ 'bg-[#e6f2ec] text-[#165a4a] dark:bg-[#17352c] dark:text-[#aee4d0]': comparisonForm.afterRevisionId === revision.id }"
-                      type="button"
-                      :aria-label="`Use revision ${revision.revisionNumber} as comparison B`"
-                      :aria-pressed="comparisonForm.afterRevisionId === revision.id"
-                      :disabled="comparisonPending"
-                      @click="selectRevisionForComparison('after', revision.id)"
-                    >
-                      Compare to
-                    </button>
-                  </div>
-                </li>
-              </ol>
-
-              <button
-                v-if="nextRevisionCursor"
-                class="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
-                type="button"
-                :disabled="loadingMoreRevisions"
-                @click="loadMoreRevisions"
-              >
-                <LoaderCircle v-if="loadingMoreRevisions" class="h-4 w-4 animate-spin" />
-                <RefreshCw v-else class="h-4 w-4" />
-                Load older revisions
-              </button>
-
-              <form class="mt-5 grid items-end gap-3 rounded-lg bg-[#f5f7f5] p-4 dark:bg-[#171b18] md:grid-cols-[1fr_1fr_auto]" @submit.prevent="compareRevisions">
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">Revision A</span>
-                  <select v-model="comparisonForm.beforeRevisionId" class="h-10 w-full rounded-md border border-[#bfcac3] bg-white px-3 text-sm dark:border-[#4b5650] dark:bg-[#202522]" :disabled="comparisonPending">
-                    <option v-for="revision in revisions" :key="revision.id" :value="revision.id">
-                      #{{ revision.revisionNumber }} · {{ revision.title }}
-                    </option>
-                  </select>
-                </label>
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">Revision B</span>
-                  <select v-model="comparisonForm.afterRevisionId" class="h-10 w-full rounded-md border border-[#bfcac3] bg-white px-3 text-sm dark:border-[#4b5650] dark:bg-[#202522]" :disabled="comparisonPending">
-                    <option v-for="revision in revisions" :key="revision.id" :value="revision.id">
-                      #{{ revision.revisionNumber }} · {{ revision.title }}
-                    </option>
-                  </select>
-                </label>
-                <button
-                  class="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
-                  type="submit"
-                  :disabled="comparisonPending || !canCompareRevisions"
-                >
-                  <LoaderCircle v-if="comparisonPending" class="h-4 w-4 animate-spin" />
-                  <GitCompareArrows v-else class="h-4 w-4" />
-                  Compare
-                </button>
-              </form>
-
-              <p
-                v-if="comparisonBefore && comparisonAfter"
-                class="mt-5 rounded-md border border-[#c9d4cc] bg-[#f2f5f3] px-4 py-3 text-sm text-[#4f5b54] dark:border-[#414a45] dark:bg-[#171b18] dark:text-[#c5cec8]"
-                role="status"
-                aria-live="polite"
-              >
-                {{ comparisonSummary }}
-              </p>
-
-              <div v-if="comparisonBefore && comparisonAfter" class="mt-4 space-y-4">
-                <div class="grid gap-3 text-sm sm:grid-cols-2">
-                  <div class="rounded-md border border-[#d7ded8] p-3 dark:border-[#3f4843]">
-                    <p class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Earlier</p>
-                    <p class="mt-1 font-medium">Revision #{{ comparisonBefore.revisionNumber }}</p>
-                    <p class="mt-1 text-xs">{{ formatDate(comparisonBefore.createdAt) }}</p>
-                  </div>
-                  <div class="rounded-md border border-[#d7ded8] p-3 dark:border-[#3f4843]">
-                    <p class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Later</p>
-                    <p class="mt-1 font-medium">Revision #{{ comparisonAfter.revisionNumber }}</p>
-                    <p class="mt-1 text-xs">{{ formatDate(comparisonAfter.createdAt) }}</p>
-                  </div>
-                </div>
-
-                <div class="grid gap-3 text-sm sm:grid-cols-3">
-                  <div class="rounded-md border border-[#b9dcc9] bg-[#f4fbf7] p-3 dark:border-[#315648] dark:bg-[#14251f]">
-                    <p class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Changed fields</p>
-                    <p class="mt-1 text-2xl font-semibold">{{ comparisonStats.changed }}</p>
-                  </div>
-                  <div class="rounded-md border border-[#d7ded8] bg-white p-3 dark:border-[#3f4843] dark:bg-[#171b18]">
-                    <p class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Unchanged fields</p>
-                    <p class="mt-1 text-2xl font-semibold">{{ comparisonStats.unchanged }}</p>
-                  </div>
-                  <label class="flex min-h-[74px] items-center justify-between gap-3 rounded-md border border-[#d7ded8] bg-white p-3 text-sm dark:border-[#3f4843] dark:bg-[#171b18]">
-                    <span class="font-medium">Changed only</span>
-                    <input v-model="showOnlyChangedComparisonFields" class="h-5 w-5 accent-[#165a4a]" type="checkbox" />
-                  </label>
-                </div>
-
-                <article
-                  v-for="field in visibleComparisonFields"
-                  :key="field.key"
-                  class="rounded-lg border p-4"
-                  :class="field.changed
-                    ? 'border-[#d6bd7a] bg-[#fffaf0] dark:border-[#6b572e] dark:bg-[#2b2415]'
-                    : 'border-[#d7ded8] dark:border-[#3f4843]'"
-                >
-                  <div class="flex items-center justify-between gap-3">
-                    <h3 class="text-sm font-semibold">{{ field.label }}</h3>
-                    <span v-if="field.changed" class="rounded-full bg-[#fff0ce] px-2 py-1 text-xs font-medium text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]">Changed</span>
-                    <span v-else class="text-xs text-[#667169] dark:text-[#aeb8b0]">Unchanged</span>
-                  </div>
-                  <div class="mt-3 grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <p class="mb-1 text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Earlier</p>
-                      <pre
-                        class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white p-3 text-sm dark:bg-[#171b18]"
-                        :class="{ 'font-mono text-xs': field.monospace }"
-                        :aria-label="`${field.label} in revision ${comparisonBefore.revisionNumber}`"
-                        tabindex="0"
-                      >{{ field.before || '—' }}</pre>
-                    </div>
-                    <div>
-                      <p class="mb-1 text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Later</p>
-                      <pre
-                        class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-white p-3 text-sm dark:bg-[#171b18]"
-                        :class="{ 'font-mono text-xs': field.monospace }"
-                        :aria-label="`${field.label} in revision ${comparisonAfter.revisionNumber}`"
-                        tabindex="0"
-                      >{{ field.after || '—' }}</pre>
-                    </div>
-                  </div>
-                  <details v-if="field.changed && field.diffLines?.length" class="mt-3 rounded-md border border-[#d6bd7a] bg-white dark:border-[#6b572e] dark:bg-[#171b18]">
-                    <summary class="cursor-pointer px-3 py-2 text-sm font-medium">Show inline changes</summary>
-                    <ol
-                      class="max-h-96 overflow-auto border-t border-[#ead9ad] font-mono text-xs dark:border-[#574927]"
-                      :aria-label="`${field.label} inline changes from revision ${comparisonBefore.revisionNumber} to revision ${comparisonAfter.revisionNumber}`"
-                      tabindex="0"
-                    >
-                      <li
-                        v-for="(line, index) in field.diffLines"
-                        :key="`${field.key}-${index}`"
-                        class="grid grid-cols-[2rem_1fr] gap-2 px-3 py-1"
-                        :class="diffLineClass(line.kind)"
-                      >
-                        <span aria-hidden="true">{{ diffLineMarker(line.kind) }}</span>
-                        <span class="sr-only">{{ diffLineLabel(line.kind) }}: </span>
-                        <code class="whitespace-pre-wrap break-words">{{ line.text || ' ' }}</code>
-                      </li>
-                    </ol>
-                  </details>
-                </article>
-
-                <p
-                  v-if="visibleComparisonFields.length === 0"
-                  class="rounded-md border border-[#d7ded8] bg-white px-4 py-6 text-center text-sm text-[#5d6a61] dark:border-[#3f4843] dark:bg-[#171b18] dark:text-[#aeb8b0]"
-                >
-                  No changed fields to show.
-                </p>
-              </div>
-            </section>
-
-            <section v-show="workspaceTab === 'review'" class="article-review__assignments rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Review ownership</p>
-                  <h2 class="mt-1 text-xl font-semibold tracking-normal">Assignments</h2>
-                </div>
-                <span class="rounded-md bg-[#eef5f1] px-3 py-2 text-sm text-[#36594a] dark:bg-[#18261f] dark:text-[#b6d7c8]">{{ openAssignmentCount }} open</span>
-              </div>
-
-              <form v-if="canManageAssignments" class="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_150px_190px_auto]" @submit.prevent="createAssignment">
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">Assignee</span>
-                  <select v-model="assignmentForm.assignedTo" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" required>
-                    <option value="">Select a member</option>
-                    <option v-for="member in assignmentEligibleMembers" :key="member.userId" :value="member.userId">
-                      {{ member.email }} · {{ labelize(member.role) }}
-                    </option>
-                  </select>
-                </label>
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">Role</span>
-                  <select v-model="assignmentForm.assignmentType" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]">
-                    <option value="reviewer">Reviewer</option>
-                    <option value="editor">Editor</option>
-                    <option value="sme">SME</option>
-                  </select>
-                </label>
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">Due</span>
-                  <input v-model="assignmentForm.dueAt" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" type="datetime-local" />
-                </label>
-                <button
-                  class="inline-flex h-10 items-center justify-center gap-2 self-end rounded-md bg-[#165a4a] px-4 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
-                  type="submit"
-                  :disabled="creatingAssignment || !canCreateAssignment"
-                >
-                  <LoaderCircle v-if="creatingAssignment" class="h-4 w-4 animate-spin" />
-                  <UserCheck v-else class="h-4 w-4" />
-                  Assign
-                </button>
-              </form>
-
-              <div v-if="assignments.length === 0" class="mt-5 rounded-lg border border-dashed border-[#bfcac3] p-6 text-center dark:border-[#4b5650]">
-                <h3 class="text-lg font-semibold">No assignments yet</h3>
-              </div>
-
-              <article v-for="assignment in assignments" :key="assignment.id" class="mt-4 rounded-lg border border-[#cfd8d1] p-4 dark:border-[#3f4843]">
-                <div class="flex flex-wrap items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <p class="truncate text-sm font-medium">{{ assignment.assigneeEmail || assignment.assignedTo }}</p>
-                    <p class="mt-1 truncate font-mono text-xs text-[#667169] dark:text-[#aeb8b0]">{{ assignment.revisionId || 'article' }}</p>
-                  </div>
-                  <div class="flex flex-wrap justify-end gap-2">
-                    <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="assignmentTypeClass(assignment.assignmentType)">{{ labelize(assignment.assignmentType) }}</span>
-                    <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="assignmentStatusClass(assignment.status)">{{ labelize(assignment.status) }}</span>
-                  </div>
-                </div>
-                <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-3">
-                  <div>
-                    <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Due</dt>
-                    <dd>{{ formatDate(assignment.dueAt) }}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Created</dt>
-                    <dd>{{ formatDate(assignment.createdAt) }}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">{{ assignment.closedAt ? 'Closed' : 'Created by' }}</dt>
-                    <dd v-if="assignment.closedAt">{{ formatDate(assignment.closedAt) }}</dd>
-                    <dd v-else class="truncate font-mono">{{ assignment.createdBy }}</dd>
-                  </div>
-                </dl>
-                <div v-if="assignment.status === 'open' && (canCompleteAssignment(assignment) || canManageAssignments)" class="mt-4 flex flex-wrap justify-end gap-2 border-t border-[#dce4de] pt-4 dark:border-[#39413d]">
-                  <button
-                    v-if="canCompleteAssignment(assignment)"
-                    class="inline-flex h-9 items-center gap-2 rounded-md border border-[#9bc8b6] px-3 text-sm font-medium text-[#165a4a] hover:bg-[#e0f3e9] disabled:opacity-60 dark:border-[#376557] dark:text-[#aee4d0] dark:hover:bg-[#12382f]"
-                    type="button"
-                    :disabled="Boolean(assignmentPending[assignment.id])"
-                    @click="setAssignmentStatus(assignment, 'complete')"
-                  >
-                    <LoaderCircle v-if="assignmentPending[assignment.id] === 'complete'" class="h-4 w-4 animate-spin" />
-                    <CheckCircle2 v-else class="h-4 w-4" />
-                    Complete
-                  </button>
-                  <button
-                    v-if="canManageAssignments"
-                    class="inline-flex h-9 items-center gap-2 rounded-md border border-[#d8b078] px-3 text-sm font-medium text-[#7a4f00] hover:bg-[#fff0ce] disabled:opacity-60 dark:border-[#6e5726] dark:text-[#ffd98a] dark:hover:bg-[#3a2d12]"
-                    type="button"
-                    :disabled="Boolean(assignmentPending[assignment.id])"
-                    @click="setAssignmentStatus(assignment, 'cancel')"
-                  >
-                    <LoaderCircle v-if="assignmentPending[assignment.id] === 'cancel'" class="h-4 w-4 animate-spin" />
-                    <XCircle v-else class="h-4 w-4" />
-                    Cancel
-                  </button>
-                </div>
-              </article>
-
-              <button
-                v-if="nextAssignmentCursor"
-                class="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] bg-white px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:bg-[#202522] dark:hover:bg-[#2a302d]"
-                type="button"
-                :disabled="loadingMoreAssignments"
-                @click="loadMoreAssignments"
-              >
-                <LoaderCircle v-if="loadingMoreAssignments" class="h-4 w-4 animate-spin" />
-                <RefreshCw v-else class="h-4 w-4" />
-                Load more assignments
-              </button>
-            </section>
-
-            <section v-show="workspaceTab === 'review'" class="article-review__comments rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]">
-              <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Review thread</p>
-                  <h2 class="mt-1 text-xl font-semibold tracking-normal">Comments</h2>
-                </div>
-                <span class="rounded-md bg-[#eef5f1] px-3 py-2 text-sm text-[#36594a] dark:bg-[#18261f] dark:text-[#b6d7c8]">{{ openCommentCount }} open</span>
-              </div>
-
-              <form v-if="canComment" class="mt-5 space-y-3" @submit.prevent="createComment">
-                <div class="grid gap-3 sm:grid-cols-2">
-                  <label class="block space-y-2">
-                    <span class="text-sm font-medium">Revision ID</span>
-                    <input v-model.trim="commentForm.revisionId" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 font-mono text-sm dark:border-[#4b5650] dark:bg-[#171b18]" />
-                  </label>
-                  <label class="block space-y-2">
-                    <span class="text-sm font-medium">Block ID</span>
-                    <input v-model.trim="commentForm.blockId" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 font-mono text-sm dark:border-[#4b5650] dark:bg-[#171b18]" />
-                  </label>
-                </div>
-                <label class="block space-y-2">
-                  <span class="text-sm font-medium">Comment</span>
-                  <textarea v-model.trim="commentForm.body" class="min-h-24 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
-                </label>
-                <button
-                  class="inline-flex items-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
-                  type="submit"
-                  :disabled="creatingComment || !commentForm.body.trim()"
-                >
-                  <LoaderCircle v-if="creatingComment" class="h-4 w-4 animate-spin" />
-                  <MessageSquarePlus v-else class="h-4 w-4" />
-                  Add comment
-                </button>
-              </form>
-
-              <div v-if="comments.length === 0" class="mt-5 rounded-lg border border-dashed border-[#bfcac3] p-6 text-center dark:border-[#4b5650]">
-                <h3 class="text-lg font-semibold">No comments yet</h3>
-              </div>
-
-              <article v-for="comment in comments" :key="comment.id" class="mt-4 rounded-lg border border-[#cfd8d1] p-4 dark:border-[#3f4843]">
-                <div class="flex flex-wrap items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <p class="text-sm text-[#4f5b54] dark:text-[#c5cec8]">{{ comment.body }}</p>
-                    <p class="mt-2 truncate font-mono text-xs text-[#667169] dark:text-[#aeb8b0]">{{ comment.revisionId || 'article' }} {{ comment.blockId || '' }}</p>
-                  </div>
-                  <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="commentStatusClass(comment.status)">{{ comment.status }}</span>
-                </div>
-                <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-3">
-                  <div>
-                    <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Created</dt>
-                    <dd>{{ formatDate(comment.createdAt) }}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Created by</dt>
-                    <dd class="truncate font-mono">{{ comment.createdBy }}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-xs uppercase text-[#667169] dark:text-[#aeb8b0]">Resolved</dt>
-                    <dd>{{ formatDate(comment.resolvedAt) }}</dd>
-                  </div>
-                </dl>
-                <div v-if="canComment" class="mt-4 flex flex-wrap gap-2">
-                  <button
-                    v-if="comment.status !== 'resolved'"
-                    class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
-                    type="button"
-                    :disabled="commentPending[comment.id] === 'resolve'"
-                    @click="setCommentStatus(comment, 'resolve')"
-                  >
-                    <CheckCircle2 class="h-4 w-4" />
-                    Resolve
-                  </button>
-                  <button
-                    v-else
-                    class="inline-flex items-center gap-2 rounded-md border border-[#c9d4cc] px-3 py-2 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
-                    type="button"
-                    :disabled="commentPending[comment.id] === 'reopen'"
-                    @click="setCommentStatus(comment, 'reopen')"
-                  >
-                    <RotateCcw class="h-4 w-4" />
-                    Reopen
-                  </button>
-                </div>
-              </article>
-
-              <button
-                v-if="nextCommentCursor"
-                class="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] bg-white px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:bg-[#202522] dark:hover:bg-[#2a302d]"
-                type="button"
-                :disabled="loadingMoreComments"
-                @click="loadMoreComments"
-              >
-                <LoaderCircle v-if="loadingMoreComments" class="h-4 w-4 animate-spin" />
-                <RefreshCw v-else class="h-4 w-4" />
-                Load more comments
-              </button>
-            </section>
           </div>
 
           <div v-show="workspaceTab === 'write' || workspaceTab === 'overview' || workspaceTab === 'publish'" class="article-workspace__panel-stack" :class="{ 'article-publish-grid': workspaceTab === 'publish' }">
-            <form v-if="canWriteArticles" v-show="workspaceTab === 'write'" class="article-compose space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="createRevision">
+            <form v-if="canWriteArticles" v-show="workspaceTab === 'write'" class="article-compose space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="saveArticle">
               <div class="flex items-start gap-3">
                 <FilePenLine class="mt-1 h-4 w-4 text-[#3162a3]" />
                 <div class="min-w-0 flex-1">
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Draft</p>
-                  <h2 class="mt-1 text-lg font-semibold tracking-normal">New revision</h2>
+                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Article</p>
+                  <h2 class="mt-1 text-lg font-semibold tracking-normal">Edit content</h2>
                   <p v-if="draftStatusText" class="mt-1 text-xs" :class="draftStatusClass" aria-live="polite">
                     {{ draftStatusText }}
                   </p>
@@ -633,14 +148,14 @@
                 v-if="staleDraft"
                 class="rounded-md border border-[#e1bd70] bg-[#fff8e7] p-3 text-sm text-[#6b4905] dark:border-[#665223] dark:bg-[#2b2415] dark:text-[#f5d992]"
               >
-                <p class="font-medium">{{ staleDraft.reason === 'version-conflict' ? 'Another tab saved a different draft.' : 'A working draft was saved against an older revision.' }}</p>
+                <p class="font-medium">{{ staleDraft.reason === 'version-conflict' ? 'Another tab saved different changes.' : 'This draft was saved before the article was last updated.' }}</p>
                 <p class="mt-1 text-xs">
                   {{ staleDraft.reason === 'version-conflict'
-                    ? `This tab's browser backup from ${formatDate(staleDraft.snapshot.savedAt)} is still available for manual reconciliation.`
-                    : `The article changed after this ${staleDraft.source === 'server' ? 'server' : 'browser'} draft was saved ${formatDate(staleDraft.snapshot.savedAt)}. Restore it for manual reconciliation, or discard it.` }}
+                    ? `This tab's browser backup from ${formatDate(staleDraft.snapshot.savedAt)} is still available.`
+                    : `The article changed after this ${staleDraft.source === 'server' ? 'server' : 'browser'} draft was saved ${formatDate(staleDraft.snapshot.savedAt)}. Restore it to inspect the changes, or discard it.` }}
                 </p>
                 <div class="mt-3 flex flex-wrap gap-2">
-                  <button class="rounded-md border border-current px-3 py-1.5 text-xs font-medium" type="button" @click="restoreStaleDraft">Restore for reconciliation</button>
+                  <button class="rounded-md border border-current px-3 py-1.5 text-xs font-medium" type="button" @click="restoreStaleDraft">Restore draft</button>
                   <button class="rounded-md px-3 py-1.5 text-xs font-medium underline" type="button" @click="discardLocalDraft">Discard</button>
                 </div>
               </div>
@@ -650,9 +165,9 @@
                 class="rounded-md border border-[#e1bd70] bg-[#fff8e7] p-3 text-sm text-[#6b4905] dark:border-[#665223] dark:bg-[#2b2415] dark:text-[#f5d992]"
               >
                 <p class="font-medium">Autosave paused because another tab saved newer work.</p>
-                <p class="mt-1 text-xs">Reload the server draft to compare it with this tab's browser backup before continuing.</p>
+                <p class="mt-1 text-xs">Reload the latest saved draft before continuing. This tab's browser backup will remain available.</p>
                 <button class="mt-3 rounded-md border border-current px-3 py-1.5 text-xs font-medium disabled:opacity-60" type="button" :disabled="reloadingServerDraft" @click="reloadServerDraft">
-                  {{ reloadingServerDraft ? 'Reloading…' : 'Reload server draft' }}
+                  {{ reloadingServerDraft ? 'Reloading…' : 'Reload saved draft' }}
                 </button>
               </div>
 
@@ -660,44 +175,44 @@
                 v-else-if="draftSaveState === 'restored'"
                 class="rounded-md border border-[#b9d5c8] bg-[#eef8f3] px-3 py-2 text-xs text-[#165a4a] dark:border-[#315648] dark:bg-[#14251f] dark:text-[#aee4d0]"
               >
-                Your saved working draft was restored after the latest immutable revision was checked.
+                Your saved working draft was restored.
               </p>
 
               <label class="article-compose__title block space-y-2">
                 <span class="text-sm font-medium">Title</span>
-                <input v-model.trim="revisionForm.title" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
+                <input v-model.trim="articleForm.title" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
               </label>
               <label class="block space-y-2">
                 <span class="text-sm font-medium">Primary category</span>
-                <select v-model="revisionForm.primaryCategoryId" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]">
+                <select v-model="articleForm.primaryCategoryId" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]">
                   <option value="">Keep current category</option>
                   <option v-for="category in categories" :key="category.id" :value="category.id">{{ categoryPathLabel(category) }}</option>
                 </select>
               </label>
-              <RevisionContributorsEditor
-                :model-value="revisionForm.contributors"
+              <ArticleContributorsEditor
+                :model-value="articleForm.contributors"
                 :authors="authors"
-                @update:model-value="updateRevisionContributors"
+                @update:model-value="updateArticleContributors"
               />
               <ArticleStructuredEditor
-                v-model:html="revisionForm.html"
-                v-model:body-document="revisionBodyDocument"
-                label="Revision body"
+                v-model:html="articleForm.html"
+                v-model:body-document="articleBodyDocument"
+                label="Article body"
                 :media-assets="mediaAssets"
                 :sources="sources"
               />
               <div class="article-compose__summaries">
                 <label class="block space-y-2">
                   <span class="text-sm font-medium">Deck <small>Optional subtitle</small></span>
-                  <textarea v-model.trim="revisionForm.deck" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                  <textarea v-model.trim="articleForm.deck" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
                 </label>
                 <label class="block space-y-2">
                   <span class="text-sm font-medium">Excerpt <small>Article summary</small></span>
-                  <textarea v-model.trim="revisionForm.excerpt" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                  <textarea v-model.trim="articleForm.excerpt" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
                 </label>
                 <label class="block space-y-2">
                   <span class="text-sm font-medium">Short answer <small>Direct answer for search</small></span>
-                  <textarea v-model.trim="revisionForm.shortAnswer" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                  <textarea v-model.trim="articleForm.shortAnswer" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
                 </label>
               </div>
               <details class="article-compose__advanced">
@@ -708,11 +223,11 @@
                 <div class="grid gap-3 p-3 sm:grid-cols-2">
                 <label class="block space-y-2">
                   <span class="text-sm font-medium">SEO title</span>
-                  <input v-model.trim="revisionForm.seoTitle" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Defaults to revision title" />
+                  <input v-model.trim="articleForm.seoTitle" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Defaults to article title" />
                 </label>
                 <label class="block space-y-2">
                   <span class="text-sm font-medium">Robots</span>
-                  <select v-model="revisionForm.robots" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]">
+                  <select v-model="articleForm.robots" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]">
                     <option value="index,follow">Index, follow</option>
                     <option value="index,nofollow">Index, nofollow</option>
                     <option value="noindex,follow">Noindex, follow</option>
@@ -721,30 +236,30 @@
                 </label>
                 <label class="block space-y-2 sm:col-span-2">
                   <span class="text-sm font-medium">Meta description</span>
-                  <textarea v-model.trim="revisionForm.seoDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Defaults to excerpt" />
+                  <textarea v-model.trim="articleForm.seoDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="Defaults to excerpt" />
                 </label>
                 <label class="block space-y-2">
                   <span class="text-sm font-medium">Open Graph title</span>
-                  <input v-model.trim="revisionForm.openGraphTitle" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                  <input v-model.trim="articleForm.openGraphTitle" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
                 </label>
                 <label class="block space-y-2">
                   <span class="text-sm font-medium">Open Graph image URL</span>
-                  <input v-model.trim="revisionForm.openGraphImage" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="https://…" />
+                  <input v-model.trim="articleForm.openGraphImage" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" placeholder="https://…" />
                 </label>
                 <label class="block space-y-2 sm:col-span-2">
                   <span class="text-sm font-medium">Open Graph description</span>
-                  <textarea v-model.trim="revisionForm.openGraphDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
+                  <textarea v-model.trim="articleForm.openGraphDescription" class="min-h-20 w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" />
                 </label>
                 </div>
               </details>
               <button
                 class="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
                 type="submit"
-                :disabled="creatingRevision || !canCreateRevision"
+                :disabled="savingArticle || !canSaveArticle"
               >
-                <LoaderCircle v-if="creatingRevision" class="h-4 w-4 animate-spin" />
-                <Plus v-else class="h-4 w-4" />
-                Create revision
+                <LoaderCircle v-if="savingArticle" class="h-4 w-4 animate-spin" />
+                <CheckCircle2 v-else class="h-4 w-4" />
+                Save changes
               </button>
             </form>
 
@@ -768,14 +283,6 @@
                   <option value="">Select a project</option>
                   <option v-for="destination in copyDestinations" :key="destination.id" :value="destination.id">
                     {{ destination.name }}
-                  </option>
-                </select>
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Source revision</span>
-                <select v-model="copyForm.sourceRevisionId" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" required>
-                  <option v-for="revision in revisions" :key="revision.id" :value="revision.id">
-                    #{{ revision.revisionNumber }} · {{ revision.title }}
                   </option>
                 </select>
               </label>
@@ -819,10 +326,10 @@
                 v-if="copyForm.canonicalDecision === 'canonical_original'"
                 class="rounded-md border border-[#d8d0e8] bg-[#f7f4fc] px-3 py-2 text-xs text-[#5e4b86] dark:border-[#4f4565] dark:bg-[#211d2a] dark:text-[#cbbfe2]"
               >
-                The canonical URL is resolved by the server from the selected source revision. It cannot be redirected to another URL.
+                The canonical URL is resolved by the server from the original article. It cannot be redirected to another URL.
               </p>
               <p class="rounded-md bg-[#f2f5f3] px-3 py-2 text-xs text-[#5d6a61] dark:bg-[#171b18] dark:text-[#aeb8b0]">
-                The destination gets a new unpublished draft and revision history. Choose destination taxonomy; copies containing project-owned body references are blocked until those references are removed or remapped.
+                The latest saved content becomes a new unpublished draft in the destination project. Choose its taxonomy before copying.
               </p>
 
               <button
@@ -840,15 +347,16 @@
               <div class="article-publish__lead">
                 <div class="article-publish__icon"><UploadCloud :size="22" /></div>
                 <div class="min-w-0 flex-1">
-                  <p class="text-sm font-medium text-[#165a4a] dark:text-[#aee4d0]">Ready when you are</p>
+                  <p class="text-sm font-medium text-[#165a4a] dark:text-[#aee4d0]">
+                    {{ article.publicationState === 'published' ? 'Changes ready to publish' : 'Ready to publish' }}
+                  </p>
                   <h2 class="mt-1 text-xl font-semibold tracking-normal">
                     {{ article.publicationState === 'published' ? 'Publish the latest changes' : 'Publish this article' }}
                   </h2>
                   <p class="mt-2 max-w-2xl text-sm text-[#5d6a61] dark:text-[#aeb8b0]">
-                    The latest revision will go live immediately. Editors do not need a separate approval step.
+                    Your latest content will be saved, then go live immediately at <strong>/{{ publicationForm.slug }}</strong>.
                   </p>
                 </div>
-                <span class="article-publish__revision">Revision #{{ article.latestRevision?.revisionNumber }}</span>
               </div>
 
               <details class="article-publish__details">
@@ -872,7 +380,7 @@
                 <button
                   class="inline-flex h-11 min-w-44 items-center justify-center gap-2 rounded-md bg-[#165a4a] px-5 text-sm font-semibold text-white shadow-sm hover:bg-[#10463a] disabled:opacity-60"
                   type="submit"
-                  :disabled="actionPending === 'publish' || !publicationForm.slug"
+                  :disabled="Boolean(actionPending) || savingArticle || !publicationForm.slug"
                 >
                   <LoaderCircle v-if="actionPending === 'publish'" class="h-4 w-4 animate-spin" />
                   <UploadCloud v-else class="h-4 w-4" />
@@ -882,89 +390,84 @@
                   v-if="article.publicationState !== 'unpublished'"
                   class="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-[#d9b7aa] px-4 text-sm font-medium text-[#9b2d23] hover:bg-[#fff4f2] disabled:opacity-60 dark:border-[#6d352f] dark:text-[#ffc4bd] dark:hover:bg-[#2a1c1a]"
                   type="button"
-                  :disabled="actionPending === 'unpublish'"
+                  :disabled="Boolean(actionPending)"
                   @click="unpublishArticle"
                 >
-                  <XCircle class="h-4 w-4" />
-                  Unpublish
+                  <LoaderCircle v-if="actionPending === 'unpublish'" class="h-4 w-4 animate-spin" />
+                  <XCircle v-else class="h-4 w-4" />
+                  {{ article.publicationState === 'scheduled' ? 'Cancel schedule' : 'Unpublish' }}
                 </button>
               </div>
             </form>
 
-            <form v-if="canPublishArticles" v-show="workspaceTab === 'publish'" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="scheduleArticle">
-              <div class="flex items-start gap-3">
-                <CalendarClock class="mt-1 h-4 w-4 text-[#8a5b00]" />
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Schedule</p>
-                  <h2 class="mt-1 text-lg font-semibold tracking-normal">Timed publish</h2>
-                </div>
-              </div>
-              <input
-                v-model="scheduleDraft"
-                class="h-10 w-full rounded-md border border-[#bfcac3] px-3 py-2 text-sm dark:border-[#4b5650] dark:bg-[#171b18]"
-                type="datetime-local"
-                required
-              />
-              <button
-                class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
-                type="submit"
-                :disabled="actionPending === 'schedule' || !scheduleDraft"
-              >
-                <CalendarClock class="h-4 w-4" />
-                Schedule
-              </button>
-            </form>
+            <details v-if="canPublishArticles && article.publicationState !== 'published'" v-show="workspaceTab === 'publish'" class="article-publish__advanced article-publish__schedule">
+              <summary>
+                <span>
+                  <strong>Schedule for later</strong>
+                  <small v-if="article.scheduledForUtc">Currently scheduled for {{ formatDate(article.scheduledForUtc) }}</small>
+                  <small v-else>Choose a date and time instead of publishing now</small>
+                </span>
+                <ChevronDown :size="18" />
+              </summary>
+              <form class="article-publish__schedule-form" @submit.prevent="scheduleArticle">
+                <label>
+                  <span class="sr-only">Publish date and time</span>
+                  <input
+                    v-model="scheduleDraft"
+                    class="h-10 w-full rounded-md border border-[#bfcac3] bg-white px-3 py-2 text-sm dark:border-[#4b5650] dark:bg-[#171b18]"
+                    type="datetime-local"
+                    :min="minimumScheduleDate"
+                    required
+                  />
+                </label>
+                <button
+                  class="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#c9d4cc] bg-white px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:bg-[#202522] dark:hover:bg-[#2a302d]"
+                  type="submit"
+                  :disabled="Boolean(actionPending) || savingArticle || !scheduleDraft"
+                >
+                  <LoaderCircle v-if="actionPending === 'schedule'" class="h-4 w-4 animate-spin" />
+                  <CalendarClock v-else class="h-4 w-4" />
+                  {{ article.scheduledForUtc ? 'Update schedule' : 'Schedule' }}
+                </button>
+              </form>
+            </details>
 
-            <form v-if="canPublishArticles" v-show="workspaceTab === 'publish'" class="space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="rollbackArticle">
-              <div class="flex items-start gap-3">
-                <History class="mt-1 h-4 w-4 text-[#6b5797]" />
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Restore</p>
-                  <h2 class="mt-1 text-lg font-semibold tracking-normal">Rollback</h2>
-                </div>
-              </div>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Approved revision</span>
-                <select v-model="rollbackForm.revisionId" class="h-10 w-full rounded-md border border-[#bfcac3] px-3 text-sm dark:border-[#4b5650] dark:bg-[#171b18]" required>
-                  <option value="">Select a revision</option>
-                  <option v-for="revision in approvedRevisions" :key="revision.id" :value="revision.id" :disabled="isCurrentPublication(revision)">
-                    #{{ revision.revisionNumber }} · {{ revision.title }}{{ isCurrentPublication(revision) ? ' (current)' : '' }}
-                  </option>
-                </select>
-              </label>
-              <p v-if="article.publicationState !== 'published'" class="text-xs text-[#667169] dark:text-[#aeb8b0]">Rollback is available while this article is published.</p>
-              <button
-                class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
-                type="submit"
-                :disabled="actionPending === 'rollback' || !canRollback"
-              >
-                <History class="h-4 w-4" />
-                Rollback
-              </button>
-            </form>
+            <details v-if="canPublishArticles" v-show="workspaceTab === 'publish'" class="article-publish__advanced">
+              <summary>
+                <span>
+                  <strong>Article management</strong>
+                  <small>Archive this article</small>
+                </span>
+                <ChevronDown :size="18" />
+              </summary>
 
-            <section v-if="canPublishArticles" v-show="workspaceTab === 'publish'" class="article-publish__danger space-y-4 rounded-lg border border-[#d9b7aa] bg-white p-5 shadow-sm dark:border-[#6d352f] dark:bg-[#202522]">
-              <div class="flex items-start gap-3">
-                <Trash2 class="mt-1 h-4 w-4 text-[#9b2d23] dark:text-[#ffc4bd]" />
-                <div>
-                  <p class="text-sm text-[#9b2d23] dark:text-[#ffc4bd]">Danger zone</p>
-                  <h2 class="mt-1 text-lg font-semibold tracking-normal">Archive article</h2>
-                </div>
+              <div class="article-publish__advanced-content">
+                <section class="article-publish__option article-publish__controls">
+                  <div class="flex items-start gap-3">
+                    <Trash2 class="mt-1 h-4 w-4 text-[#9b2d23] dark:text-[#ffc4bd]" />
+                    <div>
+                      <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Article management</p>
+                      <h2 class="mt-1 text-base font-semibold tracking-normal">Archive article</h2>
+                    </div>
+                  </div>
+                  <p class="text-sm text-[#5f6a63] dark:text-[#b8c2bb]">
+                    Hides the article from the list while keeping its saved content. Published articles are unpublished first.
+                  </p>
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      class="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-md border border-[#d9b7aa] px-4 text-sm font-medium text-[#9b2d23] hover:bg-[#fff4f2] disabled:opacity-60 dark:border-[#6d352f] dark:text-[#ffc4bd] dark:hover:bg-[#2a1c1a]"
+                      type="button"
+                      :disabled="Boolean(actionPending) || !canArchiveArticle"
+                      @click="archiveArticle"
+                    >
+                      <LoaderCircle v-if="actionPending === 'archive'" class="h-4 w-4 animate-spin" />
+                      <Trash2 v-else class="h-4 w-4" />
+                      Archive article
+                    </button>
+                  </div>
+                </section>
               </div>
-              <p class="text-sm text-[#5f6a63] dark:text-[#b8c2bb]">
-                Hides this article from the admin list. If it is published, it is also removed from the Content API and downstream cache events are queued.
-              </p>
-              <button
-                class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#d9b7aa] px-4 text-sm font-medium text-[#9b2d23] hover:bg-[#fff4f2] disabled:opacity-60 dark:border-[#6d352f] dark:text-[#ffc4bd] dark:hover:bg-[#2a1c1a]"
-                type="button"
-                :disabled="actionPending === 'archive' || !canArchiveArticle"
-                @click="archiveArticle"
-              >
-                <LoaderCircle v-if="actionPending === 'archive'" class="h-4 w-4 animate-spin" />
-                <Trash2 v-else class="h-4 w-4" />
-                Archive article
-              </button>
-            </section>
+            </details>
           </div>
         </div>
       </div>
@@ -980,23 +483,16 @@ import {
   ChevronDown,
   CopyPlus,
   FilePenLine,
-  GitCompareArrows,
   Hash,
-  History,
   LoaderCircle,
   LogOut,
-  MessageSquarePlus,
-  Plus,
   RefreshCw,
-  RotateCcw,
-  Send,
   Trash2,
   UploadCloud,
-  UserCheck,
   XCircle
 } from 'lucide-vue-next'
-import type { AdminAuthor, AdminMediaAsset, AdminSource, RevisionContributorInput } from '~/composables/useAdminApi'
-import { articleBodyDocumentFromHTML, hasValidRevisionContributors, htmlToPlainText } from '~/composables/useAdminApi'
+import type { AdminAuthor, AdminMediaAsset, AdminSource, ArticleContributorInput } from '~/composables/useAdminApi'
+import { articleBodyDocumentFromHTML, hasValidArticleContributors, htmlToPlainText } from '~/composables/useAdminApi'
 
 type APIEnvelope<T> = {
   data: T
@@ -1007,7 +503,6 @@ type APIListEnvelope<T> = {
   meta?: {
     nextCursor?: string
     limit: number
-    openCount?: number
   }
 }
 
@@ -1021,66 +516,23 @@ type AdminProject = {
   blogBasePath: string
 }
 
-type AdminRevision = {
+type LatestContentVersion = {
   id: string
-  projectId: string
-  articleId: string
-  revisionNumber: number
-  title: string
-  deck?: string
-  excerpt?: string
-  shortAnswer?: string
-  editorialState: string
-  contentHash: string
-  createdAt: string
 }
 
-type AdminRevisionSummary = AdminRevision & {
-  baseRevisionId?: string
-  published: boolean
-}
-
-type AdminRevisionDetail = AdminRevisionSummary & {
-  alternateTitle?: string
-  bodyDocument: unknown
-  tableOfContents: unknown
-  authorSnapshot: unknown
-  contributorSnapshot: unknown
-  taxonomySnapshot: unknown
-  sourceSnapshot: unknown
-  claimSnapshot: unknown
-  seoSnapshot: unknown
-  socialSnapshot: unknown
-  mediaSnapshot: unknown
-  disclosureSnapshot: unknown
-  correctionSummary: unknown
-  sanitizedHtml: string
-  plainText: string
-  markdownExport: string
-  wordCount: number
-  readingTimeSeconds: number
-  changeSummary?: string
-}
-
-type ComparisonField = {
-  key: string
-  label: string
-  before: string
-  after: string
-  changed: boolean
-  monospace?: boolean
-  diffLines?: ComparisonDiffLine[]
-}
-
-type ComparisonDiffLine = {
-  kind: 'equal' | 'added' | 'removed' | 'omitted'
-  text: string
+type ArticleSEO = {
+  title?: string
+  description?: string
+  robots?: string
+  openGraphTitle?: string
+  openGraphDescription?: string
+  openGraphImage?: string
 }
 
 type ArticleDraftFields = {
   title: string
   primaryCategoryId: string
-  contributors: RevisionContributorInput[]
+  contributors: ArticleContributorInput[]
   attributionEdited: boolean
   deck: string
   excerpt: string
@@ -1130,13 +582,20 @@ type AdminArticle = {
   articleType: string
   slug: string
   title: string
-  editorialState: string
+  deck?: string
+  excerpt?: string
+  shortAnswer?: string
+  primaryCategoryId?: string
+  contributors?: ArticleContributorInput[]
+  bodyDocument?: unknown
+  html?: string
+  seo?: ArticleSEO
   publicationState: string
   canonicalPolicy: string
   scheduledForUtc?: string
   publishedAt?: string
   canonicalUrl?: string
-  latestRevision?: AdminRevision
+  latestRevision?: LatestContentVersion
   createdAt: string
 }
 
@@ -1152,45 +611,6 @@ type TaxonomyTerm = {
   indexable: boolean
 }
 
-type AdminProjectMember = {
-  projectId: string
-  userId: string
-  email: string
-  role: string
-  status: string
-}
-
-type ReviewComment = {
-  id: string
-  projectId: string
-  articleId: string
-  revisionId?: string
-  blockId?: string
-  body: string
-  status: string
-  createdBy: string
-  createdAt: string
-  resolvedBy?: string
-  resolvedAt?: string
-}
-
-type ReviewAssignment = {
-  id: string
-  projectId: string
-  articleId: string
-  revisionId?: string
-  assignedTo: string
-  assigneeEmail?: string
-  assigneeRole?: string
-  assignmentType: string
-  dueAt?: string
-  status: string
-  createdBy: string
-  createdAt: string
-  closedBy?: string
-  closedAt?: string
-}
-
 const route = useRoute()
 const projectID = computed(() => {
   const value = route.params.projectId
@@ -1202,39 +622,20 @@ const articleID = computed(() => {
 })
 
 const project = ref<AdminProject | null>(null)
-const currentUser = useState<{ id: string } | null>('admin-user', () => null)
 const projects = ref<AdminProject[]>([])
 const article = ref<AdminArticle | null>(null)
-const workspaceTab = ref<'write' | 'overview' | 'publish' | 'review' | 'history'>('write')
+const workspaceTab = ref<'write' | 'overview' | 'publish'>('write')
 const categories = ref<TaxonomyTerm[]>([])
 const authors = ref<AdminAuthor[]>([])
 const mediaAssets = ref<AdminMediaAsset[]>([])
 const sources = ref<AdminSource[]>([])
 const copyDestinationCategories = ref<TaxonomyTerm[]>([])
 const copyDestinationAuthors = ref<AdminAuthor[]>([])
-const copySourceRevision = ref<AdminRevisionDetail | null>(null)
 const copyContributorMappings = reactive<Record<string, string>>({})
-const members = ref<AdminProjectMember[]>([])
-const comments = ref<ReviewComment[]>([])
-const assignments = ref<ReviewAssignment[]>([])
-const revisions = ref<AdminRevisionSummary[]>([])
-const comparisonBefore = ref<AdminRevisionDetail | null>(null)
-const comparisonAfter = ref<AdminRevisionDetail | null>(null)
-const showOnlyChangedComparisonFields = ref(false)
 const pending = ref(true)
-const creatingRevision = ref(false)
+const savingArticle = ref(false)
 const copyingArticle = ref(false)
 const loadingCopyCategories = ref(false)
-const creatingAssignment = ref(false)
-const creatingComment = ref(false)
-const loadingMoreAssignments = ref(false)
-const loadingMoreComments = ref(false)
-const loadingMoreRevisions = ref(false)
-const comparisonPending = ref(false)
-const nextAssignmentCursor = ref('')
-const openAssignmentCount = ref(0)
-const nextCommentCursor = ref('')
-const nextRevisionCursor = ref('')
 const actionPending = ref('')
 const errorMessage = ref('')
 const successMessage = ref('')
@@ -1246,12 +647,12 @@ const serverAutosaveVersion = ref(0)
 const loadedServerAutosave = ref<ArticleAutosave | null>(null)
 const staleDraft = ref<ArticleDraftRecovery | null>(null)
 const reloadingServerDraft = ref(false)
-const revisionBodyDocument = ref<unknown>({ type: 'doc', schemaVersion: 'tiptap-v1', content: [] })
-const baseDraftRevisionID = ref('')
+const contentDirty = ref(false)
+const articleBodyDocument = ref<unknown>({ type: 'doc', schemaVersion: 'tiptap-v1', content: [] })
+const baseContentVersionID = ref('')
+const scheduleDraft = ref('')
+const minimumScheduleDate = toLocalInputValue(new Date(Date.now() + 60_000))
 const attributionEdited = ref(false)
-const commentPending = reactive<Record<string, string>>({})
-const assignmentPending = reactive<Record<string, string>>({})
-let comparisonRequestVersion = 0
 let copyCategoryRequestVersion = 0
 let copyContextRequestVersion = 0
 let draftPersistenceEnabled = false
@@ -1262,10 +663,10 @@ let serverSaveInFlight = false
 let serverSaveTimer: ReturnType<typeof setTimeout> | undefined
 let serverSaveGeneration = 0
 
-const revisionForm = reactive({
+const articleForm = reactive({
   title: '',
   primaryCategoryId: '',
-  contributors: [] as RevisionContributorInput[],
+  contributors: [] as ArticleContributorInput[],
   deck: '',
   excerpt: '',
   shortAnswer: '',
@@ -1283,48 +684,22 @@ const publicationForm = reactive({
   canonicalUrl: ''
 })
 
-const rollbackForm = reactive({
-  revisionId: ''
-})
-
 const copyForm = reactive({
   destinationProjectId: '',
-  sourceRevisionId: '',
   primaryCategoryId: '',
   slug: '',
   canonicalDecision: 'material_adaptation'
 })
 
-const comparisonForm = reactive({
-  beforeRevisionId: '',
-  afterRevisionId: ''
-})
-
-const assignmentForm = reactive({
-  revisionId: '',
-  assignedTo: '',
-  assignmentType: 'reviewer',
-  dueAt: ''
-})
-
-const commentForm = reactive({
-  revisionId: '',
-  blockId: '',
-  body: ''
-})
-
-const scheduleDraft = ref('')
 const projectIsActive = computed(() => project.value?.status === 'active')
 const canWriteArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'writer'].includes(project.value?.role || ''))
-const canReviewArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'reviewer'].includes(project.value?.role || ''))
 const canPublishArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
-const canComment = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'reviewer', 'writer'].includes(project.value?.role || ''))
 watch(canWriteArticles, (canWrite) => {
   if (!canWrite && workspaceTab.value === 'write') workspaceTab.value = 'overview'
 })
-const canCreateRevision = computed(() => canWriteArticles.value && Boolean(
-  revisionForm.title.trim()
-  && hasValidRevisionContributors(revisionForm.contributors)
+const canSaveArticle = computed(() => canWriteArticles.value && Boolean(
+  articleForm.title.trim()
+  && hasValidArticleContributors(articleForm.contributors)
   && serverDraftSaveState.value !== 'conflict'
 ))
 const draftStatusText = computed(() => {
@@ -1359,118 +734,24 @@ const copyDestinations = computed(() => projects.value.filter(candidate =>
 const canCopyArticle = computed(() => Boolean(
   projectIsActive.value
   && copyForm.destinationProjectId
-  && copyForm.sourceRevisionId
   && copyForm.primaryCategoryId
   && copyForm.slug.trim()
   && ['canonical_original', 'material_adaptation'].includes(copyForm.canonicalDecision)
-  && copySourceRevision.value
   && copySourceContributors.value.every(contributor => copyContributorMappings[contributor.authorId])
 ))
-const copySourceContributors = computed(() => sourceContributorsFromRevision(copySourceRevision.value))
-const openCommentCount = computed(() => comments.value.filter(comment => comment.status !== 'resolved').length)
-const approvedRevisions = computed(() => revisions.value.filter(revision => revision.editorialState === 'approved'))
-const canCompareRevisions = computed(() => Boolean(
-  comparisonForm.beforeRevisionId
-  && comparisonForm.afterRevisionId
-  && comparisonForm.beforeRevisionId !== comparisonForm.afterRevisionId
-))
-const assignmentEligibleMembers = computed(() => members.value.filter(member =>
-  member.status === 'active'
-  && assignmentTypeAllowedForRole(assignmentForm.assignmentType, member.role)
-))
-const canManageAssignments = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
+const copySourceContributors = computed(() => sourceContributorsFromArticle(article.value))
 const canArchiveArticle = computed(() => canPublishArticles.value)
-const canCreateAssignment = computed(() => Boolean(
-  canManageAssignments.value
-  && assignmentForm.assignedTo
-  && assignmentEligibleMembers.value.some(member => member.userId === assignmentForm.assignedTo)
-))
-const canRollback = computed(() => {
-  const selected = revisions.value.find(revision => revision.id === rollbackForm.revisionId)
-  return Boolean(
-    canPublishArticles.value
-    && selected
-    && selected.editorialState === 'approved'
-    && article.value?.publicationState === 'published'
-    && !isCurrentPublication(selected)
-  )
-})
-const comparisonFields = computed<ComparisonField[]>(() => {
-  if (!comparisonBefore.value || !comparisonAfter.value) return []
-  const before = comparisonBefore.value
-  const after = comparisonAfter.value
-  return [
-    comparisonField('title', 'Title', before.title, after.title),
-    comparisonField('alternateTitle', 'Alternate title', before.alternateTitle || '', after.alternateTitle || ''),
-    comparisonField('deck', 'Deck', before.deck || '', after.deck || ''),
-    comparisonField('excerpt', 'Excerpt', before.excerpt || '', after.excerpt || ''),
-    comparisonField('shortAnswer', 'Short answer', before.shortAnswer || '', after.shortAnswer || ''),
-    comparisonField('bodyText', 'Body text', before.plainText, after.plainText, false, true),
-    comparisonField('bodyDocument', 'Structured body', prettyJSON(before.bodyDocument), prettyJSON(after.bodyDocument), true, true),
-    comparisonField('sanitizedHtml', 'Sanitized HTML', before.sanitizedHtml, after.sanitizedHtml, true, true),
-    comparisonField('markdown', 'Markdown export', before.markdownExport, after.markdownExport, true, true),
-    comparisonField('tableOfContents', 'Table of contents', prettyJSON(before.tableOfContents), prettyJSON(after.tableOfContents), true, true),
-    comparisonField('authors', 'Authors', prettyJSON(before.authorSnapshot), prettyJSON(after.authorSnapshot), true, true),
-    comparisonField('contributors', 'Contributors', prettyJSON(before.contributorSnapshot), prettyJSON(after.contributorSnapshot), true, true),
-    comparisonField('taxonomy', 'Taxonomy snapshot', prettyJSON(before.taxonomySnapshot), prettyJSON(after.taxonomySnapshot), true, true),
-    comparisonField('sources', 'Sources', prettyJSON(before.sourceSnapshot), prettyJSON(after.sourceSnapshot), true, true),
-    comparisonField('claims', 'Claims', prettyJSON(before.claimSnapshot), prettyJSON(after.claimSnapshot), true, true),
-    comparisonField('seo', 'SEO snapshot', prettyJSON(before.seoSnapshot), prettyJSON(after.seoSnapshot), true, true),
-    comparisonField('social', 'Social snapshot', prettyJSON(before.socialSnapshot), prettyJSON(after.socialSnapshot), true, true),
-    comparisonField('media', 'Media snapshot', prettyJSON(before.mediaSnapshot), prettyJSON(after.mediaSnapshot), true, true),
-    comparisonField('disclosures', 'Disclosures', prettyJSON(before.disclosureSnapshot), prettyJSON(after.disclosureSnapshot), true, true),
-    comparisonField('corrections', 'Corrections', prettyJSON(before.correctionSummary), prettyJSON(after.correctionSummary), true, true),
-    comparisonField('wordCount', 'Word count', String(before.wordCount), String(after.wordCount)),
-    comparisonField('readingTime', 'Reading time (seconds)', String(before.readingTimeSeconds), String(after.readingTimeSeconds)),
-    comparisonField('changeSummary', 'Change summary', before.changeSummary || '', after.changeSummary || '')
-  ]
-})
-const comparisonStats = computed(() => {
-  const changed = comparisonFields.value.filter(field => field.changed).length
-  return {
-    changed,
-    unchanged: comparisonFields.value.length - changed
-  }
-})
-const visibleComparisonFields = computed(() => showOnlyChangedComparisonFields.value
-  ? comparisonFields.value.filter(field => field.changed)
-  : comparisonFields.value
-)
-const comparisonSummary = computed(() => {
-  if (!comparisonBefore.value || !comparisonAfter.value) return ''
-  const revisionSummary = `Revision ${comparisonBefore.value.revisionNumber} compared with revision ${comparisonAfter.value.revisionNumber}.`
-  const changed = comparisonFields.value.filter(field => field.changed)
-  if (changed.length === 0) {
-    return `${revisionSummary} No public fields changed across ${comparisonFields.value.length} compared fields.`
-  }
-  const shownLabels = changed.slice(0, 6).map(field => field.label)
-  const remaining = changed.length - shownLabels.length
-  return `${revisionSummary} ${changed.length} of ${comparisonFields.value.length} fields changed: ${shownLabels.join(', ')}${remaining > 0 ? `, and ${remaining} more` : ''}.`
-})
 
 watch(
-  () => [comparisonForm.beforeRevisionId, comparisonForm.afterRevisionId],
-  () => invalidateComparison()
+  () => copyForm.destinationProjectId,
+  destinationProjectId => loadCopyContext(destinationProjectId)
 )
 
 watch(
-  () => [copyForm.destinationProjectId, copyForm.sourceRevisionId] as const,
-  ([destinationProjectId, sourceRevisionId]) => loadCopyContext(destinationProjectId, sourceRevisionId)
-)
-
-watch(
-  () => assignmentForm.assignmentType,
-  () => {
-    if (!assignmentEligibleMembers.value.some(member => member.userId === assignmentForm.assignedTo)) {
-      assignmentForm.assignedTo = ''
-    }
-  }
-)
-
-watch(
-  () => ({ ...revisionForm, bodyDocument: revisionBodyDocument.value }),
+  () => ({ ...articleForm, bodyDocument: articleBodyDocument.value }),
   () => {
     if (!draftPersistenceEnabled || !import.meta.client) return
+    contentDirty.value = true
     draftDirty = true
     serverDraftDirty = true
     draftSaveState.value = 'saving'
@@ -1499,48 +780,27 @@ async function refresh() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, projectListResponse, memberResponse, categoryResponse, authorResponse, articleResponse, assignmentResponse, commentResponse, revisionResponse, autosaveResponse, mediaResponse, sourceResponse] = await Promise.all([
+    const [projectResponse, projectListResponse, categoryResponse, authorResponse, articleResponse, autosaveResponse, mediaResponse, sourceResponse] = await Promise.all([
       $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
       fetchAllCopyProjects(),
-      fetchAllReviewAssignees(),
       fetchAllCategories(projectID.value),
       $fetch<APIListEnvelope<AdminAuthor>>(`/api/v1/projects/${projectID.value}/authors`, { credentials: 'include' }),
       $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}`, { credentials: 'include' }),
-      $fetch<APIListEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/assignments`, {
-        credentials: 'include',
-        query: { limit: 50 }
-      }),
-      $fetch<APIListEnvelope<ReviewComment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/comments`, {
-        credentials: 'include',
-        query: { limit: 50 }
-      }),
-      $fetch<APIListEnvelope<AdminRevisionSummary>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/revisions`, {
-        credentials: 'include',
-        query: { limit: 50 }
-      }),
       fetchArticleAutosave(),
       $fetch<APIListEnvelope<AdminMediaAsset>>(`/api/v1/projects/${projectID.value}/media`, { credentials: 'include' }),
       $fetch<APIListEnvelope<AdminSource>>(`/api/v1/projects/${projectID.value}/sources`, { credentials: 'include', query: { limit: 100 } })
     ])
     project.value = projectResponse.data
+    if (!canWriteArticles.value && workspaceTab.value === 'write') workspaceTab.value = 'overview'
     projects.value = projectListResponse
-    members.value = memberResponse
     categories.value = sortCategories(categoryResponse)
     authors.value = apiListData(authorResponse).sort((left, right) => left.displayName.localeCompare(right.displayName))
     mediaAssets.value = apiListData(mediaResponse)
     sources.value = apiListData(sourceResponse)
-    setArticle(articleResponse.data)
-    assignments.value = apiListData(assignmentResponse)
-    nextAssignmentCursor.value = assignmentResponse.meta?.nextCursor || ''
-    openAssignmentCount.value = assignmentResponse.meta?.openCount ?? assignments.value.filter(assignment => assignment.status === 'open').length
-    comments.value = apiListData(commentResponse)
-    nextCommentCursor.value = commentResponse.meta?.nextCursor || ''
-    setRevisions(apiListData(revisionResponse), revisionResponse.meta?.nextCursor || '')
     loadedServerAutosave.value = autosaveResponse
     serverAutosaveVersion.value = autosaveResponse?.version || 0
-    if (articleResponse.data.latestRevision?.id) {
-      handleLatestRevisionDetail(await fetchRevisionDetail(articleResponse.data.latestRevision.id))
-    }
+    setArticle(articleResponse.data)
+    handleLoadedArticle(articleResponse.data)
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load article. Sign in again if your session has expired.')
   } finally {
@@ -1585,80 +845,53 @@ async function fetchAllCopyProjects() {
   return [...allProjects.values()]
 }
 
-async function fetchAllReviewAssignees() {
-  const allMembers = new Map<string, AdminProjectMember>()
-  const seenCursors = new Set<string>()
-  let cursor = ''
-
-  try {
-    do {
-      const response = await $fetch<APIListEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID.value}/review-assignees`, {
-        credentials: 'include',
-        query: {
-          limit: 100,
-          ...(cursor ? { cursor } : {})
-        }
-      })
-      for (const member of apiListData(response)) allMembers.set(member.userId, member)
-
-      const nextCursor = response.meta?.nextCursor || ''
-      if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Review-assignee pagination returned a repeated cursor')
-      if (nextCursor) seenCursors.add(nextCursor)
-      cursor = nextCursor
-    } while (cursor)
-  } catch (error) {
-    if (apiErrorStatus(error) === 403) return []
-    throw error
-  }
-
-  return [...allMembers.values()]
-}
-
-async function createRevision() {
-  if (!article.value) return
-  creatingRevision.value = true
+async function saveArticle() {
+  if (!article.value || savingArticle.value) return false
+  savingArticle.value = true
   clearMessages()
+  serverSaveGeneration += 1
   if (serverSaveTimer) {
     clearTimeout(serverSaveTimer)
     serverSaveTimer = undefined
   }
   try {
+    const pendingPublicationSettings = { ...publicationForm }
     const csrfToken = await getCSRFToken()
     const html = effectiveDraftHTML()
-    const response = await $fetch<APIEnvelope<AdminRevision>>(`/api/v1/projects/${projectID.value}/articles/${article.value.id}/revisions`, {
-      method: 'POST',
+    const response = await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${article.value.id}`, {
+      method: 'PUT',
       credentials: 'include',
       headers: { 'X-CSRF-Token': csrfToken },
       body: {
-        baseRevisionId: latestRevisionID(),
-        title: revisionForm.title,
-        primaryCategoryId: revisionForm.primaryCategoryId,
-        ...(attributionEdited.value ? { contributors: revisionForm.contributors } : {}),
-        deck: revisionForm.deck,
-        excerpt: revisionForm.excerpt,
-        shortAnswer: revisionForm.shortAnswer,
+        baseRevisionId: baseContentVersionID.value || latestContentVersionID(),
+        title: articleForm.title,
+        primaryCategoryId: articleForm.primaryCategoryId,
+        contributors: articleForm.contributors,
+        deck: articleForm.deck,
+        excerpt: articleForm.excerpt,
+        shortAnswer: articleForm.shortAnswer,
         bodyDocument: draftBodyDocument(),
         html,
         seo: {
-          title: revisionForm.seoTitle,
-          description: revisionForm.seoDescription,
-          robots: revisionForm.robots,
-          openGraphTitle: revisionForm.openGraphTitle,
-          openGraphDescription: revisionForm.openGraphDescription,
-          openGraphImage: revisionForm.openGraphImage
+          title: articleForm.seoTitle,
+          description: articleForm.seoDescription,
+          robots: articleForm.robots,
+          openGraphTitle: articleForm.openGraphTitle,
+          openGraphDescription: articleForm.openGraphDescription,
+          openGraphImage: articleForm.openGraphImage
         }
       }
     })
-    serverSaveGeneration += 1
     draftPersistenceEnabled = false
     if (serverSaveTimer) {
       clearTimeout(serverSaveTimer)
       serverSaveTimer = undefined
     }
     removeLocalDraft()
-    successMessage.value = `Revision #${response.data.revisionNumber} created.`
-    await fetchArticle()
-    setRevisionDraftFromDetail(await fetchRevisionDetail(response.data.id))
+    successMessage.value = 'Changes saved.'
+    setArticle(response.data)
+    Object.assign(publicationForm, pendingPublicationSettings)
+    setArticleForm(response.data)
     await nextTick()
     draftDirty = false
     serverDraftDirty = false
@@ -1669,16 +902,19 @@ async function createRevision() {
     serverAutosaveVersion.value = 0
     loadedServerAutosave.value = null
     staleDraft.value = null
+    contentDirty.value = false
     draftPersistenceEnabled = true
+    return true
   } catch (error) {
-    errorMessage.value = normalizeAPIError(error, 'Could not create revision.')
+    errorMessage.value = normalizeAPIError(error, 'Could not save changes.')
     serverDraftDirty = true
     if (serverDraftSaveState.value !== 'conflict') {
       serverDraftSaveState.value = 'saving'
       queueServerAutosave(100)
     }
+    return false
   } finally {
-    creatingRevision.value = false
+    savingArticle.value = false
   }
 }
 
@@ -1696,7 +932,6 @@ async function copyArticle() {
         headers: { 'X-CSRF-Token': csrfToken },
         body: {
           destinationProjectId: copyForm.destinationProjectId,
-          sourceRevisionId: copyForm.sourceRevisionId,
           primaryCategoryId: copyForm.primaryCategoryId,
           slug: copyForm.slug,
           canonicalDecision: copyForm.canonicalDecision,
@@ -1735,23 +970,18 @@ async function loadCopyDestinationCategories(destinationProjectId: string) {
   }
 }
 
-async function loadCopyContext(destinationProjectId: string, sourceRevisionId: string) {
+async function loadCopyContext(destinationProjectId: string) {
   const requestVersion = ++copyContextRequestVersion
   copyDestinationAuthors.value = []
-  copySourceRevision.value = null
   for (const key of Object.keys(copyContributorMappings)) delete copyContributorMappings[key]
   await loadCopyDestinationCategories(destinationProjectId)
-  if (!destinationProjectId || !sourceRevisionId || requestVersion !== copyContextRequestVersion) return
+  if (!destinationProjectId || requestVersion !== copyContextRequestVersion) return
   try {
-    const [authorResponse, revision] = await Promise.all([
-      fetchAllAuthors(destinationProjectId),
-      fetchRevisionDetail(sourceRevisionId)
-    ])
+    const authorResponse = await fetchAllAuthors(destinationProjectId)
     if (requestVersion !== copyContextRequestVersion) return
     copyDestinationAuthors.value = authorResponse
       .filter(author => author.status === 'active')
       .sort((left, right) => left.displayName.localeCompare(right.displayName))
-    copySourceRevision.value = revision
   } catch (error) {
     if (requestVersion === copyContextRequestVersion) errorMessage.value = normalizeAPIError(error, 'Could not load contributor mappings.')
   }
@@ -1775,31 +1005,23 @@ async function fetchAllAuthors(targetProjectID: string) {
   return [...allAuthors.values()]
 }
 
-function sourceContributorsFromRevision(revision: AdminRevisionDetail | null) {
-  if (!revision) return [] as Array<{ authorId: string, name: string, roles: string[] }>
+function sourceContributorsFromArticle(value: AdminArticle | null) {
   const values = new Map<string, { authorId: string, name: string, roles: string[] }>()
-  const authors = Array.isArray(revision.authorSnapshot) ? revision.authorSnapshot : []
-  authors.forEach((value, index) => addSourceContributor(values, value, index === 0 ? 'primary author' : 'co-author'))
-  const contributors = Array.isArray(revision.contributorSnapshot) ? revision.contributorSnapshot : []
-  contributors.forEach((value) => {
-    if (!value || typeof value !== 'object') return
-    const record = value as Record<string, unknown>
-    addSourceContributor(values, record.author, String(record.role || 'contributor').replaceAll('_', ' '))
-  })
-  return [...values.values()]
-}
-
-function addSourceContributor(target: Map<string, { authorId: string, name: string, roles: string[] }>, value: unknown, role: string) {
-  if (!value || typeof value !== 'object') return
-  const author = value as Record<string, unknown>
-  const authorId = typeof author.id === 'string' ? author.id : ''
-  if (!authorId) return
-  const existing = target.get(authorId)
-  if (existing) {
-    if (!existing.roles.includes(role)) existing.roles.push(role)
-    return
+  for (const contributor of value?.contributors || []) {
+    const role = String(contributor.role || 'contributor').replaceAll('_', ' ')
+    const existing = values.get(contributor.authorId)
+    if (existing) {
+      if (!existing.roles.includes(role)) existing.roles.push(role)
+      continue
+    }
+    const author = authors.value.find(candidate => candidate.id === contributor.authorId)
+    values.set(contributor.authorId, {
+      authorId: contributor.authorId,
+      name: author?.displayName || contributor.authorId,
+      roles: [role]
+    })
   }
-  target.set(authorId, { authorId, name: typeof author.displayName === 'string' ? author.displayName : authorId, roles: [role] })
+  return [...values.values()]
 }
 
 async function fetchAllCategories(targetProjectID: string) {
@@ -1822,95 +1044,87 @@ async function fetchAllCategories(targetProjectID: string) {
   return [...allCategories.values()]
 }
 
-async function submitRevision() {
-  await mutateArticle('submit', async (csrfToken) => {
-    await $fetch<APIEnvelope<AdminRevision>>(`/api/v1/projects/${projectID.value}/revisions/${latestRevisionID()}/submit`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {}
-    })
-    successMessage.value = 'Revision submitted.'
-  })
-}
-
-async function requestChanges() {
-  await mutateArticle('request-changes', async (csrfToken) => {
-    await $fetch<APIEnvelope<AdminRevision>>(`/api/v1/projects/${projectID.value}/revisions/${latestRevisionID()}/request-changes`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {}
-    })
-    successMessage.value = 'Changes requested.'
-  })
-}
-
-async function approveRevision() {
-  await mutateArticle('approve', async (csrfToken) => {
-    await $fetch<APIEnvelope<AdminRevision>>(`/api/v1/projects/${projectID.value}/revisions/${latestRevisionID()}/approve`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {}
-    })
-    successMessage.value = 'Revision approved.'
-  })
-}
-
 async function publishArticle() {
+  if (!validatePublicationSettings()) return
+  if (!await saveBeforePublication()) return
   await mutateArticle('publish', async (csrfToken) => {
-    await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/publish`, {
+    const body = publicationBody()
+    const response = await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/publish`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'X-CSRF-Token': csrfToken },
-      body: publicationBody(latestRevisionID())
+      ...(Object.keys(body).length ? { body } : {})
     })
     successMessage.value = 'Article published.'
+    return response.data
   })
 }
 
 async function scheduleArticle() {
+  if (!scheduleDraft.value) return
+  if (!validatePublicationSettings()) return
+  if (!await saveBeforePublication()) return
+  const scheduledAt = new Date(scheduleDraft.value)
+  if (Number.isNaN(scheduledAt.getTime()) || scheduledAt.getTime() <= Date.now()) {
+    errorMessage.value = 'Choose a valid future publication time.'
+    return
+  }
   await mutateArticle('schedule', async (csrfToken) => {
-    await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/schedule`, {
+    const response = await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/schedule`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'X-CSRF-Token': csrfToken },
       body: {
-        ...publicationBody(latestRevisionID()),
-        scheduledForUtc: new Date(scheduleDraft.value).toISOString()
+        ...publicationBody(),
+        scheduledForUtc: scheduledAt.toISOString()
       }
     })
     successMessage.value = 'Article scheduled.'
+    return response.data
   })
+}
+
+function validatePublicationSettings() {
+  if (!publicationForm.slug.trim()) {
+    errorMessage.value = 'Enter a URL slug before publishing.'
+    return false
+  }
+  const canonical = publicationForm.canonicalUrl.trim()
+  if (canonical) {
+    try {
+      const parsed = new URL(canonical)
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('unsupported protocol')
+    } catch {
+      errorMessage.value = 'Enter a valid HTTP or HTTPS canonical URL.'
+      return false
+    }
+  }
+  return true
+}
+
+async function saveBeforePublication() {
+  if (!contentDirty.value) return true
+  if (!canWriteArticles.value || !canSaveArticle.value) {
+    workspaceTab.value = 'write'
+    errorMessage.value = 'Complete the required article fields before publishing.'
+    return false
+  }
+  const saved = await saveArticle()
+  if (!saved) workspaceTab.value = 'write'
+  return saved
 }
 
 async function unpublishArticle() {
-  if (!window.confirm('Unpublish this article?')) return
+  const cancellingSchedule = article.value?.publicationState === 'scheduled'
+  if (!window.confirm(cancellingSchedule ? 'Cancel this scheduled publication?' : 'Unpublish this article?')) return
   await mutateArticle('unpublish', async (csrfToken) => {
-    await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/unpublish`, {
+    const response = await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/unpublish`, {
       method: 'POST',
       credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {}
+      headers: { 'X-CSRF-Token': csrfToken }
     })
-    successMessage.value = 'Article unpublished.'
-  })
-}
-
-async function rollbackArticle() {
-  const selected = revisions.value.find(revision => revision.id === rollbackForm.revisionId)
-  if (!selected || !canRollback.value) return
-  if (!window.confirm(`Rollback this article to revision #${selected.revisionNumber}?`)) return
-  await mutateArticle('rollback', async (csrfToken) => {
-    await $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/rollback`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: { revisionId: rollbackForm.revisionId }
-    })
-    rollbackForm.revisionId = ''
-    successMessage.value = 'Article rolled back.'
+    successMessage.value = cancellingSchedule ? 'Schedule cancelled.' : 'Article unpublished.'
+    return response.data
   })
 }
 
@@ -1918,7 +1132,7 @@ async function archiveArticle() {
   if (!article.value || !canArchiveArticle.value) return
   const message = article.value.publicationState === 'published'
     ? `Archive "${article.value.title}"? This will unpublish it from the content API and hide it from the admin article list.`
-    : `Archive "${article.value.title}"? This will hide it from the admin article list while retaining its revision history.`
+    : `Archive "${article.value.title}"? This will hide it from the admin article list while keeping its saved content.`
   if (!window.confirm(message)) return
   actionPending.value = 'archive'
   clearMessages()
@@ -1936,17 +1150,12 @@ async function archiveArticle() {
   }
 }
 
-async function mutateArticle(action: string, operation: (csrfToken: string) => Promise<void>) {
-  if (!article.value?.latestRevision) {
-    errorMessage.value = 'This article has no revision.'
-    return
-  }
+async function mutateArticle(action: string, operation: (csrfToken: string) => Promise<AdminArticle>) {
   actionPending.value = action
   clearMessages()
   try {
     const csrfToken = await getCSRFToken()
-    await operation(csrfToken)
-    await fetchArticle()
+    setArticle(await operation(csrfToken))
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, `Could not ${labelize(action)} article.`)
   } finally {
@@ -1954,306 +1163,47 @@ async function mutateArticle(action: string, operation: (csrfToken: string) => P
   }
 }
 
-async function createAssignment() {
-  if (!canCreateAssignment.value) return
-  creatingAssignment.value = true
-  clearMessages()
-  try {
-    const csrfToken = await getCSRFToken()
-    const response = await $fetch<APIEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/assignments`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {
-        revisionId: assignmentForm.revisionId || undefined,
-        assignedTo: assignmentForm.assignedTo,
-        assignmentType: assignmentForm.assignmentType,
-        dueAt: assignmentDueAtForAPI()
-      }
-    })
-    assignments.value = [response.data, ...assignments.value]
-    openAssignmentCount.value += 1
-    assignmentForm.assignedTo = ''
-    successMessage.value = 'Assignment created.'
-  } catch (error) {
-    errorMessage.value = normalizeAPIError(error, 'Could not create assignment.')
-  } finally {
-    creatingAssignment.value = false
-  }
-}
-
-async function setAssignmentStatus(assignment: ReviewAssignment, action: 'complete' | 'cancel') {
-  if (action === 'complete' ? !canCompleteAssignment(assignment) : !canManageAssignments.value) return
-  assignmentPending[assignment.id] = action
-  clearMessages()
-  try {
-    const csrfToken = await getCSRFToken()
-    const response = await $fetch<APIEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID.value}/assignments/${assignment.id}/${action}`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {}
-    })
-    assignments.value = assignments.value.map(candidate => candidate.id === response.data.id ? response.data : candidate)
-    if (assignment.status === 'open' && response.data.status !== 'open') {
-      openAssignmentCount.value = Math.max(0, openAssignmentCount.value - 1)
-    }
-    successMessage.value = action === 'complete' ? 'Assignment completed.' : 'Assignment cancelled.'
-  } catch (error) {
-    errorMessage.value = normalizeAPIError(error, action === 'complete' ? 'Could not complete assignment.' : 'Could not cancel assignment.')
-  } finally {
-    delete assignmentPending[assignment.id]
-  }
-}
-
-async function createComment() {
-  if (!canComment.value || !commentForm.body.trim()) return
-  creatingComment.value = true
-  clearMessages()
-  try {
-    const csrfToken = await getCSRFToken()
-    const response = await $fetch<APIEnvelope<ReviewComment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/comments`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {
-        revisionId: commentForm.revisionId,
-        blockId: commentForm.blockId,
-        body: commentForm.body
-      }
-    })
-    comments.value = [response.data, ...comments.value]
-    commentForm.blockId = ''
-    commentForm.body = ''
-    successMessage.value = 'Comment added.'
-  } catch (error) {
-    errorMessage.value = normalizeAPIError(error, 'Could not add comment.')
-  } finally {
-    creatingComment.value = false
-  }
-}
-
-async function setCommentStatus(comment: ReviewComment, transition: 'resolve' | 'reopen') {
-  if (!canComment.value) return
-  commentPending[comment.id] = transition
-  clearMessages()
-  try {
-    const csrfToken = await getCSRFToken()
-    const response = await $fetch<APIEnvelope<ReviewComment>>(`/api/v1/projects/${projectID.value}/comments/${comment.id}/${transition}`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'X-CSRF-Token': csrfToken },
-      body: {}
-    })
-    upsertComment(response.data)
-    successMessage.value = transition === 'resolve' ? 'Comment resolved.' : 'Comment reopened.'
-  } catch (error) {
-    errorMessage.value = normalizeAPIError(error, transition === 'resolve' ? 'Could not resolve comment.' : 'Could not reopen comment.')
-  } finally {
-    delete commentPending[comment.id]
-  }
-}
-
-async function loadMoreAssignments() {
-  if (!nextAssignmentCursor.value || loadingMoreAssignments.value) return
-  loadingMoreAssignments.value = true
-  clearMessages()
-  try {
-    const response = await $fetch<APIListEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/assignments`, {
-      credentials: 'include',
-      query: {
-        cursor: nextAssignmentCursor.value,
-        limit: 50
-      }
-    })
-    const merged = new Map(assignments.value.map(assignment => [assignment.id, assignment]))
-    for (const assignment of apiListData(response)) merged.set(assignment.id, assignment)
-    assignments.value = [...merged.values()]
-    nextAssignmentCursor.value = response.meta?.nextCursor || ''
-    if (response.meta?.openCount !== undefined) openAssignmentCount.value = response.meta.openCount
-  } catch (error) {
-    errorMessage.value = normalizeAPIError(error, 'Could not load more assignments.')
-  } finally {
-    loadingMoreAssignments.value = false
-  }
-}
-
-async function loadMoreComments() {
-  if (!nextCommentCursor.value || loadingMoreComments.value) return
-  loadingMoreComments.value = true
-  clearMessages()
-  try {
-    const response = await $fetch<APIListEnvelope<ReviewComment>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/comments`, {
-      credentials: 'include',
-      query: {
-        cursor: nextCommentCursor.value,
-        limit: 50
-      }
-    })
-    const merged = new Map(comments.value.map(comment => [comment.id, comment]))
-    for (const comment of apiListData(response)) merged.set(comment.id, comment)
-    comments.value = [...merged.values()]
-    nextCommentCursor.value = response.meta?.nextCursor || ''
-  } catch (error) {
-    errorMessage.value = normalizeAPIError(error, 'Could not load more comments.')
-  } finally {
-    loadingMoreComments.value = false
-  }
-}
-
-async function loadMoreRevisions() {
-  if (!nextRevisionCursor.value || loadingMoreRevisions.value) return
-  loadingMoreRevisions.value = true
-  clearMessages()
-  try {
-    const response = await $fetch<APIListEnvelope<AdminRevisionSummary>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/revisions`, {
-      credentials: 'include',
-      query: {
-        cursor: nextRevisionCursor.value,
-        limit: 50
-      }
-    })
-    const merged = new Map(revisions.value.map(revision => [revision.id, revision]))
-    for (const revision of apiListData(response)) merged.set(revision.id, revision)
-    setRevisions([...merged.values()].sort((left, right) => right.revisionNumber - left.revisionNumber), response.meta?.nextCursor || '')
-  } catch (error) {
-    errorMessage.value = normalizeAPIError(error, 'Could not load older revisions.')
-  } finally {
-    loadingMoreRevisions.value = false
-  }
-}
-
-function selectRevisionForComparison(side: 'before' | 'after', revisionId: string) {
-  if (comparisonPending.value) return
-  if (side === 'before') {
-    comparisonForm.beforeRevisionId = revisionId
-  } else {
-    comparisonForm.afterRevisionId = revisionId
-  }
-}
-
-async function compareRevisions() {
-  if (!canCompareRevisions.value) return
-  const requestedBeforeID = comparisonForm.beforeRevisionId
-  const requestedAfterID = comparisonForm.afterRevisionId
-  const requestVersion = ++comparisonRequestVersion
-  comparisonPending.value = true
-  comparisonBefore.value = null
-  comparisonAfter.value = null
-  clearMessages()
-  try {
-    const [beforeResponse, afterResponse] = await Promise.all([
-      fetchRevisionDetail(requestedBeforeID),
-      fetchRevisionDetail(requestedAfterID)
-    ])
-    if (requestVersion !== comparisonRequestVersion) return
-    if (beforeResponse.revisionNumber <= afterResponse.revisionNumber) {
-      comparisonBefore.value = beforeResponse
-      comparisonAfter.value = afterResponse
-    } else {
-      comparisonBefore.value = afterResponse
-      comparisonAfter.value = beforeResponse
-    }
-  } catch (error) {
-    if (requestVersion !== comparisonRequestVersion) return
-    errorMessage.value = normalizeAPIError(error, 'Could not compare revisions.')
-  } finally {
-    if (requestVersion === comparisonRequestVersion) {
-      comparisonPending.value = false
-    }
-  }
-}
-
-async function fetchRevisionDetail(revisionId: string) {
-  const response = await $fetch<APIEnvelope<AdminRevisionDetail>>(
-    `/api/v1/projects/${projectID.value}/articles/${articleID.value}/revisions/${revisionId}`,
-    { credentials: 'include' }
-  )
-  return response.data
-}
-
-async function fetchArticle() {
-  const [articleResponse, revisionResponse] = await Promise.all([
-    $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}`, {
-      credentials: 'include'
-    }),
-    $fetch<APIListEnvelope<AdminRevisionSummary>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}/revisions`, {
-      credentials: 'include',
-      query: { limit: 50 }
-    })
-  ])
-  setArticle(articleResponse.data)
-  setRevisions(apiListData(revisionResponse), revisionResponse.meta?.nextCursor || '')
-}
-
 function setArticle(value: AdminArticle) {
   article.value = value
   publicationForm.slug = value.slug
   publicationForm.canonicalUrl = value.canonicalUrl || ''
-  revisionForm.title = revisionForm.title || value.title
-  copyForm.sourceRevisionId = copyForm.sourceRevisionId || value.latestRevision?.id || ''
   copyForm.slug = copyForm.slug || `${value.slug}-copy`
-  assignmentForm.revisionId = value.latestRevision?.id || ''
-  commentForm.revisionId = value.latestRevision?.id || ''
   if (!scheduleDraft.value) {
     const scheduledAt = value.scheduledForUtc ? parseBackendUTC(value.scheduledForUtc) : new Date(Date.now() + 15 * 60 * 1000)
     scheduleDraft.value = toLocalInputValue(scheduledAt)
   }
 }
 
-function setRevisions(values: AdminRevisionSummary[], nextCursor: string) {
-  revisions.value = values
-  nextRevisionCursor.value = nextCursor
-
-  const latest = values[0]
-  if (!latest) {
-    comparisonForm.beforeRevisionId = ''
-    comparisonForm.afterRevisionId = ''
-    return
-  }
-  if (!values.some(revision => revision.id === comparisonForm.afterRevisionId)) {
-    comparisonForm.afterRevisionId = latest.id
-  }
-  if (!values.some(revision => revision.id === copyForm.sourceRevisionId)) {
-    copyForm.sourceRevisionId = latest.id
-  }
-  if (!values.some(revision => revision.id === comparisonForm.beforeRevisionId)) {
-    comparisonForm.beforeRevisionId = latest.baseRevisionId || values[1]?.id || ''
-  }
-  const rollbackRevision = values.find(revision => revision.id === rollbackForm.revisionId)
-  if (!rollbackRevision || isCurrentPublication(rollbackRevision)) {
-    rollbackForm.revisionId = ''
-  }
-}
-
-function setRevisionDraftFromDetail(revision: AdminRevisionDetail) {
-  const seo = seoFieldsFromSnapshot(revision.seoSnapshot)
-  revisionForm.title = revision.title
-  revisionForm.primaryCategoryId = primaryCategoryIDFromSnapshot(revision.taxonomySnapshot)
-  revisionForm.contributors = contributorInputsFromSnapshots(revision.authorSnapshot, revision.contributorSnapshot)
+function setArticleForm(value: AdminArticle) {
+  const seo = value.seo || {}
+  articleForm.title = value.title
+  articleForm.primaryCategoryId = value.primaryCategoryId || ''
+  articleForm.contributors = (value.contributors || []).map(contributor => ({ ...contributor }))
   attributionEdited.value = false
-  revisionForm.deck = revision.deck || ''
-  revisionForm.excerpt = revision.excerpt || ''
-  revisionForm.shortAnswer = revision.shortAnswer || ''
-  revisionForm.seoTitle = seo.title
-  revisionForm.seoDescription = seo.description
-  revisionForm.robots = seo.robots
-  revisionForm.openGraphTitle = seo.openGraphTitle
-  revisionForm.openGraphDescription = seo.openGraphDescription
-  revisionForm.openGraphImage = seo.openGraphImage
-  revisionForm.html = revision.sanitizedHtml || `<p>${escapeHTML(revision.title)}</p>`
-  revisionBodyDocument.value = isStructuredBodyDocument(revision.bodyDocument)
-    ? revision.bodyDocument
-    : articleBodyDocumentFromHTML(revisionForm.html, revisionForm.title)
-  baseDraftRevisionID.value = revision.id
+  articleForm.deck = value.deck || ''
+  articleForm.excerpt = value.excerpt || ''
+  articleForm.shortAnswer = value.shortAnswer || ''
+  articleForm.seoTitle = seo.title || ''
+  articleForm.seoDescription = seo.description || ''
+  articleForm.robots = seo.robots || 'index,follow'
+  articleForm.openGraphTitle = seo.openGraphTitle || ''
+  articleForm.openGraphDescription = seo.openGraphDescription || ''
+  articleForm.openGraphImage = seo.openGraphImage || ''
+  articleForm.html = value.html || `<p>${escapeHTML(value.title)}</p>`
+  articleBodyDocument.value = isStructuredBodyDocument(value.bodyDocument)
+    ? value.bodyDocument
+    : articleBodyDocumentFromHTML(articleForm.html, articleForm.title)
+  baseContentVersionID.value = value.latestRevision?.id || ''
+  contentDirty.value = false
 }
 
-function handleLatestRevisionDetail(revision: AdminRevisionDetail) {
-  if (!draftPersistenceEnabled || !baseDraftRevisionID.value) {
-    setRevisionDraftFromDetail(revision)
+function handleLoadedArticle(value: AdminArticle) {
+  const contentVersionID = value.latestRevision?.id || ''
+  if (!draftPersistenceEnabled || !baseContentVersionID.value) {
+    setArticleForm(value)
     return
   }
-  if (revision.id === baseDraftRevisionID.value) return
+  if (contentVersionID === baseContentVersionID.value) return
 
   if (draftDirty) persistLocalDraft()
   const localDraft = readLocalDraft()
@@ -2262,7 +1212,7 @@ function handleLatestRevisionDetail(revision: AdminRevisionDetail) {
     serverSaveTimer = undefined
   }
   draftPersistenceEnabled = false
-  setRevisionDraftFromDetail(revision)
+  setArticleForm(value)
   draftDirty = false
   serverDraftDirty = false
   draftSaveState.value = 'idle'
@@ -2270,10 +1220,10 @@ function handleLatestRevisionDetail(revision: AdminRevisionDetail) {
   serverDraftSaveState.value = 'idle'
   serverDraftSavedAt.value = ''
   const recoveries: ArticleDraftRecovery[] = []
-  if (localDraft && localDraft.baseRevisionId !== revision.id) {
+  if (localDraft && localDraft.baseRevisionId !== contentVersionID) {
     recoveries.push({ snapshot: localDraft, source: 'browser', reason: 'stale-base' })
   }
-  if (loadedServerAutosave.value && loadedServerAutosave.value.baseRevisionId !== revision.id) {
+  if (loadedServerAutosave.value && loadedServerAutosave.value.baseRevisionId !== contentVersionID) {
     recoveries.push(articleAutosaveRecovery(loadedServerAutosave.value))
   }
   staleDraft.value = newestDraftRecovery(recoveries)
@@ -2282,73 +1232,12 @@ function handleLatestRevisionDetail(revision: AdminRevisionDetail) {
   })
 }
 
-function seoFieldsFromSnapshot(snapshot: unknown) {
-  const fallback = {
-    title: '',
-    description: '',
-    robots: 'index,follow',
-    openGraphTitle: '',
-    openGraphDescription: '',
-    openGraphImage: ''
-  }
-  if (!snapshot || typeof snapshot !== 'object') return fallback
-  const seo = snapshot as Record<string, unknown>
-  const openGraph = seo.openGraph && typeof seo.openGraph === 'object'
-    ? seo.openGraph as Record<string, unknown>
-    : {}
-  return {
-    title: typeof seo.title === 'string' ? seo.title : '',
-    description: typeof seo.description === 'string' ? seo.description : '',
-    robots: typeof seo.robots === 'string' ? seo.robots : 'index,follow',
-    openGraphTitle: typeof openGraph.title === 'string' ? openGraph.title : '',
-    openGraphDescription: typeof openGraph.description === 'string' ? openGraph.description : '',
-    openGraphImage: typeof openGraph.image === 'string' ? openGraph.image : ''
-  }
-}
-
-function primaryCategoryIDFromSnapshot(snapshot: unknown) {
-  if (!snapshot || typeof snapshot !== 'object') return ''
-  const taxonomy = snapshot as { primaryCategory?: { id?: unknown } }
-  return typeof taxonomy.primaryCategory?.id === 'string' ? taxonomy.primaryCategory.id : ''
-}
-
-function contributorInputsFromSnapshots(authorSnapshot: unknown, contributorSnapshot: unknown): RevisionContributorInput[] {
-  const authorInputs = Array.isArray(authorSnapshot)
-    ? authorSnapshot.flatMap((value, index): RevisionContributorInput[] => {
-        if (!value || typeof value !== 'object') return []
-        const authorID = (value as Record<string, unknown>).id
-        if (typeof authorID !== 'string' || !authorID) return []
-        return [{
-          authorId: authorID,
-          role: index === 0 ? 'primary_author' : 'co_author',
-          position: index === 0 ? 0 : index - 1
-        }]
-      })
-    : []
-  const creditedInputs = Array.isArray(contributorSnapshot)
-    ? contributorSnapshot.flatMap((value): RevisionContributorInput[] => {
-        if (!value || typeof value !== 'object') return []
-        const snapshot = value as Record<string, unknown>
-        const author = snapshot.author && typeof snapshot.author === 'object'
-          ? snapshot.author as Record<string, unknown>
-          : {}
-        if (typeof author.id !== 'string' || !isContributorRole(snapshot.role)) return []
-        return [{
-          authorId: author.id,
-          role: snapshot.role,
-          position: typeof snapshot.position === 'number' ? snapshot.position : 0
-        }]
-      })
-    : []
-  return [...authorInputs, ...creditedInputs]
-}
-
-function isContributorRole(value: unknown): value is RevisionContributorInput['role'] {
+function isContributorRole(value: unknown): value is ArticleContributorInput['role'] {
   return ['primary_author', 'co_author', 'editor', 'expert_reviewer', 'photographer', 'other'].includes(String(value))
 }
 
-function updateRevisionContributors(value: RevisionContributorInput[]) {
-  revisionForm.contributors = value
+function updateArticleContributors(value: ArticleContributorInput[]) {
+  articleForm.contributors = value
   attributionEdited.value = true
 }
 
@@ -2356,15 +1245,16 @@ function categoryPathLabel(category: TaxonomyTerm) {
   return [...(category.ancestors || []).map(ancestor => ancestor.name), category.name].join(' / ')
 }
 
-function publicationBody(revisionId: string) {
-  return {
-    revisionId,
-    slug: publicationForm.slug,
-    canonicalUrl: publicationForm.canonicalUrl || undefined
-  }
+function publicationBody() {
+  const body: Record<string, string> = {}
+  const slug = publicationForm.slug.trim()
+  const canonicalUrl = publicationForm.canonicalUrl.trim()
+  if (slug && slug !== article.value?.slug) body.slug = slug
+  if (canonicalUrl !== (article.value?.canonicalUrl || '')) body.canonicalUrl = canonicalUrl
+  return body
 }
 
-function latestRevisionID() {
+function latestContentVersionID() {
   return article.value?.latestRevision?.id || ''
 }
 
@@ -2374,8 +1264,8 @@ function localDraftKey() {
 
 function draftFieldsSnapshot(): ArticleDraftFields {
   return {
-    ...revisionForm,
-    contributors: revisionForm.contributors.map(contributor => ({ ...contributor })),
+    ...articleForm,
+    contributors: articleForm.contributors.map(contributor => ({ ...contributor })),
     attributionEdited: attributionEdited.value,
     bodyDocument: draftBodyDocument()
   }
@@ -2386,22 +1276,22 @@ function draftSnapshot(savedAt = new Date().toISOString()): ArticleDraftSnapshot
     schemaVersion: 3,
     projectId: projectID.value,
     articleId: articleID.value,
-    baseRevisionId: baseDraftRevisionID.value || latestRevisionID(),
+    baseRevisionId: baseContentVersionID.value || latestContentVersionID(),
     savedAt,
     fields: draftFieldsSnapshot()
   }
 }
 
 function effectiveDraftHTML() {
-  return hasMeaningfulStructuredHTML(revisionForm.html)
-    ? revisionForm.html.trim()
-    : `<p>${escapeHTML(revisionForm.title)}</p>`
+  return hasMeaningfulStructuredHTML(articleForm.html)
+    ? articleForm.html.trim()
+    : `<p>${escapeHTML(articleForm.title)}</p>`
 }
 
 function draftBodyDocument() {
-  return hasMeaningfulStructuredHTML(revisionForm.html) && isStructuredBodyDocument(revisionBodyDocument.value)
-    ? revisionBodyDocument.value
-    : articleBodyDocumentFromHTML(effectiveDraftHTML(), revisionForm.title)
+  return hasMeaningfulStructuredHTML(articleForm.html) && isStructuredBodyDocument(articleBodyDocument.value)
+    ? articleBodyDocument.value
+    : articleBodyDocumentFromHTML(effectiveDraftHTML(), articleForm.title)
 }
 
 function persistLocalDraft() {
@@ -2417,7 +1307,7 @@ function persistLocalDraft() {
     draftSaveState.value = 'saved'
   } else {
     draftSaveState.value = 'idle'
-    errorMessage.value = 'This browser could not save the revision draft locally.'
+    errorMessage.value = 'This browser could not save the draft locally.'
   }
 }
 
@@ -2439,7 +1329,7 @@ async function persistServerAutosave() {
     || !serverDraftDirty
     || serverDraftSaveState.value === 'conflict'
   ) return
-  const baseRevisionId = baseDraftRevisionID.value || latestRevisionID()
+  const baseRevisionId = baseContentVersionID.value || latestContentVersionID()
   if (!baseRevisionId) return
   const saveGeneration = serverSaveGeneration
   if (serverSaveTimer) {
@@ -2500,8 +1390,8 @@ async function restoreWorkingDraft() {
     recoveries.push(articleAutosaveRecovery(loadedServerAutosave.value))
   }
 
-  const currentRecoveries = recoveries.filter(recovery => recovery.snapshot.baseRevisionId === latestRevisionID())
-  const staleRecoveries = recoveries.filter(recovery => recovery.snapshot.baseRevisionId !== latestRevisionID())
+  const currentRecoveries = recoveries.filter(recovery => recovery.snapshot.baseRevisionId === latestContentVersionID())
+  const staleRecoveries = recoveries.filter(recovery => recovery.snapshot.baseRevisionId !== latestContentVersionID())
   staleDraft.value = newestDraftRecovery(staleRecoveries)
   const currentRecovery = newestDraftRecovery(currentRecoveries)
   if (!currentRecovery) {
@@ -2553,13 +1443,13 @@ async function discardLocalDraft() {
     if (
       recovery.source === 'server'
       && browserRecovery
-      && browserRecovery.baseRevisionId !== latestRevisionID()
+      && browserRecovery.baseRevisionId !== latestContentVersionID()
     ) {
       staleDraft.value = { snapshot: browserRecovery, source: 'browser', reason: 'stale-base' }
     } else if (
       recovery.source === 'browser'
       && loadedServerAutosave.value
-      && loadedServerAutosave.value.baseRevisionId !== latestRevisionID()
+      && loadedServerAutosave.value.baseRevisionId !== latestContentVersionID()
     ) {
       staleDraft.value = articleAutosaveRecovery(loadedServerAutosave.value)
     } else {
@@ -2568,7 +1458,7 @@ async function discardLocalDraft() {
     if (
       recovery.source === 'browser'
       && !staleDraft.value
-      && loadedServerAutosave.value?.baseRevisionId === latestRevisionID()
+      && loadedServerAutosave.value?.baseRevisionId === latestContentVersionID()
     ) {
       const currentServerSnapshot = articleAutosaveSnapshot(loadedServerAutosave.value)
       if (writeLocalDraft(currentServerSnapshot)) {
@@ -2585,10 +1475,11 @@ async function applyDraftRecovery(recovery: ArticleDraftRecovery) {
   draftPersistenceEnabled = false
   const snapshot = recovery.snapshot
   const { attributionEdited: savedAttributionEdited, bodyDocument, ...fields } = snapshot.fields
-  Object.assign(revisionForm, fields)
+  Object.assign(articleForm, fields)
   attributionEdited.value = savedAttributionEdited
-  revisionBodyDocument.value = bodyDocument
+  articleBodyDocument.value = bodyDocument
   draftSavedAt.value = snapshot.savedAt
+  contentDirty.value = true
   await nextTick()
   draftPersistenceEnabled = true
 }
@@ -2658,7 +1549,7 @@ async function reloadServerDraft() {
     serverAutosaveVersion.value = autosave.version
     serverDraftDirty = false
     const recovery = articleAutosaveRecovery(autosave)
-    if (autosave.stale || recovery.snapshot.baseRevisionId !== latestRevisionID()) {
+    if (autosave.stale || recovery.snapshot.baseRevisionId !== latestContentVersionID()) {
       staleDraft.value = recovery
       serverDraftSaveState.value = 'idle'
       return
@@ -2732,7 +1623,7 @@ function readLocalDraft(): ArticleDraftSnapshot | null {
         savedAt: value.savedAt,
         fields: {
           ...value.fields,
-          contributors: revisionForm.contributors.map(contributor => ({ ...contributor })),
+          contributors: articleForm.contributors.map(contributor => ({ ...contributor })),
           attributionEdited: false,
           bodyDocument: articleBodyDocumentFromHTML(value.fields.html, value.fields.title)
         }
@@ -2813,7 +1704,7 @@ function hasMeaningfulStructuredHTML(value: string) {
   return Boolean(htmlToPlainText(value) || /<(?:img|hr|table)\b/i.test(value))
 }
 
-function isContributorDraftValue(value: unknown): value is RevisionContributorInput[] {
+function isContributorDraftValue(value: unknown): value is ArticleContributorInput[] {
   return Array.isArray(value) && value.every((contributor) => {
     if (!contributor || typeof contributor !== 'object') return false
     const candidate = contributor as Record<string, unknown>
@@ -2825,234 +1716,6 @@ function isContributorDraftValue(value: unknown): value is RevisionContributorIn
 
 function removeLocalDraft() {
   if (import.meta.client) localStorage.removeItem(localDraftKey())
-}
-
-function isCurrentPublication(revision: AdminRevisionSummary) {
-  return revision.published
-}
-
-function assignmentDueAtForAPI() {
-  if (!assignmentForm.dueAt) return undefined
-  const date = new Date(assignmentForm.dueAt)
-  if (Number.isNaN(date.getTime())) return undefined
-  return date.toISOString()
-}
-
-function assignmentTypeAllowedForRole(assignmentType: string, role: string) {
-  if (assignmentType === 'editor') {
-    return ['project_owner', 'project_admin', 'editor'].includes(role)
-  }
-  if (assignmentType === 'reviewer' || assignmentType === 'sme') {
-    return ['project_owner', 'project_admin', 'editor', 'reviewer'].includes(role)
-  }
-  return false
-}
-
-function canCompleteAssignment(assignment: ReviewAssignment) {
-  return projectIsActive.value && (canManageAssignments.value || assignment.assignedTo === currentUser.value?.id)
-}
-
-function invalidateComparison() {
-  comparisonRequestVersion += 1
-  comparisonPending.value = false
-  comparisonBefore.value = null
-  comparisonAfter.value = null
-}
-
-function comparisonField(key: string, label: string, before: string, after: string, monospace = false, diffable = false): ComparisonField {
-  const changed = before !== after
-  return {
-    key,
-    label,
-    before,
-    after,
-    changed,
-    monospace,
-    diffLines: changed && diffable ? buildLineDiff(before, after) : undefined
-  }
-}
-
-function prettyJSON(value: unknown) {
-  try {
-    return JSON.stringify(value ?? {}, null, 2)
-  } catch {
-    return String(value ?? '')
-  }
-}
-
-function buildLineDiff(before: string, after: string): ComparisonDiffLine[] {
-  const beforeLines = normalizedDiffLines(before)
-  const afterLines = normalizedDiffLines(after)
-  let sharedPrefixLength = 0
-  while (
-    sharedPrefixLength < beforeLines.length
-    && sharedPrefixLength < afterLines.length
-    && beforeLines[sharedPrefixLength] === afterLines[sharedPrefixLength]
-  ) {
-    sharedPrefixLength += 1
-  }
-
-  let sharedSuffixLength = 0
-  while (
-    sharedSuffixLength < beforeLines.length - sharedPrefixLength
-    && sharedSuffixLength < afterLines.length - sharedPrefixLength
-    && beforeLines[beforeLines.length - sharedSuffixLength - 1] === afterLines[afterLines.length - sharedSuffixLength - 1]
-  ) {
-    sharedSuffixLength += 1
-  }
-  if (
-    sharedPrefixLength === beforeLines.length
-    && sharedPrefixLength === afterLines.length
-    && before !== after
-  ) {
-    return [
-      { kind: 'removed', text: 'The earlier value uses different line-ending characters.' },
-      { kind: 'added', text: 'The later value uses different line-ending characters.' }
-    ]
-  }
-
-  const beforeMiddle = beforeLines.slice(sharedPrefixLength, beforeLines.length - sharedSuffixLength)
-  const afterMiddle = afterLines.slice(sharedPrefixLength, afterLines.length - sharedSuffixLength)
-  const linesPerBlock = Math.max(1, Math.ceil(Math.max(beforeMiddle.length, afterMiddle.length) / 240))
-  const beforeBlocks = groupDiffLines(beforeMiddle, linesPerBlock)
-  const afterBlocks = groupDiffLines(afterMiddle, linesPerBlock)
-  const table = Array.from(
-    { length: beforeBlocks.length + 1 },
-    () => new Uint16Array(afterBlocks.length + 1)
-  )
-
-  for (let beforeIndex = beforeBlocks.length - 1; beforeIndex >= 0; beforeIndex -= 1) {
-    for (let afterIndex = afterBlocks.length - 1; afterIndex >= 0; afterIndex -= 1) {
-      table[beforeIndex]![afterIndex] = beforeBlocks[beforeIndex] === afterBlocks[afterIndex]
-        ? (table[beforeIndex + 1]![afterIndex + 1] || 0) + 1
-        : Math.max(table[beforeIndex + 1]![afterIndex] || 0, table[beforeIndex]![afterIndex + 1] || 0)
-    }
-  }
-
-  const diff: ComparisonDiffLine[] = []
-  let beforeIndex = 0
-  let afterIndex = 0
-  while (beforeIndex < beforeBlocks.length && afterIndex < afterBlocks.length) {
-    if (beforeBlocks[beforeIndex] === afterBlocks[afterIndex]) {
-      diff.push({ kind: 'equal', text: beforeBlocks[beforeIndex] || '' })
-      beforeIndex += 1
-      afterIndex += 1
-    } else if ((table[beforeIndex + 1]![afterIndex] || 0) >= (table[beforeIndex]![afterIndex + 1] || 0)) {
-      diff.push({ kind: 'removed', text: beforeBlocks[beforeIndex] || '' })
-      beforeIndex += 1
-    } else {
-      diff.push({ kind: 'added', text: afterBlocks[afterIndex] || '' })
-      afterIndex += 1
-    }
-  }
-  while (beforeIndex < beforeBlocks.length) {
-    diff.push({ kind: 'removed', text: beforeBlocks[beforeIndex] || '' })
-    beforeIndex += 1
-  }
-  while (afterIndex < afterBlocks.length) {
-    diff.push({ kind: 'added', text: afterBlocks[afterIndex] || '' })
-    afterIndex += 1
-  }
-
-  const result: ComparisonDiffLine[] = []
-  const contextLines = 2
-  const visiblePrefixStart = Math.max(0, sharedPrefixLength - contextLines)
-  if (visiblePrefixStart > 0) {
-    result.push({ kind: 'omitted', text: `${visiblePrefixStart} unchanged line${visiblePrefixStart === 1 ? '' : 's'} omitted` })
-  }
-  for (let index = visiblePrefixStart; index < sharedPrefixLength; index += 1) {
-    result.push({ kind: 'equal', text: beforeLines[index] || '' })
-  }
-  result.push(...compactDiffContext(diff))
-
-  const visibleSuffixLength = Math.min(contextLines, sharedSuffixLength)
-  const suffixStart = beforeLines.length - sharedSuffixLength
-  for (let index = 0; index < visibleSuffixLength; index += 1) {
-    result.push({ kind: 'equal', text: beforeLines[suffixStart + index] || '' })
-  }
-  const omittedSuffixLength = sharedSuffixLength - visibleSuffixLength
-  if (omittedSuffixLength > 0) {
-    result.push({ kind: 'omitted', text: `${omittedSuffixLength} unchanged line${omittedSuffixLength === 1 ? '' : 's'} omitted` })
-  }
-  return result
-}
-
-function normalizedDiffLines(value: string) {
-  return value.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n')
-}
-
-function groupDiffLines(lines: string[], linesPerBlock: number) {
-  if (linesPerBlock === 1) return lines
-  const blocks: string[] = []
-  for (let index = 0; index < lines.length; index += linesPerBlock) {
-    blocks.push(lines.slice(index, index + linesPerBlock).join('\n'))
-  }
-  return blocks
-}
-
-function compactDiffContext(lines: ComparisonDiffLine[]) {
-  const context = 2
-  const keep = new Set<number>()
-  lines.forEach((line, index) => {
-    if (line.kind === 'equal') return
-    for (let candidate = Math.max(0, index - context); candidate <= Math.min(lines.length - 1, index + context); candidate += 1) {
-      keep.add(candidate)
-    }
-  })
-
-  const compacted: ComparisonDiffLine[] = []
-  let omitted = 0
-  lines.forEach((line, index) => {
-    if (!keep.has(index)) {
-      omitted += 1
-      return
-    }
-    if (omitted > 0) {
-      compacted.push({ kind: 'omitted', text: `${omitted} unchanged diff section${omitted === 1 ? '' : 's'} omitted` })
-      omitted = 0
-    }
-    compacted.push(line)
-  })
-  if (omitted > 0) {
-    compacted.push({ kind: 'omitted', text: `${omitted} unchanged diff section${omitted === 1 ? '' : 's'} omitted` })
-  }
-  return compacted
-}
-
-function diffLineClass(kind: ComparisonDiffLine['kind']) {
-  switch (kind) {
-    case 'added':
-      return 'bg-[#edf9f1] text-[#165a4a] dark:bg-[#13261e] dark:text-[#aee4d0]'
-    case 'removed':
-      return 'bg-[#fff4f2] text-[#9b2d23] dark:bg-[#2a1c1a] dark:text-[#ffc4bd]'
-    case 'omitted':
-      return 'bg-[#f2f5f3] italic text-[#667169] dark:bg-[#202522] dark:text-[#aeb8b0]'
-    default:
-      return 'text-[#4f5b54] dark:text-[#c5cec8]'
-  }
-}
-
-function diffLineMarker(kind: ComparisonDiffLine['kind']) {
-  if (kind === 'added') return '+'
-  if (kind === 'removed') return '−'
-  if (kind === 'omitted') return '⋯'
-  return ' '
-}
-
-function diffLineLabel(kind: ComparisonDiffLine['kind']) {
-  if (kind === 'added') return 'Added'
-  if (kind === 'removed') return 'Removed'
-  if (kind === 'omitted') return 'Unchanged context omitted'
-  return 'Unchanged'
-}
-
-function upsertComment(comment: ReviewComment) {
-  const index = comments.value.findIndex(item => item.id === comment.id)
-  if (index >= 0) {
-    comments.value.splice(index, 1, comment)
-  } else {
-    comments.value = [comment, ...comments.value]
-  }
 }
 
 async function logout() {
@@ -3098,19 +1761,6 @@ function formatDate(value?: string) {
   }).format(date)
 }
 
-function editorialClass(state: string) {
-  switch (state) {
-    case 'approved':
-      return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
-    case 'in_review':
-      return 'bg-[#e8f0ff] text-[#245b99] dark:bg-[#152944] dark:text-[#b8d5ff]'
-    case 'changes_requested':
-      return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
-    default:
-      return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'
-  }
-}
-
 function publicationClass(state: string) {
   switch (state) {
     case 'published':
@@ -3119,39 +1769,6 @@ function publicationClass(state: string) {
       return 'bg-[#e8f0ff] text-[#245b99] dark:bg-[#152944] dark:text-[#b8d5ff]'
     default:
       return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'
-  }
-}
-
-function commentStatusClass(status: string) {
-  switch (status) {
-    case 'resolved':
-      return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
-    case 'reopened':
-      return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
-    default:
-      return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'
-  }
-}
-
-function assignmentStatusClass(status: string) {
-  switch (status) {
-    case 'completed':
-      return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
-    case 'cancelled':
-      return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
-    default:
-      return 'bg-[#eef2ef] text-[#58625c] dark:bg-[#2a302d] dark:text-[#bec7c1]'
-  }
-}
-
-function assignmentTypeClass(type: string) {
-  switch (type) {
-    case 'editor':
-      return 'bg-[#e8f0ff] text-[#245b99] dark:bg-[#152944] dark:text-[#b8d5ff]'
-    case 'sme':
-      return 'bg-[#fff0ce] text-[#7a4f00] dark:bg-[#3a2d12] dark:text-[#ffd98a]'
-    default:
-      return 'bg-[#e0f3e9] text-[#165a4a] dark:bg-[#12382f] dark:text-[#aee4d0]'
   }
 }
 
@@ -3354,17 +1971,6 @@ function apiErrorStatus(error: unknown) {
   z-index: 1;
 }
 
-.article-workspace__count {
-  display: inline-grid;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 5px;
-  place-items: center;
-  border-radius: 999px;
-  background: color-mix(in srgb, currentColor 12%, transparent);
-  font-size: 10px;
-}
-
 .article-workspace__panel-stack {
   display: grid;
   gap: 18px;
@@ -3433,7 +2039,7 @@ function apiErrorStatus(error: unknown) {
 }
 
 .article-publish__primary,
-.article-publish__danger { grid-column: 1 / -1; }
+.article-publish__advanced { grid-column: 1 / -1; }
 
 .article-publish__lead {
   display: flex;
@@ -3450,16 +2056,6 @@ function apiErrorStatus(error: unknown) {
   border-radius: 10px;
   background: color-mix(in srgb, var(--primary-soft) 84%, var(--surface));
   color: var(--primary);
-}
-
-.article-publish__revision {
-  flex: 0 0 auto;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: var(--surface-subtle);
-  color: var(--text-faint);
-  font-size: 11px;
-  font-weight: 700;
 }
 
 .article-publish__details {
@@ -3488,6 +2084,63 @@ function apiErrorStatus(error: unknown) {
 .article-publish__details[open] > summary { border-bottom: 1px solid var(--border); }
 .article-publish__details[open] > summary svg { transform: rotate(180deg); }
 
+.article-publish__advanced {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.article-publish__advanced > summary {
+  display: flex;
+  min-height: 62px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.article-publish__advanced > summary::-webkit-details-marker { display: none; }
+.article-publish__advanced > summary:hover { background: var(--surface-subtle); }
+.article-publish__advanced > summary > span { display: grid; gap: 3px; }
+.article-publish__advanced > summary strong { font-size: 14px; }
+.article-publish__advanced > summary small { color: var(--text-faint); font-size: 12px; font-weight: 400; }
+.article-publish__advanced[open] > summary { border-bottom: 1px solid var(--border); }
+.article-publish__advanced[open] > summary svg { transform: rotate(180deg); }
+
+.article-publish__schedule-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--surface-subtle);
+}
+
+.article-publish__advanced-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  padding: 16px;
+  background: var(--surface-subtle);
+}
+
+.article-publish__option {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.article-publish__option > button,
+.article-publish__controls > div:last-child { margin-top: auto; }
+
 /* Shared treatment across every workspace tab. */
 .article-workspace__panel-stack > article,
 .article-workspace__panel-stack > section,
@@ -3496,8 +2149,7 @@ function apiErrorStatus(error: unknown) {
   border-radius: 10px !important;
 }
 
-.article-overview__summary > dl > div,
-.article-review__revision > dl > div {
+.article-overview__summary > dl > div {
   min-width: 0;
   padding: 12px;
   border: 1px solid var(--border);
@@ -3508,60 +2160,6 @@ function apiErrorStatus(error: unknown) {
 .article-overview__summary > dl svg {
   width: 18px;
   height: 18px;
-}
-
-.article-review__revision > dl {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.article-review__revision > dl > div:nth-child(2) {
-  grid-column: span 2;
-}
-
-.article-review__revision > .mt-5.flex {
-  padding-top: 17px;
-  border-top: 1px solid var(--border);
-}
-
-.article-review__assignments > form,
-.article-review__comments > form {
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-subtle);
-}
-
-.article-review__assignments > .rounded-lg.border-dashed,
-.article-review__comments > .rounded-lg.border-dashed {
-  display: grid;
-  min-height: 104px;
-  place-content: center;
-  background:
-    radial-gradient(circle at center, color-mix(in srgb, var(--primary-soft) 45%, transparent), transparent 65%),
-    var(--surface-subtle) !important;
-  color: var(--text-soft);
-  box-shadow: none !important;
-}
-
-.article-review__assignments > .rounded-lg.border-dashed h3,
-.article-review__comments > .rounded-lg.border-dashed h3 {
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.article-history > ol > li {
-  min-width: 0;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-subtle);
-  transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
-}
-
-.article-history > ol > li:hover {
-  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
-  background: var(--surface);
-  transform: translateY(-1px);
 }
 
 .article-detail button.text-white {
@@ -3720,8 +2318,6 @@ function apiErrorStatus(error: unknown) {
   align-items: center;
   min-height: 26px;
   border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
-  background: var(--primary-soft);
-  color: var(--primary);
   font-weight: 700;
 }
 
@@ -3807,25 +2403,18 @@ function apiErrorStatus(error: unknown) {
 
 @media (min-width: 640px) {
   .article-detail .sm\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .article-detail .sm\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .article-detail .sm\:col-span-2 { grid-column: span 2 / span 2; }
 }
 
 @media (min-width: 768px) {
   .article-detail .md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .article-detail .md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .article-detail .md\:grid-cols-\[1fr_1fr_auto\] { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
-}
-
-@media (min-width: 1024px) {
-  .article-detail .lg\:grid-cols-\[minmax\(0\,1fr\)_150px_190px_auto\] {
-    grid-template-columns: minmax(0, 1fr) 150px 190px auto;
-  }
 }
 
 @media (max-width: 820px) {
   .article-workspace__hero {
     display: grid;
+    grid-template-columns: 1fr;
     gap: 12px;
     padding: 20px;
   }
@@ -3840,16 +2429,8 @@ function apiErrorStatus(error: unknown) {
     grid-template-columns: 1fr;
   }
 
-  .article-review__revision > dl {
-    grid-template-columns: 1fr;
-  }
-
-  .article-review__revision > dl > div:nth-child(2) {
-    grid-column: auto;
-  }
-
   .article-publish__primary,
-  .article-publish__danger {
+  .article-publish__advanced {
     grid-column: auto;
   }
 }
@@ -3863,9 +2444,6 @@ function apiErrorStatus(error: unknown) {
     flex-wrap: wrap;
   }
 
-  .article-publish__revision {
-    margin-left: 58px;
-  }
 }
 
 @media (max-width: 560px) {
@@ -3887,6 +2465,10 @@ function apiErrorStatus(error: unknown) {
 
   .article-compose {
     padding: 16px !important;
+  }
+
+  .article-publish__schedule-form {
+    grid-template-columns: 1fr;
   }
 
   .article-publish__primary > .mt-5 button {

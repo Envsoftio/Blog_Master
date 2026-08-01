@@ -3,7 +3,7 @@
     <div class="dashboard-welcome">
       <div>
         <p>{{ greeting }}</p>
-        <span>Content progress, review work, and publishing activity across your projects.</span>
+        <span>Draft and publishing activity across your projects.</span>
       </div>
       <div class="dashboard-welcome__actions">
         <button class="button button--compact" type="button" :disabled="pending" @click="loadDashboard">
@@ -66,7 +66,6 @@
             <div class="content-row content-row--header">
               <span>Article</span>
               <span>Project</span>
-              <span>Workflow</span>
               <span>Publication</span>
               <span></span>
             </div>
@@ -79,7 +78,6 @@
                 </span>
               </span>
               <span>{{ item.project.name }}</span>
-              <span><i class="status-pill" :class="editorialStatusClass(item.article.editorialState)">{{ labelize(item.article.editorialState) }}</i></span>
               <span><i class="status-pill" :class="publicationStatusClass(item.article.publicationState)">{{ labelize(item.article.publicationState) }}</i></span>
               <NuxtLink class="icon-button" :to="`/projects/${item.project.id}/articles/${item.article.id}`" title="Open article" aria-label="Open article"><ArrowUpRight :size="16" /></NuxtLink>
             </div>
@@ -103,7 +101,7 @@
               </dl>
               <div class="focus-actions">
                 <NuxtLink :to="`/projects/${selectedProject.id}/articles/create`"><Plus :size="15" /><span>New article</span><ChevronRight :size="14" /></NuxtLink>
-                <NuxtLink :to="`/projects/${selectedProject.id}/review`"><ListChecks :size="15" /><span>Review queue</span><ChevronRight :size="14" /></NuxtLink>
+                <NuxtLink :to="`/projects/${selectedProject.id}/articles`"><FileText :size="15" /><span>Content library</span><ChevronRight :size="14" /></NuxtLink>
                 <NuxtLink :to="`/projects/${selectedProject.id}/calendar`"><CalendarDays :size="15" /><span>Calendar</span><ChevronRight :size="14" /></NuxtLink>
                 <NuxtLink :to="`/projects/${selectedProject.id}/settings`"><Settings2 :size="15" /><span>Project settings</span><ChevronRight :size="14" /></NuxtLink>
               </div>
@@ -119,7 +117,7 @@
 
           <section class="surface attention-panel">
             <div class="panel-heading">
-              <div><p>Workflow</p><h3>Needs attention</h3></div>
+              <div><p>Publishing</p><h3>Drafts</h3></div>
               <span class="status-pill" :class="{ 'status-pill--warning': attentionItems.length }">{{ attentionItems.length }}</span>
             </div>
             <div v-if="attentionItems.length" class="attention-list">
@@ -161,13 +159,11 @@
 import {
   ArrowUpRight,
   CalendarDays,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Clock3,
   FileText,
   Layers3,
-  ListChecks,
   LoaderCircle,
   PanelsTopLeft,
   Plus,
@@ -196,18 +192,16 @@ const scopedArticles = computed(() => selectedProjectID.value === 'all'
   : projectArticles.value.filter(item => item.project.id === selectedProjectID.value))
 const selectedProject = computed(() => projects.value.find(project => project.id === selectedProjectID.value) || null)
 const recentArticles = computed(() => [...scopedArticles.value]
-  .sort((a, b) => dateValue(b.article.latestRevision?.createdAt || b.article.createdAt) - dateValue(a.article.latestRevision?.createdAt || a.article.createdAt))
+  .sort((a, b) => dateValue(b.article.publishedAt || b.article.createdAt) - dateValue(a.article.publishedAt || a.article.createdAt))
   .slice(0, 8))
 const metrics = computed(() => [
   { label: 'Projects', value: projects.value.length, detail: `${projects.value.filter(project => project.status === 'active').length} active`, icon: PanelsTopLeft, tone: 'metric-icon--green' },
   { label: 'Articles', value: projectArticles.value.length, detail: `${projectArticles.value.filter(item => item.article.publicationState === 'published').length} published`, icon: Layers3, tone: 'metric-icon--blue' },
-  { label: 'In review', value: projectArticles.value.filter(item => item.article.editorialState === 'in_review').length, detail: 'Awaiting a decision', icon: ListChecks, tone: 'metric-icon--amber' },
+  { label: 'Drafts', value: projectArticles.value.filter(item => item.article.publicationState === 'unpublished').length, detail: 'Not published', icon: FileText, tone: 'metric-icon--amber' },
   { label: 'Scheduled', value: projectArticles.value.filter(item => item.article.publicationState === 'scheduled').length, detail: 'Upcoming releases', icon: Clock3, tone: 'metric-icon--violet' }
 ])
 const attentionItems = computed(() => projectArticles.value.flatMap(item => {
-  if (item.article.editorialState === 'in_review') return [{ ...item, label: 'Ready for review', tone: 'attention-dot--amber', to: `/projects/${item.project.id}/articles/${item.article.id}` }]
-  if (item.article.editorialState === 'changes_requested') return [{ ...item, label: 'Changes requested', tone: 'attention-dot--danger', to: `/projects/${item.project.id}/articles/${item.article.id}` }]
-  if (item.article.editorialState === 'approved' && item.article.publicationState === 'unpublished') return [{ ...item, label: 'Approved, not published', tone: 'attention-dot--green', to: `/projects/${item.project.id}/articles/${item.article.id}` }]
+  if (item.article.publicationState === 'unpublished') return [{ ...item, label: 'Draft', tone: 'attention-dot--amber', to: `/projects/${item.project.id}/articles/${item.article.id}` }]
   return []
 }))
 
@@ -247,12 +241,6 @@ function dateValue(value?: string) {
   return Number.isNaN(date.getTime()) ? 0 : date.getTime()
 }
 
-function editorialStatusClass(state: string) {
-  if (state === 'approved') return 'status-pill--success'
-  if (state === 'changes_requested') return 'status-pill--warning'
-  return ''
-}
-
 function publicationStatusClass(state: string) {
   if (state === 'published') return 'status-pill--success'
   if (state === 'scheduled') return 'status-pill--warning'
@@ -284,7 +272,7 @@ function publicationStatusClass(state: string) {
 .compact-select svg { position: absolute; right: 8px; pointer-events: none; color: var(--text-soft); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
 .content-table { overflow-x: auto; }
-.content-row { display: grid; min-width: 720px; grid-template-columns: minmax(250px, 1.5fr) minmax(110px, .7fr) 115px 110px 30px; gap: 12px; align-items: center; min-height: 58px; padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.content-row { display: grid; min-width: 620px; grid-template-columns: minmax(250px, 1.5fr) minmax(110px, .7fr) 110px 30px; gap: 12px; align-items: center; min-height: 58px; padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .content-row:last-child { border-bottom: 0; }
 .content-row--header { min-height: 34px; background: var(--surface-subtle); color: var(--text-soft); font-weight: 650; text-transform: uppercase; }
 .content-title { display: flex; min-width: 0; align-items: center; gap: 9px; }

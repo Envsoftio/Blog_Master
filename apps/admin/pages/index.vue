@@ -26,11 +26,11 @@
       <aside class="login-context">
         <span class="login-context__mark"><BookOpenText :size="28" /></span>
         <p>Article Content Hub</p>
-        <h1>Plan, review, and publish with editorial confidence.</h1>
+        <h1>Write and publish without the workflow overhead.</h1>
         <div class="login-context__features">
           <div><span><Layers3 :size="17" /></span><p><strong>Project isolation</strong><small>Content and access stay scoped to the selected project.</small></p></div>
-          <div><span><GitPullRequestArrow :size="17" /></span><p><strong>Structured workflow</strong><small>Draft, review, approve, schedule, and publish exact revisions.</small></p></div>
-          <div><span><ShieldCheck :size="17" /></span><p><strong>Secure delivery</strong><small>Server-side sessions and project credentials protect every workflow.</small></p></div>
+          <div><span><UploadCloud :size="17" /></span><p><strong>Simple publishing</strong><small>Save a draft, publish now, or choose a future date.</small></p></div>
+          <div><span><ShieldCheck :size="17" /></span><p><strong>Secure delivery</strong><small>Server-side sessions and project credentials protect every request.</small></p></div>
         </div>
       </aside>
 
@@ -91,7 +91,6 @@ import {
   BookOpenText,
   Eye,
   EyeOff,
-  GitPullRequestArrow,
   Laptop,
   Layers3,
   LoaderCircle,
@@ -101,7 +100,8 @@ import {
   Moon,
   PenLine,
   ShieldCheck,
-  Sun
+  Sun,
+  UploadCloud
 } from 'lucide-vue-next'
 
 const api = useAdminApi()

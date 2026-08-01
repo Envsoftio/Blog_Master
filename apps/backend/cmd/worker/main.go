@@ -14,9 +14,7 @@ import (
 
 	"seoblog/apps/backend/internal/aijobs"
 	"seoblog/apps/backend/internal/config"
-	"seoblog/apps/backend/internal/mailer"
 	"seoblog/apps/backend/internal/mediajobs"
-	"seoblog/apps/backend/internal/notifications"
 	"seoblog/apps/backend/internal/observability"
 	"seoblog/apps/backend/internal/platform/b2"
 	"seoblog/apps/backend/internal/platform/database"
@@ -43,20 +41,6 @@ func main() {
 	workerStore := store.New(db, store.WithWebhookEncryptionKey(cfg.WebhookEncryptionKey))
 	metrics := observability.NewRegistry(db, cfg.DBPath, "seoblog-worker", cfg.Env)
 	workerID := "worker-" + fmt.Sprint(os.Getpid())
-	notificationProcessor := notifications.Processor{
-		Store: workerStore,
-		Sender: mailer.NewSMTP(mailer.SMTPConfig{
-			Address:         cfg.SMTPAddress,
-			Username:        cfg.SMTPUsername,
-			Password:        cfg.SMTPPassword,
-			From:            cfg.SMTPFrom,
-			FromName:        cfg.SMTPFromName,
-			RequireStartTLS: cfg.SMTPRequireTLS,
-		}),
-		Logger:         logger,
-		WorkerID:       workerID,
-		AdminPublicURL: cfg.AdminPublicURL,
-	}
 	webhookProcessor := webhooks.Processor{
 		Store: workerStore,
 		Sender: webhooks.NewHTTPSender(webhooks.DestinationPolicy{
@@ -160,9 +144,6 @@ func main() {
 			webhookStartedAt := time.Now()
 			webhookResult, webhookErr := webhookProcessor.Process(cycleContext, 50, 2)
 			metrics.RecordWorkerCycle("webhook", cycleOutcome(webhookErr), time.Since(webhookStartedAt), webhookResult.Succeeded+webhookResult.Failed)
-			emailStartedAt := time.Now()
-			delivered, failed, notificationErr := notificationProcessor.Process(cycleContext, 2)
-			metrics.RecordWorkerCycle("email", cycleOutcome(notificationErr), time.Since(emailStartedAt), delivered+failed)
 			cancel()
 			mediaContext, mediaCancel := context.WithTimeout(stopContext, 2*time.Minute)
 			mediaStartedAt := time.Now()
@@ -172,9 +153,6 @@ func main() {
 			if publishErr != nil {
 				logger.Error("scheduled publication cycle failed", "error", publishErr)
 			}
-			if notificationErr != nil {
-				logger.Error("notification cycle failed", "error", notificationErr)
-			}
 			if webhookErr != nil {
 				logger.Error("webhook cycle failed", "error", webhookErr)
 			}
@@ -183,9 +161,6 @@ func main() {
 			}
 			if published > 0 {
 				logger.Info("scheduled publications completed", "count", published)
-			}
-			if delivered > 0 || failed > 0 {
-				logger.Info("review assignment notifications processed", "delivered", delivered, "failed", failed)
 			}
 			if webhookResult.EventsFannedOut > 0 ||
 				webhookResult.Succeeded > 0 ||

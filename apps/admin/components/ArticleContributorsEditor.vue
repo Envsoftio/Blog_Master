@@ -2,7 +2,7 @@
   <fieldset class="contributors-editor" :disabled="disabled">
     <legend>Authors and contributors</legend>
     <p class="contributors-editor__help">
-      Assign exactly one primary author. Ordering is preserved within each role on the immutable revision.
+      Assign exactly one primary author. Contributor order is preserved whenever the article is saved.
     </p>
 
     <div v-if="modelValue.length" class="contributors-editor__rows">
@@ -58,11 +58,11 @@
 
 <script setup lang="ts">
 import { ChevronDown, ChevronUp, Trash2, UserPlus } from 'lucide-vue-next'
-import type { AdminAuthor, RevisionContributorInput } from '~/composables/useAdminApi'
-import { hasValidRevisionContributors } from '~/composables/useAdminApi'
+import type { AdminAuthor, ArticleContributorInput } from '~/composables/useAdminApi'
+import { hasValidArticleContributors } from '~/composables/useAdminApi'
 
 const props = withDefaults(defineProps<{
-  modelValue: RevisionContributorInput[]
+  modelValue: ArticleContributorInput[]
   authors: AdminAuthor[]
   disabled?: boolean
 }>(), {
@@ -70,14 +70,14 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: RevisionContributorInput[]]
+  'update:modelValue': [value: ArticleContributorInput[]]
 }>()
 
-const contributorRoles: Array<{ value: RevisionContributorInput['role'], label: string }> = [
+const contributorRoles: Array<{ value: ArticleContributorInput['role'], label: string }> = [
   { value: 'primary_author', label: 'Primary author' },
   { value: 'co_author', label: 'Co-author' },
   { value: 'editor', label: 'Editor' },
-  { value: 'expert_reviewer', label: 'Expert reviewer' },
+  { value: 'expert_reviewer', label: 'Subject expert' },
   { value: 'photographer', label: 'Photographer' },
   { value: 'other', label: 'Other credit' }
 ]
@@ -86,7 +86,7 @@ const validationMessage = computed(() => {
   const primaryCount = props.modelValue.filter(item => item.role === 'primary_author').length
   if (primaryCount !== 1) return 'Choose exactly one primary author.'
   if (props.modelValue.some(item => !item.authorId)) return 'Choose a person for every contributor.'
-  if (!hasValidRevisionContributors(props.modelValue)) return 'Remove duplicate role assignments.'
+  if (!hasValidArticleContributors(props.modelValue)) return 'Remove duplicate role assignments.'
   return ''
 })
 
@@ -94,13 +94,13 @@ function addContributor() {
   const activeAuthors = props.authors.filter(author => author.status !== 'inactive')
   const author = activeAuthors.find(candidate => !props.modelValue.some(item => item.authorId === candidate.id)) || activeAuthors[0]
   if (!author) return
-  const role: RevisionContributorInput['role'] = props.modelValue.some(item => item.role === 'primary_author')
+  const role: ArticleContributorInput['role'] = props.modelValue.some(item => item.role === 'primary_author')
     ? 'co_author'
     : 'primary_author'
   emitNormalized([...props.modelValue, { authorId: author.id, role, position: 0 }])
 }
 
-function updateContributor(index: number, patch: Partial<RevisionContributorInput>) {
+function updateContributor(index: number, patch: Partial<ArticleContributorInput>) {
   const next = props.modelValue.map(item => ({ ...item }))
   const current = next[index]
   if (!current) return
@@ -145,8 +145,8 @@ function moveContributor(index: number, direction: -1 | 1) {
   emitNormalized(next)
 }
 
-function emitNormalized(value: RevisionContributorInput[]) {
-  const positions = new Map<RevisionContributorInput['role'], number>()
+function emitNormalized(value: ArticleContributorInput[]) {
+  const positions = new Map<ArticleContributorInput['role'], number>()
   emit('update:modelValue', value.map((item) => {
     const position = positions.get(item.role) || 0
     positions.set(item.role, position + 1)
@@ -163,7 +163,7 @@ function selectValue(event: Event) {
 }
 
 function contributorRoleValue(event: Event) {
-  return (event.target as HTMLSelectElement).value as RevisionContributorInput['role']
+  return (event.target as HTMLSelectElement).value as ArticleContributorInput['role']
 }
 </script>
 

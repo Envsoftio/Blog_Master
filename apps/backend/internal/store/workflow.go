@@ -66,62 +66,40 @@ type AdminRevision struct {
 	Deck           string `json:"deck,omitempty"`
 	Excerpt        string `json:"excerpt,omitempty"`
 	ShortAnswer    string `json:"shortAnswer,omitempty"`
-	EditorialState string `json:"editorialState"`
+	EditorialState string `json:"-"`
 	ContentHash    string `json:"contentHash"`
 	CreatedAt      string `json:"createdAt"`
 }
 
-type AdminRevisionSummary struct {
-	AdminRevision
-	BaseRevisionID string `json:"baseRevisionId,omitempty"`
-	Published      bool   `json:"published"`
-}
-
-type AdminRevisionDetail struct {
-	AdminRevisionSummary
-	AlternateTitle      string `json:"alternateTitle,omitempty"`
-	BodyDocument        any    `json:"bodyDocument"`
-	TableOfContents     any    `json:"tableOfContents"`
-	AuthorSnapshot      any    `json:"authorSnapshot"`
-	ContributorSnapshot any    `json:"contributorSnapshot"`
-	TaxonomySnapshot    any    `json:"taxonomySnapshot"`
-	SourceSnapshot      any    `json:"sourceSnapshot"`
-	ClaimSnapshot       any    `json:"claimSnapshot"`
-	SEOSnapshot         any    `json:"seoSnapshot"`
-	SocialSnapshot      any    `json:"socialSnapshot"`
-	MediaSnapshot       any    `json:"mediaSnapshot"`
-	DisclosureSnapshot  any    `json:"disclosureSnapshot"`
-	CorrectionSummary   any    `json:"correctionSummary"`
-	SanitizedHTML       string `json:"sanitizedHtml"`
-	PlainText           string `json:"plainText"`
-	MarkdownExport      string `json:"markdownExport"`
-	WordCount           int64  `json:"wordCount"`
-	ReadingTimeSeconds  int64  `json:"readingTimeSeconds"`
-	ChangeSummary       string `json:"changeSummary,omitempty"`
-}
-
 type AdminArticle struct {
-	ID               string         `json:"id"`
-	ProjectID        string         `json:"projectId"`
-	OriginProjectID  string         `json:"originProjectId,omitempty"`
-	OriginArticleID  string         `json:"originArticleId,omitempty"`
-	ArticleType      string         `json:"articleType"`
-	Slug             string         `json:"slug"`
-	Title            string         `json:"title"`
-	EditorialState   string         `json:"editorialState"`
-	PublicationState string         `json:"publicationState"`
-	CanonicalPolicy  string         `json:"canonicalPolicy"`
-	ScheduledForUTC  string         `json:"scheduledForUtc,omitempty"`
-	PublishedAt      string         `json:"publishedAt,omitempty"`
-	CanonicalURL     string         `json:"canonicalUrl,omitempty"`
-	ArchivedAt       string         `json:"archivedAt,omitempty"`
-	LatestRevision   *AdminRevision `json:"latestRevision,omitempty"`
-	CreatedAt        string         `json:"createdAt"`
+	ID                string                     `json:"id"`
+	ProjectID         string                     `json:"projectId"`
+	OriginProjectID   string                     `json:"originProjectId,omitempty"`
+	OriginArticleID   string                     `json:"originArticleId,omitempty"`
+	ArticleType       string                     `json:"articleType"`
+	Slug              string                     `json:"slug"`
+	Title             string                     `json:"title"`
+	Deck              string                     `json:"deck,omitempty"`
+	Excerpt           string                     `json:"excerpt,omitempty"`
+	ShortAnswer       string                     `json:"shortAnswer,omitempty"`
+	PrimaryCategoryID string                     `json:"primaryCategoryId,omitempty"`
+	Contributors      []RevisionContributorInput `json:"contributors,omitempty"`
+	BodyDocument      any                        `json:"bodyDocument,omitempty"`
+	HTML              string                     `json:"html,omitempty"`
+	SEO               *SEOInput                  `json:"seo,omitempty"`
+	EditorialState    string                     `json:"-"`
+	PublicationState  string                     `json:"publicationState"`
+	CanonicalPolicy   string                     `json:"canonicalPolicy"`
+	ScheduledForUTC   string                     `json:"scheduledForUtc,omitempty"`
+	PublishedAt       string                     `json:"publishedAt,omitempty"`
+	CanonicalURL      string                     `json:"canonicalUrl,omitempty"`
+	ArchivedAt        string                     `json:"archivedAt,omitempty"`
+	LatestRevision    *AdminRevision             `json:"latestRevision,omitempty"`
+	CreatedAt         string                     `json:"createdAt"`
 }
 
 type ArticleListFilter struct {
 	Search           string
-	EditorialState   string
 	PublicationState string
 	IncludeArchived  bool
 }
@@ -160,28 +138,22 @@ type RevisionContributorInput struct {
 }
 
 type SEOInput struct {
-	Title            string
-	Description      string
-	Robots           string
-	OpenGraphTitle   string
-	OpenGraphSummary string
-	OpenGraphImage   string
+	Title            string `json:"title"`
+	Description      string `json:"description"`
+	Robots           string `json:"robots"`
+	OpenGraphTitle   string `json:"openGraphTitle"`
+	OpenGraphSummary string `json:"openGraphDescription"`
+	OpenGraphImage   string `json:"openGraphImage"`
 }
 
 type PublicationInput struct {
-	RevisionID      string
 	Slug            string
-	CanonicalURL    string
+	CanonicalURL    *string
 	ScheduledForUTC string
-}
-
-type RollbackInput struct {
-	RevisionID string
 }
 
 type CopyArticleInput struct {
 	DestinationProjectID string
-	SourceRevisionID     string
 	PrimaryCategoryID    string
 	Slug                 string
 	CanonicalDecision    string
@@ -251,7 +223,6 @@ func (s *Store) ListArticlesForUser(ctx context.Context, userID, projectID, curs
 		WHERE item.project_id = ?
 		  AND (? = 1 OR item.archived_at IS NULL)
 		  AND (? = '' OR item.id > ?)
-		  AND (? = '' OR revision.editorial_state = ?)
 		  AND (? = '' OR COALESCE(publication.publication_state, 'unpublished') = ?)
 		  AND (
 		    ? = ''
@@ -262,7 +233,6 @@ func (s *Store) ListArticlesForUser(ctx context.Context, userID, projectID, curs
 		ORDER BY item.id
 		LIMIT ?
 	`, projectID, boolToInt(filter.IncludeArchived), cursor, cursor,
-		filter.EditorialState, filter.EditorialState,
 		filter.PublicationState, filter.PublicationState,
 		filter.Search, searchPattern, searchPattern, searchPattern,
 		limit)
@@ -284,7 +254,6 @@ func (s *Store) ListArticlesForUser(ctx context.Context, userID, projectID, curs
 
 func normalizeArticleListFilter(filter ArticleListFilter) (ArticleListFilter, error) {
 	filter.Search = strings.TrimSpace(filter.Search)
-	filter.EditorialState = strings.TrimSpace(filter.EditorialState)
 	filter.PublicationState = strings.TrimSpace(filter.PublicationState)
 	if len([]rune(filter.Search)) > 100 {
 		return ArticleListFilter{}, fmt.Errorf("%w: article search cannot exceed 100 characters", ErrValidation)
@@ -295,11 +264,6 @@ func normalizeArticleListFilter(filter ArticleListFilter) (ArticleListFilter, er
 			`%`, `\%`,
 			`_`, `\_`,
 		).Replace(strings.ToLower(filter.Search))
-	}
-	switch filter.EditorialState {
-	case "", "draft", "in_review", "changes_requested", "approved":
-	default:
-		return ArticleListFilter{}, fmt.Errorf("%w: unsupported editorialState", ErrValidation)
 	}
 	switch filter.PublicationState {
 	case "", "unpublished", "scheduled", "published", "archived":
@@ -335,7 +299,72 @@ func (s *Store) GetArticleForUser(ctx context.Context, userID, projectID, articl
 		  AND item.id = ?
 		  AND item.archived_at IS NULL
 	`, projectID, articleID)
-	return scanAdminArticle(row)
+	article, err := scanAdminArticle(row)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if err := s.loadArticleEditableFields(ctx, &article); err != nil {
+		return AdminArticle{}, err
+	}
+	return article, nil
+}
+
+func (s *Store) loadArticleEditableFields(ctx context.Context, article *AdminArticle) error {
+	if article.LatestRevision == nil {
+		return nil
+	}
+	var bodyDocumentJSON, seoSnapshotJSON string
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT body_document_json, sanitized_html, seo_snapshot_json
+		FROM content_revisions
+		WHERE project_id = ? AND content_id = ? AND id = ?
+	`, article.ProjectID, article.ID, article.LatestRevision.ID).Scan(
+		&bodyDocumentJSON,
+		&article.HTML,
+		&seoSnapshotJSON,
+	); err != nil {
+		return err
+	}
+	article.Deck = article.LatestRevision.Deck
+	article.Excerpt = article.LatestRevision.Excerpt
+	article.ShortAnswer = article.LatestRevision.ShortAnswer
+	article.BodyDocument = decodeJSON(bodyDocumentJSON, map[string]any{})
+	seo := seoInputFromSnapshot(seoSnapshotJSON, article.Title, article.Excerpt)
+	article.SEO = &seo
+
+	err := s.db.QueryRowContext(ctx, `
+		SELECT taxonomy_term_id
+		FROM article_taxonomy
+		WHERE project_id = ? AND content_id = ? AND is_primary = 1
+	`, article.ProjectID, article.ID).Scan(&article.PrimaryCategoryID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT author_id, role, position
+		FROM revision_contributors
+		WHERE project_id = ? AND revision_id = ?
+		ORDER BY CASE role
+		  WHEN 'primary_author' THEN 0
+		  WHEN 'co_author' THEN 1
+		  WHEN 'editor' THEN 2
+		  WHEN 'reviewer' THEN 3
+		  ELSE 4
+		END, position, author_id
+	`, article.ProjectID, article.LatestRevision.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var contributor RevisionContributorInput
+		if err := rows.Scan(&contributor.AuthorID, &contributor.Role, &contributor.Position); err != nil {
+			return err
+		}
+		article.Contributors = append(article.Contributors, contributor)
+	}
+	return rows.Err()
 }
 
 func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string, input ArticleInput) (AdminArticle, error) {
@@ -457,9 +486,6 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	input.BaseRevisionID = strings.TrimSpace(input.BaseRevisionID)
 	input.Title = strings.TrimSpace(input.Title)
 	seoProvided := hasSEOInput(input.SEO)
-	if input.BaseRevisionID == "" {
-		return AdminRevision{}, fmt.Errorf("%w: baseRevisionId is required", ErrValidation)
-	}
 	if input.Title == "" {
 		return AdminRevision{}, fmt.Errorf("%w: title is required", ErrValidation)
 	}
@@ -496,8 +522,11 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	if err != nil {
 		return AdminRevision{}, err
 	}
+	if input.BaseRevisionID == "" {
+		input.BaseRevisionID = baseRevisionID
+	}
 	if input.BaseRevisionID != baseRevisionID {
-		return AdminRevision{}, fmt.Errorf("%w: base revision is stale; refresh the article before saving", ErrInvalidWorkflow)
+		return AdminRevision{}, fmt.Errorf("%w: save token is stale; refresh the article before saving", ErrInvalidWorkflow)
 	}
 	if !seoProvided {
 		var baseSEOJSON string
@@ -559,6 +588,9 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	if err := insertRevisionContributors(ctx, tx, projectID, revisionID, attribution.Records); err != nil {
 		return AdminRevision{}, err
 	}
+	if err := refreshScheduledPublicationRevision(ctx, tx, actorUserID, projectID, articleID, revisionID, input.SEO.Robots); err != nil {
+		return AdminRevision{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM article_autosaves
 		WHERE project_id = ? AND content_id = ? AND user_id = ?
@@ -612,12 +644,16 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 	if err != nil {
 		return AdminArticle{}, err
 	}
-	source, err := loadCopySourceRevision(ctx, tx, sourceProjectID, sourceArticleID, input.SourceRevisionID)
+	sourceRevisionID, err := latestRevisionID(ctx, tx, sourceProjectID, sourceArticleID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	source, err := loadCopySourceRevision(ctx, tx, sourceProjectID, sourceArticleID, sourceRevisionID)
 	if err != nil {
 		return AdminArticle{}, err
 	}
 	attribution, err := buildCopiedRevisionAttribution(
-		ctx, tx, sourceProjectID, input.SourceRevisionID, input.DestinationProjectID, input.ContributorMappings,
+		ctx, tx, sourceProjectID, sourceRevisionID, input.DestinationProjectID, input.ContributorMappings,
 	)
 	if err != nil {
 		return AdminArticle{}, err
@@ -627,10 +663,10 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 	}
 	if input.CanonicalDecision == "canonical_original" {
 		if strings.TrimSpace(source.CanonicalURL) == "" {
-			return AdminArticle{}, fmt.Errorf("%w: selected source revision has no canonical URL", ErrInvalidWorkflow)
+			return AdminArticle{}, fmt.Errorf("%w: source article has no canonical URL", ErrInvalidWorkflow)
 		}
 		if input.CanonicalOriginalURL != "" && !canonicalURLsEqual(input.CanonicalOriginalURL, source.CanonicalURL) {
-			return AdminArticle{}, fmt.Errorf("%w: canonicalOriginalUrl must match the selected source revision's canonical URL", ErrValidation)
+			return AdminArticle{}, fmt.Errorf("%w: canonicalOriginalUrl must match the source article's canonical URL", ErrValidation)
 		}
 	}
 
@@ -697,7 +733,7 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 		source.SanitizedHTML, source.PlainText, source.MarkdownExport, source.TableOfContentsJSON,
 		source.WordCount, source.ReadingTimeSeconds, attribution.AuthorSnapshotJSON,
 		attribution.ContributorSnapshotJSON, taxonomyJSON, seoJSON,
-		fmt.Sprintf("Copied from %s/%s revision %s", sourceProjectID, sourceArticleID, input.SourceRevisionID),
+		fmt.Sprintf("Copied from the latest saved content in %s/%s", sourceProjectID, sourceArticleID),
 		contentHash, source.AIAssistanceLevel, source.AIProvenanceSummaryJSON,
 	); err != nil {
 		return AdminArticle{}, err
@@ -721,7 +757,7 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 	auditMetadata := map[string]string{
 		"sourceProjectId":      sourceProjectID,
 		"sourceArticleId":      sourceArticleID,
-		"sourceRevisionId":     input.SourceRevisionID,
+		"sourceSaveId":         sourceRevisionID,
 		"destinationProjectId": input.DestinationProjectID,
 		"destinationArticleId": articleID,
 		"canonicalDecision":    input.CanonicalDecision,
@@ -788,12 +824,12 @@ func buildCopiedRevisionAttribution(
 			return revisionAttribution{}, fmt.Errorf("%w: contributor mapping for source author %q is duplicated", ErrValidation, sourceID)
 		}
 		if _, exists := required[sourceID]; !exists {
-			return revisionAttribution{}, fmt.Errorf("%w: contributor mapping references author %q outside the selected source revision", ErrValidation, sourceID)
+			return revisionAttribution{}, fmt.Errorf("%w: contributor mapping references author %q outside the source article's latest saved content", ErrValidation, sourceID)
 		}
 		resolved[sourceID] = destinationID
 	}
 	if len(resolved) != len(required) {
-		return revisionAttribution{}, fmt.Errorf("%w: every contributor in the selected source revision must be explicitly mapped", ErrValidation)
+		return revisionAttribution{}, fmt.Errorf("%w: every contributor in the source article's latest saved content must be explicitly mapped", ErrValidation)
 	}
 
 	destinationAuthors := map[string]Author{}
@@ -828,92 +864,6 @@ func buildCopiedRevisionAttribution(
 	return attributionFromRecords(sourceRecords)
 }
 
-func (s *Store) SubmitRevision(ctx context.Context, actorUserID, projectID, revisionID string) (AdminRevision, error) {
-	if err := s.requireContentWrite(ctx, actorUserID, projectID); err != nil {
-		return AdminRevision{}, err
-	}
-	return s.setRevisionState(ctx, actorUserID, projectID, revisionID, "in_review", "revision.submit")
-}
-
-func (s *Store) RequestRevisionChanges(ctx context.Context, actorUserID, projectID, revisionID string) (AdminRevision, error) {
-	if err := s.requireContentReview(ctx, actorUserID, projectID); err != nil {
-		return AdminRevision{}, err
-	}
-	return s.setRevisionState(ctx, actorUserID, projectID, revisionID, "changes_requested", "revision.request_changes")
-}
-
-func (s *Store) ApproveRevision(ctx context.Context, actorUserID, projectID, revisionID, note string) (AdminRevision, error) {
-	if err := s.requireContentReview(ctx, actorUserID, projectID); err != nil {
-		return AdminRevision{}, err
-	}
-	revision, err := s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
-	if err != nil {
-		return AdminRevision{}, err
-	}
-	if revision.EditorialState == "approved" {
-		return AdminRevision{}, fmt.Errorf("%w: revision is already approved", ErrInvalidWorkflow)
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return AdminRevision{}, err
-	}
-	defer tx.Rollback()
-	selfApproval, err := enforceRevisionApprovalPolicy(ctx, tx, actorUserID, projectID, revisionID)
-	if err != nil {
-		return AdminRevision{}, err
-	}
-	if err := ensureRevisionPrimaryAuthor(ctx, tx, projectID, revisionID); err != nil {
-		return AdminRevision{}, err
-	}
-	if err := ensureRevisionClaimsApproved(ctx, tx, projectID, revisionID); err != nil {
-		return AdminRevision{}, err
-	}
-	if err := ensureRevisionQualityApproved(ctx, tx, projectID, revisionID); err != nil {
-		return AdminRevision{}, err
-	}
-	sourceSnapshotJSON, claimSnapshotJSON, err := buildRevisionTrustSnapshots(ctx, tx, projectID, revisionID)
-	if err != nil {
-		return AdminRevision{}, err
-	}
-	approvedContentHash, err := approvalContentHash(revision.ContentHash, sourceSnapshotJSON, claimSnapshotJSON)
-	if err != nil {
-		return AdminRevision{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE content_revisions
-		SET editorial_state = 'approved',
-		    source_snapshot_json = ?,
-		    claim_snapshot_json = ?,
-		    content_hash = ?
-		WHERE project_id = ? AND id = ?
-	`, sourceSnapshotJSON, claimSnapshotJSON, approvedContentHash, projectID, revisionID); err != nil {
-		return AdminRevision{}, err
-	}
-	decisionID, err := securityRandomID("appr")
-	if err != nil {
-		return AdminRevision{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO approval_decisions(
-		  id, project_id, content_id, revision_id, decision, content_hash,
-		  decided_by, note, self_approval
-		) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?, ?)
-	`, decisionID, projectID, revision.ArticleID, revisionID, approvedContentHash,
-		actorUserID, nullIfEmpty(note), selfApproval); err != nil {
-		return AdminRevision{}, err
-	}
-	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "revision.approve", "revision", revisionID, "success", map[string]any{
-		"self_approval": selfApproval,
-		"content_hash":  approvedContentHash,
-	}); err != nil {
-		return AdminRevision{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return AdminRevision{}, err
-	}
-	return s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
-}
-
 func ensureRevisionPrimaryAuthor(ctx context.Context, tx *sql.Tx, projectID, revisionID string) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT contributor.author_id, contributor.public_snapshot_json
@@ -943,7 +893,7 @@ func ensureRevisionPrimaryAuthor(ctx context.Context, tx *sql.Tx, projectID, rev
 		return err
 	}
 	if len(primaryAuthors) != 1 {
-		return fmt.Errorf("%w: approval requires exactly one accountable primary author", ErrInvalidWorkflow)
+		return fmt.Errorf("%w: publishing requires exactly one accountable primary author", ErrInvalidWorkflow)
 	}
 
 	var snapshot Author
@@ -956,47 +906,6 @@ func ensureRevisionPrimaryAuthor(ctx context.Context, tx *sql.Tx, projectID, rev
 	return nil
 }
 
-func enforceRevisionApprovalPolicy(
-	ctx context.Context,
-	tx *sql.Tx,
-	actorUserID, projectID, revisionID string,
-) (bool, error) {
-	var role, creatorType, creatorUserID string
-	var soloOwnerApprovalEnabled bool
-	err := tx.QueryRowContext(ctx, `
-		SELECT membership.role, revision.created_by_type,
-		       COALESCE(revision.created_by_user_id, ''),
-		       project.solo_owner_approval_enabled
-		FROM content_revisions revision
-		JOIN projects project
-		  ON project.id = revision.project_id
-		JOIN project_memberships membership
-		  ON membership.project_id = revision.project_id
-		 AND membership.user_id = ?
-		 AND membership.status = 'active'
-		WHERE revision.project_id = ? AND revision.id = ?
-	`, actorUserID, projectID, revisionID).Scan(
-		&role,
-		&creatorType,
-		&creatorUserID,
-		&soloOwnerApprovalEnabled,
-	)
-	if err != nil {
-		return false, err
-	}
-	selfApproval := creatorType == "human" && creatorUserID != "" && creatorUserID == actorUserID
-	if !selfApproval {
-		return false, nil
-	}
-	if role != "project_owner" {
-		return false, fmt.Errorf("%w: reviewers cannot approve a revision they created", ErrInvalidWorkflow)
-	}
-	if !soloOwnerApprovalEnabled {
-		return false, fmt.Errorf("%w: project owner self-approval requires explicit solo-owner mode", ErrInvalidWorkflow)
-	}
-	return true, nil
-}
-
 func (s *Store) ScheduleArticle(ctx context.Context, actorUserID, projectID, articleID string, input PublicationInput) (AdminArticle, error) {
 	if strings.TrimSpace(input.ScheduledForUTC) == "" {
 		return AdminArticle{}, fmt.Errorf("%w: scheduledForUtc is required", ErrValidation)
@@ -1006,91 +915,6 @@ func (s *Store) ScheduleArticle(ctx context.Context, actorUserID, projectID, art
 
 func (s *Store) PublishArticle(ctx context.Context, actorUserID, projectID, articleID string, input PublicationInput) (AdminArticle, error) {
 	return s.setArticlePublication(ctx, actorUserID, projectID, articleID, input, "published")
-}
-
-func (s *Store) RollbackArticle(ctx context.Context, actorUserID, projectID, articleID string, input RollbackInput) (AdminArticle, error) {
-	if err := s.requireContentPublish(ctx, actorUserID, projectID); err != nil {
-		return AdminArticle{}, err
-	}
-	input.RevisionID = strings.TrimSpace(input.RevisionID)
-	if input.RevisionID == "" {
-		return AdminArticle{}, fmt.Errorf("%w: revisionId is required", ErrValidation)
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return AdminArticle{}, err
-	}
-	defer tx.Rollback()
-
-	project, err := loadWorkflowProject(ctx, tx, projectID)
-	if err != nil {
-		return AdminArticle{}, err
-	}
-	if project.Status != "active" {
-		return AdminArticle{}, fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
-	}
-	if _, err := loadArticleType(ctx, tx, projectID, articleID); err != nil {
-		return AdminArticle{}, err
-	}
-	revision, err := loadRevision(ctx, tx, projectID, articleID, input.RevisionID)
-	if err != nil {
-		return AdminArticle{}, err
-	}
-	if revision.EditorialState != "approved" {
-		return AdminArticle{}, fmt.Errorf("%w: rollback revision must be approved", ErrInvalidWorkflow)
-	}
-	if err := ensurePublishableTaxonomy(ctx, tx, projectID, articleID); err != nil {
-		return AdminArticle{}, err
-	}
-
-	publication, err := loadPublication(ctx, tx, projectID, articleID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return AdminArticle{}, fmt.Errorf("%w: article must be published before rollback", ErrInvalidWorkflow)
-	}
-	if err != nil {
-		return AdminArticle{}, err
-	}
-	if publication.PublicationState != "published" {
-		return AdminArticle{}, fmt.Errorf("%w: article must be published before rollback", ErrInvalidWorkflow)
-	}
-	if publication.PublishedRevisionID == revision.ID {
-		return AdminArticle{}, fmt.Errorf("%w: revision is already published", ErrInvalidWorkflow)
-	}
-
-	publicationID, err := upsertPublication(
-		ctx,
-		tx,
-		projectID,
-		articleID,
-		revision.ID,
-		publication.Slug,
-		publication.CanonicalURL,
-		"",
-		"published",
-	)
-	if err != nil {
-		return AdminArticle{}, err
-	}
-	version, err := loadPublicationVersion(ctx, tx, projectID, articleID)
-	if err != nil {
-		return AdminArticle{}, err
-	}
-	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
-		return AdminArticle{}, err
-	}
-	if err := insertPublicationOutbox(ctx, tx, projectID, articleID, revision.ID, "content.restored", publication.CanonicalURL, version); err != nil {
-		return AdminArticle{}, err
-	}
-	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "article.rollback", "publication", publicationID, "success", map[string]string{
-		"revision_id": revision.ID,
-	}); err != nil {
-		return AdminArticle{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return AdminArticle{}, err
-	}
-	return s.GetArticleForUser(ctx, actorUserID, projectID, articleID)
 }
 
 func (s *Store) UnpublishArticle(ctx context.Context, actorUserID, projectID, articleID string) (AdminArticle, error) {
@@ -1106,14 +930,42 @@ func (s *Store) UnpublishArticle(ctx context.Context, actorUserID, projectID, ar
 	if err != nil {
 		return AdminArticle{}, err
 	}
+	switch publication.PublicationState {
+	case "unpublished":
+		_ = tx.Rollback()
+		return s.GetArticleForUser(ctx, actorUserID, projectID, articleID)
+	case "scheduled":
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE project_publications
+			SET publication_state = 'unpublished',
+			    scheduled_for_utc = NULL,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND project_id = ? AND content_id = ? AND publication_state = 'scheduled'
+		`, publication.ID, projectID, articleID); err != nil {
+			return AdminArticle{}, err
+		}
+		if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "article.schedule_cancel", "publication", publication.ID, "success", nil); err != nil {
+			return AdminArticle{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return AdminArticle{}, err
+		}
+		return s.GetArticleForUser(ctx, actorUserID, projectID, articleID)
+	case "published":
+		// Continue below and emit the public unpublish transition.
+	default:
+		return AdminArticle{}, fmt.Errorf("%w: article is not published", ErrInvalidWorkflow)
+	}
+	version := publication.PublicationVersion + 1
 	result, err := tx.ExecContext(ctx, `
 		UPDATE project_publications
 		SET publication_state = 'unpublished',
 		    scheduled_for_utc = NULL,
 		    unpublished_at = CURRENT_TIMESTAMP,
+		    publication_version = publication_version + 1,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE project_id = ? AND content_id = ?
-	`, projectID, articleID)
+		WHERE id = ? AND project_id = ? AND content_id = ? AND publication_state = 'published'
+	`, publication.ID, projectID, articleID)
 	if err != nil {
 		return AdminArticle{}, err
 	}
@@ -1127,7 +979,7 @@ func (s *Store) UnpublishArticle(ctx context.Context, actorUserID, projectID, ar
 	if err := incrementProjectGeneration(ctx, tx, projectID); err != nil {
 		return AdminArticle{}, err
 	}
-	if err := insertPublicationOutbox(ctx, tx, projectID, articleID, publication.PublishedRevisionID, "content.unpublished", publication.CanonicalURL, publication.PublicationVersion+1); err != nil {
+	if err := insertPublicationOutbox(ctx, tx, projectID, articleID, publication.PublishedRevisionID, "content.unpublished", publication.CanonicalURL, version); err != nil {
 		return AdminArticle{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1299,111 +1151,6 @@ func (s *Store) GetRevisionForUser(ctx context.Context, userID, projectID, revis
 		WHERE project_id = ? AND id = ?
 	`, projectID, revisionID)
 	return scanAdminRevision(row)
-}
-
-func (s *Store) ListRevisionHistoryForUser(ctx context.Context, userID, projectID, articleID, cursorID string, limit int) ([]AdminRevisionSummary, error) {
-	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
-		return nil, err
-	}
-	var exists int
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT 1
-		FROM content_items
-		WHERE project_id = ? AND id = ? AND archived_at IS NULL
-	`, projectID, articleID).Scan(&exists); err != nil {
-		return nil, err
-	}
-	if limit <= 0 {
-		return nil, fmt.Errorf("%w: revision history limit must be positive", ErrValidation)
-	}
-
-	var cursorRevisionNumber int64
-	if cursorID != "" {
-		err := s.db.QueryRowContext(ctx, `
-			SELECT revision_number
-			FROM content_revisions
-			WHERE project_id = ? AND content_id = ? AND id = ?
-		`, projectID, articleID, cursorID).Scan(&cursorRevisionNumber)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: revision history cursor is not valid for this article", ErrValidation)
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	query := `
-		SELECT revision.id, revision.project_id, revision.content_id, revision.revision_number,
-		       revision.title, COALESCE(revision.deck, ''), COALESCE(revision.excerpt, ''),
-		       COALESCE(revision.short_answer, ''), revision.editorial_state,
-		       revision.content_hash, revision.created_at, COALESCE(revision.base_revision_id, ''),
-		       EXISTS(
-		         SELECT 1 FROM project_publications publication
-		         WHERE publication.project_id = revision.project_id
-		           AND publication.content_id = revision.content_id
-		           AND publication.published_revision_id = revision.id
-		           AND publication.publication_state = 'published'
-		       )
-		FROM content_revisions revision
-		WHERE revision.project_id = ? AND revision.content_id = ?
-	`
-	queryArguments := []any{projectID, articleID}
-	if cursorID != "" {
-		query += ` AND revision.revision_number < ?`
-		queryArguments = append(queryArguments, cursorRevisionNumber)
-	}
-	query += ` ORDER BY revision.revision_number DESC LIMIT ?`
-	queryArguments = append(queryArguments, limit)
-
-	rows, err := s.db.QueryContext(ctx, query, queryArguments...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	revisions := []AdminRevisionSummary{}
-	for rows.Next() {
-		revision, err := scanAdminRevisionSummary(rows)
-		if err != nil {
-			return nil, err
-		}
-		revisions = append(revisions, revision)
-	}
-	return revisions, rows.Err()
-}
-
-func (s *Store) GetRevisionDetailForUser(ctx context.Context, userID, projectID, articleID, revisionID string) (AdminRevisionDetail, error) {
-	if _, err := s.projectRole(ctx, userID, projectID); err != nil {
-		return AdminRevisionDetail{}, err
-	}
-	row := s.db.QueryRowContext(ctx, `
-		SELECT revision.id, revision.project_id, revision.content_id, revision.revision_number,
-		       revision.title, COALESCE(revision.deck, ''), COALESCE(revision.excerpt, ''),
-		       COALESCE(revision.short_answer, ''), revision.editorial_state,
-		       revision.content_hash, revision.created_at, COALESCE(revision.base_revision_id, ''),
-		       EXISTS(
-		         SELECT 1 FROM project_publications publication
-		         WHERE publication.project_id = revision.project_id
-		           AND publication.content_id = revision.content_id
-		           AND publication.published_revision_id = revision.id
-		           AND publication.publication_state = 'published'
-		       ),
-		       COALESCE(revision.alternate_title, ''), revision.body_document_json,
-		       revision.sanitized_html, revision.plain_text, revision.markdown_export,
-		       revision.table_of_contents_json, revision.word_count, revision.reading_time_seconds,
-		       revision.author_snapshot_json, revision.contributor_snapshot_json,
-		       revision.taxonomy_snapshot_json, revision.source_snapshot_json,
-		       revision.claim_snapshot_json, revision.seo_snapshot_json,
-		       revision.social_snapshot_json, revision.media_snapshot_json,
-		       revision.disclosure_snapshot_json, revision.correction_summary_json,
-		       COALESCE(revision.change_summary, '')
-		FROM content_revisions revision
-		JOIN content_items item
-		  ON item.project_id = revision.project_id AND item.id = revision.content_id
-		WHERE revision.project_id = ? AND revision.content_id = ? AND revision.id = ?
-		  AND item.archived_at IS NULL
-	`, projectID, articleID, revisionID)
-	return scanAdminRevisionDetail(row)
 }
 
 func (s *Store) ListAdminTerms(ctx context.Context, userID, projectID, termType string) ([]TaxonomyTerm, error) {
@@ -1661,10 +1408,6 @@ func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectI
 	if err := s.requireContentPublish(ctx, actorUserID, projectID); err != nil {
 		return AdminArticle{}, err
 	}
-	input.Slug = slugify(input.Slug)
-	if input.Slug == "" {
-		return AdminArticle{}, fmt.Errorf("%w: slug is required", ErrValidation)
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AdminArticle{}, err
@@ -1683,7 +1426,26 @@ func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectI
 		return AdminArticle{}, err
 	}
 	_ = articleType
-	revision, err := loadRevision(ctx, tx, projectID, articleID, input.RevisionID)
+	previousPublication, err := loadPublication(ctx, tx, projectID, articleID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	if state == "scheduled" && previousPublication.PublicationState == "published" {
+		return AdminArticle{}, fmt.Errorf("%w: unpublish the article before scheduling it", ErrInvalidWorkflow)
+	}
+	revisionID, err := latestRevisionID(ctx, tx, projectID, articleID)
+	if err != nil {
+		return AdminArticle{}, err
+	}
+	requestedSlug := slugify(input.Slug)
+	input.Slug = requestedSlug
+	if input.Slug == "" {
+		input.Slug = previousPublication.Slug
+	}
+	if input.Slug == "" {
+		return AdminArticle{}, fmt.Errorf("%w: slug is required", ErrValidation)
+	}
+	revision, err := loadRevision(ctx, tx, projectID, articleID, revisionID)
 	if err != nil {
 		return AdminArticle{}, err
 	}
@@ -1695,16 +1457,22 @@ func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectI
 	if err := ensurePublishableTaxonomy(ctx, tx, projectID, articleID); err != nil {
 		return AdminArticle{}, err
 	}
-	canonical := strings.TrimSpace(input.CanonicalURL)
-	if canonical == "" {
+	canonical := previousPublication.CanonicalURL
+	if input.CanonicalURL != nil {
+		canonical = strings.TrimSpace(*input.CanonicalURL)
+		if canonical == "" {
+			canonical = canonicalURL(project, input.Slug)
+		} else {
+			normalized, normalizeErr := normalizeCanonicalURL(canonical)
+			if normalizeErr != nil {
+				return AdminArticle{}, fmt.Errorf("%w: canonicalUrl must be an absolute HTTP or HTTPS URL", ErrValidation)
+			}
+			canonical = normalized
+		}
+	} else if input.Slug != previousPublication.Slug || canonical == "" {
 		canonical = canonicalURL(project, input.Slug)
 	}
-	previousPublication, previousPublicationErr := loadPublication(ctx, tx, projectID, articleID)
-	if previousPublicationErr != nil && !errors.Is(previousPublicationErr, sql.ErrNoRows) {
-		return AdminArticle{}, previousPublicationErr
-	}
-	publicationID, err := upsertPublication(ctx, tx, projectID, articleID, revision.ID, input.Slug, canonical, input.ScheduledForUTC, state)
-	if err != nil {
+	if err := updatePublication(ctx, tx, previousPublication.ID, projectID, articleID, revision.ID, input.Slug, canonical, input.ScheduledForUTC, state); err != nil {
 		return AdminArticle{}, err
 	}
 	if state == "published" {
@@ -1717,7 +1485,7 @@ func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectI
 		}
 		eventType := "content.published"
 		var slugChange []string
-		if previousPublicationErr == nil && previousPublication.FirstPublishedAt != "" {
+		if previousPublication.FirstPublishedAt != "" {
 			switch {
 			case previousPublication.Slug != input.Slug:
 				eventType = "content.slug_changed"
@@ -1735,7 +1503,7 @@ func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectI
 			return AdminArticle{}, err
 		}
 	}
-	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "article."+state, "publication", publicationID, "success", nil); err != nil {
+	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "article."+state, "publication", previousPublication.ID, "success", nil); err != nil {
 		return AdminArticle{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1744,10 +1512,10 @@ func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectI
 	return s.GetArticleForUser(ctx, actorUserID, projectID, articleID)
 }
 
-// finalizeRevisionForPublication keeps the public trust snapshot immutable while
-// allowing users with publish permission to move a revision live without a
-// separate review/approval transition. Review approval remains available for
-// teams that want it, but it is no longer a prerequisite for publication.
+// finalizeRevisionForPublication stores an immutable public trust snapshot and
+// marks the selected revision as publishable for the database guard. Publishing
+// is direct: review decisions, claim verification, and quality checks are not
+// prerequisites.
 func finalizeRevisionForPublication(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1755,12 +1523,6 @@ func finalizeRevisionForPublication(
 	revision AdminRevision,
 ) error {
 	if err := ensureRevisionPrimaryAuthor(ctx, tx, projectID, revision.ID); err != nil {
-		return err
-	}
-	if err := ensureRevisionClaimsApproved(ctx, tx, projectID, revision.ID); err != nil {
-		return err
-	}
-	if err := ensureRevisionQualityApproved(ctx, tx, projectID, revision.ID); err != nil {
 		return err
 	}
 	sourceSnapshotJSON, claimSnapshotJSON, err := buildRevisionTrustSnapshots(ctx, tx, projectID, revision.ID)
@@ -1787,7 +1549,7 @@ func finalizeRevisionForPublication(
 		return err
 	}
 	if changed != 1 {
-		return fmt.Errorf("%w: revision could not be finalized for publication", ErrInvalidWorkflow)
+		return fmt.Errorf("%w: article could not be prepared for publication", ErrInvalidWorkflow)
 	}
 	return insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "revision.finalize_for_publication", "revision", revision.ID, "success", map[string]any{
 		"content_hash":   contentHash,
@@ -1795,37 +1557,72 @@ func finalizeRevisionForPublication(
 	})
 }
 
-func (s *Store) setRevisionState(ctx context.Context, actorUserID, projectID, revisionID, state, action string) (AdminRevision, error) {
-	revision, err := s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
-	if err != nil {
-		return AdminRevision{}, err
+func refreshScheduledPublicationRevision(
+	ctx context.Context,
+	tx *sql.Tx,
+	actorUserID, projectID, articleID, revisionID, robotsDirective string,
+) error {
+	var publicationID string
+	err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM project_publications
+		WHERE project_id = ? AND content_id = ? AND publication_state = 'scheduled'
+	`, projectID, articleID).Scan(&publicationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return AdminRevision{}, err
+		return err
 	}
-	defer tx.Rollback()
-
+	role, err := projectRoleTx(ctx, tx, actorUserID, projectID)
+	if err != nil {
+		return err
+	}
+	if role != "project_owner" && role != "project_admin" && role != "editor" {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE project_publications
+			SET publication_state = 'unpublished',
+			    scheduled_for_utc = NULL,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND project_id = ? AND content_id = ? AND publication_state = 'scheduled'
+		`, publicationID, projectID, articleID); err != nil {
+			return err
+		}
+		return insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "article.schedule_cancel", "publication", publicationID, "success", map[string]any{
+			"reason": "save_by_non_publisher",
+		})
+	}
+	revision, err := loadRevision(ctx, tx, projectID, articleID, revisionID)
+	if err != nil {
+		return err
+	}
+	if revision.EditorialState != "approved" {
+		if err := finalizeRevisionForPublication(ctx, tx, actorUserID, projectID, revision); err != nil {
+			return err
+		}
+	}
+	robotsDirective = strings.TrimSpace(robotsDirective)
+	if robotsDirective == "" {
+		robotsDirective = "index,follow"
+	}
 	result, err := tx.ExecContext(ctx, `
-		UPDATE content_revisions
-		SET editorial_state = ?
-		WHERE project_id = ? AND id = ?
-	`, state, projectID, revisionID)
+		UPDATE project_publications
+		SET published_revision_id = ?,
+		    robots_directive = ?,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND project_id = ? AND content_id = ? AND publication_state = 'scheduled'
+	`, revisionID, robotsDirective, publicationID, projectID, articleID)
 	if err != nil {
-		return AdminRevision{}, err
+		return err
 	}
-	if changed, err := result.RowsAffected(); err != nil {
-		return AdminRevision{}, err
-	} else if changed != 1 {
-		return AdminRevision{}, sql.ErrNoRows
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
 	}
-	if err := insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, action, "revision", revision.ID, "success", nil); err != nil {
-		return AdminRevision{}, err
+	if affected != 1 {
+		return fmt.Errorf("%w: scheduled publication changed while saving", ErrInvalidWorkflow)
 	}
-	if err := tx.Commit(); err != nil {
-		return AdminRevision{}, err
-	}
-	return s.GetRevisionForUser(ctx, actorUserID, projectID, revisionID)
+	return nil
 }
 
 func (s *Store) requireContentWrite(ctx context.Context, userID, projectID string) error {
@@ -1989,86 +1786,6 @@ func scanAdminRevision(row rowScanner) (AdminRevision, error) {
 	return revision, err
 }
 
-func scanAdminRevisionSummary(row rowScanner) (AdminRevisionSummary, error) {
-	var revision AdminRevisionSummary
-	err := row.Scan(
-		&revision.ID,
-		&revision.ProjectID,
-		&revision.ArticleID,
-		&revision.RevisionNumber,
-		&revision.Title,
-		&revision.Deck,
-		&revision.Excerpt,
-		&revision.ShortAnswer,
-		&revision.EditorialState,
-		&revision.ContentHash,
-		&revision.CreatedAt,
-		&revision.BaseRevisionID,
-		&revision.Published,
-	)
-	if err != nil {
-		return AdminRevisionSummary{}, err
-	}
-	return revision, nil
-}
-
-func scanAdminRevisionDetail(row rowScanner) (AdminRevisionDetail, error) {
-	var revision AdminRevisionDetail
-	var bodyDocumentJSON, tableOfContentsJSON string
-	var authorJSON, contributorJSON, taxonomyJSON, sourceJSON, claimJSON string
-	var seoJSON, socialJSON, mediaJSON, disclosureJSON, correctionJSON string
-	err := row.Scan(
-		&revision.ID,
-		&revision.ProjectID,
-		&revision.ArticleID,
-		&revision.RevisionNumber,
-		&revision.Title,
-		&revision.Deck,
-		&revision.Excerpt,
-		&revision.ShortAnswer,
-		&revision.EditorialState,
-		&revision.ContentHash,
-		&revision.CreatedAt,
-		&revision.BaseRevisionID,
-		&revision.Published,
-		&revision.AlternateTitle,
-		&bodyDocumentJSON,
-		&revision.SanitizedHTML,
-		&revision.PlainText,
-		&revision.MarkdownExport,
-		&tableOfContentsJSON,
-		&revision.WordCount,
-		&revision.ReadingTimeSeconds,
-		&authorJSON,
-		&contributorJSON,
-		&taxonomyJSON,
-		&sourceJSON,
-		&claimJSON,
-		&seoJSON,
-		&socialJSON,
-		&mediaJSON,
-		&disclosureJSON,
-		&correctionJSON,
-		&revision.ChangeSummary,
-	)
-	if err != nil {
-		return AdminRevisionDetail{}, err
-	}
-	revision.BodyDocument = decodeJSON(bodyDocumentJSON, map[string]any{})
-	revision.TableOfContents = decodeJSON(tableOfContentsJSON, []any{})
-	revision.AuthorSnapshot = decodeJSON(authorJSON, []any{})
-	revision.ContributorSnapshot = decodeJSON(contributorJSON, []any{})
-	revision.TaxonomySnapshot = decodeJSON(taxonomyJSON, map[string]any{})
-	revision.SourceSnapshot = decodeJSON(sourceJSON, []any{})
-	revision.ClaimSnapshot = decodeJSON(claimJSON, []any{})
-	revision.SEOSnapshot = decodeJSON(seoJSON, map[string]any{})
-	revision.SocialSnapshot = decodeJSON(socialJSON, map[string]any{})
-	revision.MediaSnapshot = decodeJSON(mediaJSON, map[string]any{})
-	revision.DisclosureSnapshot = decodeJSON(disclosureJSON, []any{})
-	revision.CorrectionSummary = decodeJSON(correctionJSON, []any{})
-	return revision, nil
-}
-
 type publicationRecord struct {
 	ID                  string
 	PublishedRevisionID string
@@ -2179,6 +1896,44 @@ func loadWorkflowProject(ctx context.Context, tx *sql.Tx, projectID string) (wor
 		WHERE id = ?
 	`, projectID).Scan(&project.ID, &project.Status, &project.PrimaryDomain, &project.BlogBasePath)
 	return project, err
+}
+
+func requireActiveProjectTx(ctx context.Context, tx *sql.Tx, projectID string) error {
+	project, err := loadWorkflowProject(ctx, tx, projectID)
+	if err != nil {
+		return err
+	}
+	if project.Status != "active" {
+		return fmt.Errorf("%w: project must be active", ErrInvalidWorkflow)
+	}
+	return nil
+}
+
+func (s *Store) articleExists(ctx context.Context, projectID, articleID string) error {
+	var exists int
+	return s.db.QueryRowContext(ctx, `
+		SELECT 1
+		FROM content_items
+		WHERE project_id = ? AND id = ? AND archived_at IS NULL
+	`, projectID, articleID).Scan(&exists)
+}
+
+func articleExistsTx(ctx context.Context, tx *sql.Tx, projectID, articleID string) error {
+	var exists int
+	return tx.QueryRowContext(ctx, `
+		SELECT 1
+		FROM content_items
+		WHERE project_id = ? AND id = ? AND archived_at IS NULL
+	`, projectID, articleID).Scan(&exists)
+}
+
+func revisionBelongsToArticleTx(ctx context.Context, tx *sql.Tx, projectID, articleID, revisionID string) error {
+	var exists int
+	return tx.QueryRowContext(ctx, `
+		SELECT 1
+		FROM content_revisions
+		WHERE project_id = ? AND content_id = ? AND id = ?
+	`, projectID, articleID, revisionID).Scan(&exists)
 }
 
 func loadArticleType(ctx context.Context, tx *sql.Tx, projectID, articleID string) (string, error) {
@@ -2313,64 +2068,56 @@ func ensurePublishableTaxonomy(ctx context.Context, tx *sql.Tx, projectID, artic
 	return nil
 }
 
-func upsertPublication(ctx context.Context, tx *sql.Tx, projectID, articleID, revisionID, slug, canonicalURL, scheduledForUTC, state string) (string, error) {
-	publicationID, err := securityRandomID("pubn")
-	if err != nil {
-		return "", err
-	}
+func updatePublication(ctx context.Context, tx *sql.Tx, publicationID, projectID, articleID, revisionID, slug, canonicalURL, scheduledForUTC, state string) error {
 	robotsDirective := "index,follow"
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COALESCE(NULLIF(json_extract(seo_snapshot_json, '$.robots'), ''), 'index,follow')
 		FROM content_revisions
 		WHERE project_id = ? AND content_id = ? AND id = ?
 	`, projectID, articleID, revisionID).Scan(&robotsDirective); err != nil {
-		return "", err
+		return err
 	}
+	var result sql.Result
+	var err error
 	if state == "scheduled" {
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO project_publications(
-			  id, project_id, content_id, slug, canonical_url,
-			  robots_directive, published_revision_id, publication_state, scheduled_for_utc
-			) VALUES (?, ?, ?, ?, ?, ?, ?, 'scheduled', ?)
-			ON CONFLICT(project_id, content_id) DO UPDATE SET
-			  slug = excluded.slug,
-			  canonical_url = excluded.canonical_url,
-			  robots_directive = excluded.robots_directive,
-			  published_revision_id = excluded.published_revision_id,
-			  publication_state = 'scheduled',
-			  scheduled_for_utc = excluded.scheduled_for_utc,
-			  updated_at = CURRENT_TIMESTAMP
-		`, publicationID, projectID, articleID, slug, canonicalURL, robotsDirective, revisionID, scheduledForUTC)
+		result, err = tx.ExecContext(ctx, `
+			UPDATE project_publications
+			SET slug = ?,
+			    canonical_url = ?,
+			    robots_directive = ?,
+			    published_revision_id = ?,
+			    publication_state = 'scheduled',
+			    scheduled_for_utc = ?,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND project_id = ? AND content_id = ?
+		`, slug, canonicalURL, robotsDirective, revisionID, scheduledForUTC, publicationID, projectID, articleID)
 	} else {
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO project_publications(
-			  id, project_id, content_id, slug, canonical_url,
-			  robots_directive, published_revision_id, publication_state, first_published_at,
-			  materially_modified_at, publication_version
-			) VALUES (?, ?, ?, ?, ?, ?, ?, 'published', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
-			ON CONFLICT(project_id, content_id) DO UPDATE SET
-			  slug = excluded.slug,
-			  canonical_url = excluded.canonical_url,
-			  robots_directive = excluded.robots_directive,
-			  published_revision_id = excluded.published_revision_id,
-			  publication_state = 'published',
-			  scheduled_for_utc = NULL,
-			  first_published_at = COALESCE(project_publications.first_published_at, CURRENT_TIMESTAMP),
-			  materially_modified_at = CURRENT_TIMESTAMP,
-			  publication_version = project_publications.publication_version + 1,
-			  updated_at = CURRENT_TIMESTAMP
-		`, publicationID, projectID, articleID, slug, canonicalURL, robotsDirective, revisionID)
+		result, err = tx.ExecContext(ctx, `
+			UPDATE project_publications
+			SET slug = ?,
+			    canonical_url = ?,
+			    robots_directive = ?,
+			    published_revision_id = ?,
+			    publication_state = 'published',
+			    scheduled_for_utc = NULL,
+			    first_published_at = COALESCE(first_published_at, CURRENT_TIMESTAMP),
+			    materially_modified_at = CURRENT_TIMESTAMP,
+			    publication_version = publication_version + 1,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = ? AND project_id = ? AND content_id = ?
+		`, slug, canonicalURL, robotsDirective, revisionID, publicationID, projectID, articleID)
 	}
 	if err != nil {
-		return "", err
+		return err
 	}
-	var storedID string
-	err = tx.QueryRowContext(ctx, `
-		SELECT id
-		FROM project_publications
-		WHERE project_id = ? AND content_id = ?
-	`, projectID, articleID).Scan(&storedID)
-	return storedID, err
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func loadPublicationVersion(ctx context.Context, tx *sql.Tx, projectID, articleID string) (int64, error) {
@@ -2560,7 +2307,6 @@ func applyArticleDefaults(input ArticleInput) ArticleInput {
 
 func applyCopyArticleDefaults(input CopyArticleInput) CopyArticleInput {
 	input.DestinationProjectID = strings.TrimSpace(input.DestinationProjectID)
-	input.SourceRevisionID = strings.TrimSpace(input.SourceRevisionID)
 	input.PrimaryCategoryID = strings.TrimSpace(input.PrimaryCategoryID)
 	input.Slug = slugify(input.Slug)
 	input.CanonicalDecision = strings.ToLower(strings.TrimSpace(input.CanonicalDecision))
@@ -2574,9 +2320,6 @@ func validateCopyArticleInput(sourceProjectID string, input CopyArticleInput) er
 	}
 	if input.DestinationProjectID == sourceProjectID {
 		return fmt.Errorf("%w: destinationProjectId must identify another project", ErrValidation)
-	}
-	if input.SourceRevisionID == "" {
-		return fmt.Errorf("%w: sourceRevisionId is required", ErrValidation)
 	}
 	if input.PrimaryCategoryID == "" {
 		return fmt.Errorf("%w: primaryCategoryId is required", ErrValidation)
@@ -2604,11 +2347,11 @@ func validateCopyArticleInput(sourceProjectID string, input CopyArticleInput) er
 func validateCopyBodyReferences(bodyDocumentJSON, sanitizedHTML, markdownExport string) error {
 	var document any
 	if err := json.Unmarshal([]byte(bodyDocumentJSON), &document); err != nil {
-		return fmt.Errorf("%w: selected source revision has an invalid structured body", ErrInvalidWorkflow)
+		return fmt.Errorf("%w: source article has invalid structured content", ErrInvalidWorkflow)
 	}
 	if reference := findProjectScopedBodyReference(document); reference != "" {
 		return fmt.Errorf(
-			"%w: source revision body contains project-scoped reference %q; remove or remap it before copying",
+			"%w: source article body contains project-scoped reference %q; remove or remap it before copying",
 			ErrValidation,
 			reference,
 		)
@@ -2616,7 +2359,7 @@ func validateCopyBodyReferences(bodyDocumentJSON, sanitizedHTML, markdownExport 
 	for _, rendered := range []string{sanitizedHTML, markdownExport} {
 		if match := projectScopedHTMLReferencePattern.FindString(rendered); match != "" {
 			return fmt.Errorf(
-				"%w: source revision body contains project-scoped reference %q; remove or remap it before copying",
+				"%w: source article body contains project-scoped reference %q; remove or remap it before copying",
 				ErrValidation,
 				strings.TrimSpace(match),
 			)

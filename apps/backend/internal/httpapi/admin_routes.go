@@ -73,21 +73,15 @@ func (s *Server) registerAdminRoutes() {
 	api.Get("/projects/:projectID/articles", s.requireAdminSession, s.listArticles)
 	api.Post("/projects/:projectID/articles", s.requireAdminSession, s.requireAdminCSRF, s.createArticle)
 	api.Get("/projects/:projectID/articles/:articleID", s.requireAdminSession, s.getArticle)
+	api.Put("/projects/:projectID/articles/:articleID", s.requireAdminSession, s.requireAdminCSRF, s.updateArticle)
 	api.Delete("/projects/:projectID/articles/:articleID", s.requireAdminSession, s.requireAdminCSRF, s.archiveArticle)
 	api.Post("/projects/:projectID/articles/:articleID/restore", s.requireAdminSession, s.requireAdminCSRF, s.restoreArticle)
-	api.Get("/projects/:projectID/articles/:articleID/revisions", s.requireAdminSession, s.listRevisionHistory)
-	api.Post("/projects/:projectID/articles/:articleID/revisions", s.requireAdminSession, s.requireAdminCSRF, s.createRevision)
-	api.Get("/projects/:projectID/articles/:articleID/revisions/:revisionID", s.requireAdminSession, s.getRevisionDetail)
 	api.Get("/projects/:projectID/articles/:articleID/autosave", s.requireAdminSession, s.getArticleAutosave)
 	api.Put("/projects/:projectID/articles/:articleID/autosave", s.requireAdminSession, s.requireAdminCSRF, s.saveArticleAutosave)
 	api.Delete("/projects/:projectID/articles/:articleID/autosave", s.requireAdminSession, s.requireAdminCSRF, s.deleteArticleAutosave)
-	api.Post("/projects/:projectID/revisions/:revisionID/submit", s.requireAdminSession, s.requireAdminCSRF, s.submitRevision)
-	api.Post("/projects/:projectID/revisions/:revisionID/request-changes", s.requireAdminSession, s.requireAdminCSRF, s.requestRevisionChanges)
-	api.Post("/projects/:projectID/revisions/:revisionID/approve", s.requireAdminSession, s.requireAdminCSRF, s.approveRevision)
 	api.Post("/projects/:projectID/articles/:articleID/publish", s.requireAdminSession, s.requireAdminCSRF, s.publishArticle)
 	api.Post("/projects/:projectID/articles/:articleID/schedule", s.requireAdminSession, s.requireAdminCSRF, s.scheduleArticle)
 	api.Post("/projects/:projectID/articles/:articleID/unpublish", s.requireAdminSession, s.requireAdminCSRF, s.unpublishArticle)
-	api.Post("/projects/:projectID/articles/:articleID/rollback", s.requireAdminSession, s.requireAdminCSRF, s.rollbackArticle)
 	api.Post("/projects/:projectID/articles/:articleID/copy-to-project", s.requireAdminSession, s.requireAdminCSRF, s.copyArticleToProject)
 
 	api.Get("/projects/:projectID/categories", s.requireAdminSession, s.listAdminCategories)
@@ -114,19 +108,6 @@ func (s *Server) registerAdminRoutes() {
 	api.Get("/projects/:projectID/sources", s.requireAdminSession, s.listSources)
 	api.Post("/projects/:projectID/sources", s.requireAdminSession, s.requireAdminCSRF, s.createSource)
 	api.Patch("/projects/:projectID/sources/:sourceID", s.requireAdminSession, s.requireAdminCSRF, s.updateSource)
-	api.Get("/projects/:projectID/revisions/:revisionID/claims", s.requireAdminSession, s.listRevisionClaims)
-	api.Post("/projects/:projectID/revisions/:revisionID/claims", s.requireAdminSession, s.requireAdminCSRF, s.createRevisionClaim)
-	api.Post("/projects/:projectID/claims/:claimID/verify", s.requireAdminSession, s.requireAdminCSRF, s.verifyClaim)
-
-	api.Get("/projects/:projectID/review-assignees", s.requireAdminSession, s.listReviewAssignees)
-	api.Get("/projects/:projectID/articles/:articleID/comments", s.requireAdminSession, s.listReviewComments)
-	api.Post("/projects/:projectID/articles/:articleID/comments", s.requireAdminSession, s.requireAdminCSRF, s.createReviewComment)
-	api.Post("/projects/:projectID/comments/:commentID/resolve", s.requireAdminSession, s.requireAdminCSRF, s.resolveReviewComment)
-	api.Post("/projects/:projectID/comments/:commentID/reopen", s.requireAdminSession, s.requireAdminCSRF, s.reopenReviewComment)
-	api.Get("/projects/:projectID/articles/:articleID/assignments", s.requireAdminSession, s.listReviewAssignments)
-	api.Post("/projects/:projectID/articles/:articleID/assignments", s.requireAdminSession, s.requireAdminCSRF, s.createReviewAssignment)
-	api.Post("/projects/:projectID/assignments/:assignmentID/complete", s.requireAdminSession, s.requireAdminCSRF, s.completeReviewAssignment)
-	api.Post("/projects/:projectID/assignments/:assignmentID/cancel", s.requireAdminSession, s.requireAdminCSRF, s.cancelReviewAssignment)
 
 	api.Get("/projects/:projectID/articles/:articleID/disclosures", s.requireAdminSession, s.listDisclosures)
 	api.Post("/projects/:projectID/articles/:articleID/disclosures", s.requireAdminSession, s.requireAdminCSRF, s.createDisclosure)
@@ -155,8 +136,6 @@ func (s *Server) registerAdminRoutes() {
 
 	api.Get("/projects/:projectID/audit-events", s.requireAdminSession, s.listAuditEvents)
 	api.Get("/projects/:projectID/delivery/status", s.requireAdminSession, s.deliveryStatus)
-	api.Post("/projects/:projectID/preview-tokens", s.requireAdminSession, s.requireAdminCSRF, s.createPreviewToken)
-	api.Post("/projects/:projectID/preview-tokens/:tokenID/revoke", s.requireAdminSession, s.requireAdminCSRF, s.revokePreviewToken)
 }
 
 type loginRequest struct {
@@ -199,28 +178,26 @@ type csrfResponse struct {
 }
 
 type projectRequest struct {
-	Slug                     string   `json:"slug"`
-	Name                     string   `json:"name"`
-	PrimaryDomain            string   `json:"primaryDomain"`
-	VerifiedDomains          []string `json:"verifiedDomains"`
-	BlogBasePath             string   `json:"blogBasePath"`
-	Timezone                 string   `json:"timezone"`
-	PublisherName            string   `json:"publisherName"`
-	PublisherURL             string   `json:"publisherUrl"`
-	DefaultRobotsPolicy      string   `json:"defaultRobotsPolicy"`
-	SoloOwnerApprovalEnabled *bool    `json:"soloOwnerApprovalEnabled,omitempty"`
+	Slug                string   `json:"slug"`
+	Name                string   `json:"name"`
+	PrimaryDomain       string   `json:"primaryDomain"`
+	VerifiedDomains     []string `json:"verifiedDomains"`
+	BlogBasePath        string   `json:"blogBasePath"`
+	Timezone            string   `json:"timezone"`
+	PublisherName       string   `json:"publisherName"`
+	PublisherURL        string   `json:"publisherUrl"`
+	DefaultRobotsPolicy string   `json:"defaultRobotsPolicy"`
 }
 
 type projectPatchRequest struct {
-	Name                     *string   `json:"name"`
-	PrimaryDomain            *string   `json:"primaryDomain"`
-	VerifiedDomains          *[]string `json:"verifiedDomains"`
-	BlogBasePath             *string   `json:"blogBasePath"`
-	Timezone                 *string   `json:"timezone"`
-	PublisherName            *string   `json:"publisherName"`
-	PublisherURL             *string   `json:"publisherUrl"`
-	DefaultRobotsPolicy      *string   `json:"defaultRobotsPolicy"`
-	SoloOwnerApprovalEnabled *bool     `json:"soloOwnerApprovalEnabled"`
+	Name                *string   `json:"name"`
+	PrimaryDomain       *string   `json:"primaryDomain"`
+	VerifiedDomains     *[]string `json:"verifiedDomains"`
+	BlogBasePath        *string   `json:"blogBasePath"`
+	Timezone            *string   `json:"timezone"`
+	PublisherName       *string   `json:"publisherName"`
+	PublisherURL        *string   `json:"publisherUrl"`
+	DefaultRobotsPolicy *string   `json:"defaultRobotsPolicy"`
 }
 
 type memberInvitationRequest struct {
@@ -234,30 +211,30 @@ type memberPatchRequest struct {
 }
 
 type articleRequest struct {
-	ArticleType       string                       `json:"articleType"`
-	Title             string                       `json:"title"`
-	Slug              string                       `json:"slug"`
-	PrimaryCategoryID string                       `json:"primaryCategoryId"`
-	Contributors      []revisionContributorRequest `json:"contributors"`
-	Deck              string                       `json:"deck"`
-	Excerpt           string                       `json:"excerpt"`
-	ShortAnswer       string                       `json:"shortAnswer"`
-	BodyDocument      any                          `json:"bodyDocument"`
-	HTML              string                       `json:"html"`
-	SEO               seoRequest                   `json:"seo"`
+	ArticleType       string               `json:"articleType"`
+	Title             string               `json:"title"`
+	Slug              string               `json:"slug"`
+	PrimaryCategoryID string               `json:"primaryCategoryId"`
+	Contributors      []contributorRequest `json:"contributors"`
+	Deck              string               `json:"deck"`
+	Excerpt           string               `json:"excerpt"`
+	ShortAnswer       string               `json:"shortAnswer"`
+	BodyDocument      any                  `json:"bodyDocument"`
+	HTML              string               `json:"html"`
+	SEO               seoRequest           `json:"seo"`
 }
 
-type revisionRequest struct {
-	BaseRevisionID    string                       `json:"baseRevisionId"`
-	Title             string                       `json:"title"`
-	PrimaryCategoryID string                       `json:"primaryCategoryId"`
-	Contributors      []revisionContributorRequest `json:"contributors"`
-	Deck              string                       `json:"deck"`
-	Excerpt           string                       `json:"excerpt"`
-	ShortAnswer       string                       `json:"shortAnswer"`
-	BodyDocument      any                          `json:"bodyDocument"`
-	HTML              string                       `json:"html"`
-	SEO               seoRequest                   `json:"seo"`
+type articleSaveRequest struct {
+	BaseRevisionID    string               `json:"baseRevisionId"`
+	Title             string               `json:"title"`
+	PrimaryCategoryID string               `json:"primaryCategoryId"`
+	Contributors      []contributorRequest `json:"contributors"`
+	Deck              string               `json:"deck"`
+	Excerpt           string               `json:"excerpt"`
+	ShortAnswer       string               `json:"shortAnswer"`
+	BodyDocument      any                  `json:"bodyDocument"`
+	HTML              string               `json:"html"`
+	SEO               seoRequest           `json:"seo"`
 }
 
 type articleAutosaveRequest struct {
@@ -266,7 +243,7 @@ type articleAutosaveRequest struct {
 	Draft           *store.ArticleAutosaveDraft `json:"draft"`
 }
 
-type revisionContributorRequest struct {
+type contributorRequest struct {
 	AuthorID string `json:"authorId"`
 	Role     string `json:"role"`
 	Position int    `json:"position"`
@@ -281,25 +258,15 @@ type seoRequest struct {
 	OpenGraphImage   string `json:"openGraphImage"`
 }
 
-type revisionDecisionRequest struct {
-	Note string `json:"note"`
-}
-
 type publicationRequest struct {
-	RevisionID      string `json:"revisionId"`
-	Slug            string `json:"slug"`
-	CanonicalURL    string `json:"canonicalUrl"`
-	ScheduledFor    string `json:"scheduledFor"`
-	ScheduledForUTC string `json:"scheduledForUtc"`
-}
-
-type rollbackRequest struct {
-	RevisionID string `json:"revisionId"`
+	Slug            string  `json:"slug"`
+	CanonicalURL    *string `json:"canonicalUrl"`
+	ScheduledFor    string  `json:"scheduledFor"`
+	ScheduledForUTC string  `json:"scheduledForUtc"`
 }
 
 type copyArticleRequest struct {
 	DestinationProjectID string                          `json:"destinationProjectId"`
-	SourceRevisionID     string                          `json:"sourceRevisionId"`
 	PrimaryCategoryID    string                          `json:"primaryCategoryId"`
 	Slug                 string                          `json:"slug"`
 	CanonicalDecision    string                          `json:"canonicalDecision"`
@@ -376,19 +343,6 @@ type authorPatchRequest struct {
 	Status           *string   `json:"status"`
 }
 
-type reviewCommentRequest struct {
-	RevisionID string `json:"revisionId"`
-	BlockID    string `json:"blockId"`
-	Body       string `json:"body"`
-}
-
-type reviewAssignmentRequest struct {
-	RevisionID     string `json:"revisionId"`
-	AssignedTo     string `json:"assignedTo"`
-	AssignmentType string `json:"assignmentType"`
-	DueAt          string `json:"dueAt"`
-}
-
 type sourceRequest struct {
 	Title                 string `json:"title"`
 	Publisher             string `json:"publisher"`
@@ -415,18 +369,6 @@ type sourcePatchRequest struct {
 	Notes                 *string `json:"notes"`
 }
 
-type claimRequest struct {
-	ClaimText  string   `json:"claimText"`
-	BlockID    string   `json:"blockId"`
-	Importance string   `json:"importance"`
-	SourceIDs  []string `json:"sourceIds"`
-}
-
-type claimVerificationRequest struct {
-	VerificationState string    `json:"verificationState"`
-	SourceIDs         *[]string `json:"sourceIds"`
-}
-
 type disclosureRequest struct {
 	RevisionID     string `json:"revisionId"`
 	DisclosureType string `json:"disclosureType"`
@@ -437,12 +379,6 @@ type correctionRequest struct {
 	AffectedRevisionID string `json:"affectedRevisionId"`
 	PublicNote         string `json:"publicNote"`
 	SupersedesNoticeID string `json:"supersedesNoticeId"`
-}
-
-type previewTokenRequest struct {
-	ArticleID  string `json:"articleId"`
-	RevisionID string `json:"revisionId"`
-	TTLMinutes int    `json:"ttlMinutes"`
 }
 
 func (s *Server) login(c fiber.Ctx) error {
@@ -1018,7 +954,6 @@ func (s *Server) listArticles(c fiber.Ctx) error {
 		limit+1,
 		store.ArticleListFilter{
 			Search:           c.Query("q"),
-			EditorialState:   c.Query("editorialState"),
 			PublicationState: c.Query("publicationState"),
 			IncludeArchived:  includeArchived,
 		},
@@ -1065,6 +1000,80 @@ func (s *Server) getArticle(c fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
 }
 
+func (s *Server) updateArticle(c fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input articleSaveRequest
+	if err := decodeRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	var provided map[string]json.RawMessage
+	if err := json.Unmarshal(c.Body(), &provided); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	current, err := s.store.GetArticleForUser(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"))
+	if err != nil {
+		return s.adminReadError(c, err, "Article not found", "Could not load article before saving")
+	}
+	if current.LatestRevision != nil && strings.TrimSpace(input.BaseRevisionID) == "" {
+		input.BaseRevisionID = current.LatestRevision.ID
+	}
+	if _, ok := provided["deck"]; !ok {
+		input.Deck = current.Deck
+	}
+	if _, ok := provided["excerpt"]; !ok {
+		input.Excerpt = current.Excerpt
+	}
+	if _, ok := provided["shortAnswer"]; !ok {
+		input.ShortAnswer = current.ShortAnswer
+	}
+	_, bodyDocumentProvided := provided["bodyDocument"]
+	_, htmlProvided := provided["html"]
+	if bodyDocumentProvided != htmlProvided {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "bodyDocument and html must be saved together")
+	}
+	if !bodyDocumentProvided {
+		input.BodyDocument = current.BodyDocument
+	}
+	if !htmlProvided {
+		input.HTML = current.HTML
+	}
+	if rawSEO, ok := provided["seo"]; ok {
+		var seoFields map[string]json.RawMessage
+		if err := json.Unmarshal(rawSEO, &seoFields); err != nil {
+			return problem(c, fiber.StatusBadRequest, "Invalid request body", "seo must be an object")
+		}
+		if _, ok := seoFields["title"]; !ok {
+			input.SEO.Title = current.SEO.Title
+		}
+		if _, ok := seoFields["description"]; !ok {
+			input.SEO.Description = current.SEO.Description
+		}
+		if _, ok := seoFields["robots"]; !ok {
+			input.SEO.Robots = current.SEO.Robots
+		}
+		if _, ok := seoFields["openGraphTitle"]; !ok {
+			input.SEO.OpenGraphTitle = current.SEO.OpenGraphTitle
+		}
+		if _, ok := seoFields["openGraphDescription"]; !ok {
+			input.SEO.OpenGraphSummary = current.SEO.OpenGraphSummary
+		}
+		if _, ok := seoFields["openGraphImage"]; !ok {
+			input.SEO.OpenGraphImage = current.SEO.OpenGraphImage
+		}
+	}
+	if _, err := s.store.CreateRevision(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput()); err != nil {
+		return s.adminMutationError(c, err, "Could not save article")
+	}
+	article, err := s.store.GetArticleForUser(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"))
+	if err != nil {
+		return s.adminReadError(c, err, "Article not found", "Could not load saved article")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
+}
+
 func (s *Server) archiveArticle(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
@@ -1086,63 +1095,6 @@ func (s *Server) restoreArticle(c fiber.Ctx) error {
 		return s.adminMutationError(c, err, "Could not restore article")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
-}
-
-func (s *Server) listRevisionHistory(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	cursor, err := decodeCursor[idCursor](c.Query("cursor"))
-	if err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid cursor", err.Error())
-	}
-	limit := boundedLimit(c.Query("limit", "25"), 100)
-	revisions, err := s.store.ListRevisionHistoryForUser(
-		c.Context(),
-		user.ID,
-		c.Params("projectID"),
-		c.Params("articleID"),
-		cursor.ID,
-		limit+1,
-	)
-	if err != nil {
-		if errors.Is(err, store.ErrValidation) {
-			return problem(c, fiber.StatusBadRequest, "Invalid cursor", err.Error())
-		}
-		return s.adminReadError(c, err, "Article not found", "Could not load revision history")
-	}
-	nextCursor := ""
-	if len(revisions) > limit {
-		revisions = revisions[:limit]
-		nextCursor = encodeCursor(idCursor{ID: revisions[len(revisions)-1].ID})
-	}
-	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.AdminRevisionSummary]{
-		Data: revisions,
-		Meta: PageMeta{
-			ProjectID:  c.Params("projectID"),
-			NextCursor: nextCursor,
-			Limit:      limit,
-		},
-	})
-}
-
-func (s *Server) getRevisionDetail(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	revision, err := s.store.GetRevisionDetailForUser(
-		c.Context(),
-		user.ID,
-		c.Params("projectID"),
-		c.Params("articleID"),
-		c.Params("revisionID"),
-	)
-	if err != nil {
-		return s.adminReadError(c, err, "Revision not found", "Could not load revision")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminRevisionDetail]{Data: revision})
 }
 
 func (s *Server) getArticleAutosave(c fiber.Ctx) error {
@@ -1207,64 +1159,6 @@ func (s *Server) deleteArticleAutosave(c fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNoContent)
 }
 
-func (s *Server) createRevision(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input revisionRequest
-	if err := decodeRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-	}
-	revision, err := s.store.CreateRevision(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not create revision")
-	}
-	return writeJSON(c, fiber.StatusCreated, Envelope[store.AdminRevision]{Data: revision})
-}
-
-func (s *Server) submitRevision(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	revision, err := s.store.SubmitRevision(c.Context(), user.ID, c.Params("projectID"), c.Params("revisionID"))
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not submit revision")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminRevision]{Data: revision})
-}
-
-func (s *Server) requestRevisionChanges(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	revision, err := s.store.RequestRevisionChanges(c.Context(), user.ID, c.Params("projectID"), c.Params("revisionID"))
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not request revision changes")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminRevision]{Data: revision})
-}
-
-func (s *Server) approveRevision(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input revisionDecisionRequest
-	if len(c.Body()) > 0 {
-		if err := decodeRequestBody(c, &input); err != nil {
-			return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-		}
-	}
-	revision, err := s.store.ApproveRevision(c.Context(), user.ID, c.Params("projectID"), c.Params("revisionID"), input.Note)
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not approve revision")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminRevision]{Data: revision})
-}
-
 func (s *Server) publishArticle(c fiber.Ctx) error {
 	return s.publicationAction(c, false)
 }
@@ -1279,8 +1173,10 @@ func (s *Server) publicationAction(c fiber.Ctx, scheduled bool) error {
 		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
 	}
 	var input publicationRequest
-	if err := decodeRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	if len(c.Body()) > 0 {
+		if err := decodeRequestBody(c, &input); err != nil {
+			return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+		}
 	}
 	storeInput, err := input.toStoreInput(scheduled)
 	if err != nil {
@@ -1306,28 +1202,6 @@ func (s *Server) unpublishArticle(c fiber.Ctx) error {
 	article, err := s.store.UnpublishArticle(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"))
 	if err != nil {
 		return s.adminMutationError(c, err, "Could not unpublish article")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
-}
-
-func (s *Server) rollbackArticle(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input rollbackRequest
-	if err := decodeStrictRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", err.Error())
-	}
-	article, err := s.store.RollbackArticle(
-		c.Context(),
-		user.ID,
-		c.Params("projectID"),
-		c.Params("articleID"),
-		store.RollbackInput{RevisionID: input.RevisionID},
-	)
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not rollback article")
 	}
 	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminArticle]{Data: article})
 }
@@ -1584,53 +1458,6 @@ func (s *Server) updateSource(c fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.Source]{Data: source})
 }
 
-func (s *Server) listRevisionClaims(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	claims, err := s.store.ListRevisionClaims(c.Context(), user.ID, c.Params("projectID"), c.Params("revisionID"))
-	if err != nil {
-		return s.adminReadError(c, err, "Revision not found", "Could not list revision claims")
-	}
-	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.Claim]{
-		Data: claims,
-		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: len(claims)},
-	})
-}
-
-func (s *Server) createRevisionClaim(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input claimRequest
-	if err := decodeRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-	}
-	claim, err := s.store.CreateRevisionClaim(c.Context(), user.ID, c.Params("projectID"), c.Params("revisionID"), input.toStoreInput())
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not create claim")
-	}
-	return writeJSON(c, fiber.StatusCreated, Envelope[store.Claim]{Data: claim})
-}
-
-func (s *Server) verifyClaim(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input claimVerificationRequest
-	if err := decodeRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-	}
-	claim, err := s.store.VerifyClaim(c.Context(), user.ID, c.Params("projectID"), c.Params("claimID"), input.toStoreInput())
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not verify claim")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.Claim]{Data: claim})
-}
-
 func (s *Server) listDisclosures(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
@@ -1691,186 +1518,6 @@ func (s *Server) createCorrection(c fiber.Ctx) error {
 		return s.adminMutationError(c, err, "Could not create correction")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.CorrectionNotice]{Data: correction})
-}
-
-func (s *Server) createPreviewToken(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input previewTokenRequest
-	if err := decodeRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-	}
-	token, err := s.store.CreatePreviewToken(c.Context(), user.ID, c.Params("projectID"), store.PreviewTokenInput{
-		ArticleID:  input.ArticleID,
-		RevisionID: input.RevisionID,
-		TTLMinutes: input.TTLMinutes,
-	})
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not create preview token")
-	}
-	return writeJSON(c, fiber.StatusCreated, Envelope[store.PreviewTokenWithSecret]{Data: token})
-}
-
-func (s *Server) revokePreviewToken(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	token, err := s.store.RevokePreviewToken(c.Context(), user.ID, c.Params("projectID"), c.Params("tokenID"))
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not revoke preview token")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.PreviewToken]{Data: token})
-}
-
-func (s *Server) listReviewComments(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	limit := boundedLimit(c.Query("limit", "50"), 100)
-	comments, err := s.store.ListReviewComments(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), c.Query("cursor"), limit+1)
-	if err != nil {
-		return s.adminReadError(c, err, "Article not found", "Could not list review comments")
-	}
-	nextCursor := ""
-	if len(comments) > limit {
-		comments = comments[:limit]
-		nextCursor = comments[len(comments)-1].ID
-	}
-	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.ReviewComment]{
-		Data: comments,
-		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
-	})
-}
-
-func (s *Server) createReviewComment(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input reviewCommentRequest
-	if err := decodeRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-	}
-	comment, err := s.store.CreateReviewComment(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not create review comment")
-	}
-	return writeJSON(c, fiber.StatusCreated, Envelope[store.ReviewComment]{Data: comment})
-}
-
-func (s *Server) resolveReviewComment(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	comment, err := s.store.ResolveReviewComment(c.Context(), user.ID, c.Params("projectID"), c.Params("commentID"))
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not resolve review comment")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewComment]{Data: comment})
-}
-
-func (s *Server) reopenReviewComment(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	comment, err := s.store.ReopenReviewComment(c.Context(), user.ID, c.Params("projectID"), c.Params("commentID"))
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not reopen review comment")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewComment]{Data: comment})
-}
-
-func (s *Server) listReviewAssignments(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	limit := boundedLimit(c.Query("limit", "50"), 100)
-	cursor, err := decodeCursor[store.ReviewAssignmentCursor](c.Query("cursor"))
-	if err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid cursor", "")
-	}
-	assignments, openCount, err := s.store.ListReviewAssignments(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), cursor, limit+1)
-	if err != nil {
-		return s.adminReadError(c, err, "Article not found", "Could not list review assignments")
-	}
-	nextCursor := ""
-	if len(assignments) > limit {
-		assignments = assignments[:limit]
-		last := assignments[len(assignments)-1]
-		nextCursor = encodeCursor(store.ReviewAssignmentCursor{CreatedAt: last.CreatedAt, ID: last.ID})
-	}
-	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.ReviewAssignment]{
-		Data: assignments,
-		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor, OpenCount: &openCount},
-	})
-}
-
-func (s *Server) listReviewAssignees(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	limit := boundedLimit(c.Query("limit", "50"), 100)
-	members, err := s.store.ListReviewAssignees(c.Context(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
-	if err != nil {
-		return s.adminReadError(c, err, "Project not found", "Could not list review assignees")
-	}
-	nextCursor := ""
-	if len(members) > limit {
-		members = members[:limit]
-		nextCursor = members[len(members)-1].UserID
-	}
-	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.AdminProjectMember]{
-		Data: members,
-		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
-	})
-}
-
-func (s *Server) createReviewAssignment(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input reviewAssignmentRequest
-	if err := decodeRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-	}
-	assignment, err := s.store.CreateReviewAssignment(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not create review assignment")
-	}
-	return writeJSON(c, fiber.StatusCreated, Envelope[store.ReviewAssignment]{Data: assignment})
-}
-
-func (s *Server) completeReviewAssignment(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	assignment, err := s.store.CompleteReviewAssignment(c.Context(), user.ID, c.Params("projectID"), c.Params("assignmentID"))
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not complete review assignment")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewAssignment]{Data: assignment})
-}
-
-func (s *Server) cancelReviewAssignment(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	assignment, err := s.store.CancelReviewAssignment(c.Context(), user.ID, c.Params("projectID"), c.Params("assignmentID"))
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not cancel review assignment")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.ReviewAssignment]{Data: assignment})
 }
 
 func (s *Server) requireAdminSession(c fiber.Ctx) error {
@@ -2081,30 +1728,28 @@ const sqliteUTCFormat = "2006-01-02 15:04:05"
 
 func (input projectRequest) toStoreInput() store.ProjectInput {
 	return store.ProjectInput{
-		Slug:                     input.Slug,
-		Name:                     input.Name,
-		PrimaryDomain:            input.PrimaryDomain,
-		VerifiedDomains:          input.VerifiedDomains,
-		BlogBasePath:             input.BlogBasePath,
-		Timezone:                 input.Timezone,
-		PublisherName:            input.PublisherName,
-		PublisherURL:             input.PublisherURL,
-		DefaultRobotsPolicy:      input.DefaultRobotsPolicy,
-		SoloOwnerApprovalEnabled: input.SoloOwnerApprovalEnabled != nil && *input.SoloOwnerApprovalEnabled,
+		Slug:                input.Slug,
+		Name:                input.Name,
+		PrimaryDomain:       input.PrimaryDomain,
+		VerifiedDomains:     input.VerifiedDomains,
+		BlogBasePath:        input.BlogBasePath,
+		Timezone:            input.Timezone,
+		PublisherName:       input.PublisherName,
+		PublisherURL:        input.PublisherURL,
+		DefaultRobotsPolicy: input.DefaultRobotsPolicy,
 	}
 }
 
 func (input projectPatchRequest) toStorePatch() store.ProjectPatch {
 	return store.ProjectPatch{
-		Name:                     input.Name,
-		PrimaryDomain:            input.PrimaryDomain,
-		VerifiedDomains:          input.VerifiedDomains,
-		BlogBasePath:             input.BlogBasePath,
-		Timezone:                 input.Timezone,
-		PublisherName:            input.PublisherName,
-		PublisherURL:             input.PublisherURL,
-		DefaultRobotsPolicy:      input.DefaultRobotsPolicy,
-		SoloOwnerApprovalEnabled: input.SoloOwnerApprovalEnabled,
+		Name:                input.Name,
+		PrimaryDomain:       input.PrimaryDomain,
+		VerifiedDomains:     input.VerifiedDomains,
+		BlogBasePath:        input.BlogBasePath,
+		Timezone:            input.Timezone,
+		PublisherName:       input.PublisherName,
+		PublisherURL:        input.PublisherURL,
+		DefaultRobotsPolicy: input.DefaultRobotsPolicy,
 	}
 }
 
@@ -2136,7 +1781,7 @@ func (input articleRequest) toStoreInput() store.ArticleInput {
 	}
 }
 
-func (input revisionRequest) toStoreInput() store.RevisionInput {
+func (input articleSaveRequest) toStoreInput() store.RevisionInput {
 	return store.RevisionInput{
 		BaseRevisionID:    input.BaseRevisionID,
 		Title:             input.Title,
@@ -2151,7 +1796,7 @@ func (input revisionRequest) toStoreInput() store.RevisionInput {
 	}
 }
 
-func contributorInputs(input []revisionContributorRequest) []store.RevisionContributorInput {
+func contributorInputs(input []contributorRequest) []store.RevisionContributorInput {
 	if input == nil {
 		return nil
 	}
@@ -2186,7 +1831,6 @@ func (input copyArticleRequest) toStoreInput() store.CopyArticleInput {
 	}
 	return store.CopyArticleInput{
 		DestinationProjectID: input.DestinationProjectID,
-		SourceRevisionID:     input.SourceRevisionID,
 		PrimaryCategoryID:    input.PrimaryCategoryID,
 		Slug:                 input.Slug,
 		CanonicalDecision:    input.CanonicalDecision,
@@ -2208,7 +1852,6 @@ func (input publicationRequest) toStoreInput(scheduled bool) (store.PublicationI
 		scheduledForUTC = parsed
 	}
 	return store.PublicationInput{
-		RevisionID:      input.RevisionID,
 		Slug:            input.Slug,
 		CanonicalURL:    input.CanonicalURL,
 		ScheduledForUTC: scheduledForUTC,
@@ -2299,14 +1942,6 @@ func (input authorPatchRequest) toStorePatch() store.AuthorPatch {
 	}
 }
 
-func (input reviewCommentRequest) toStoreInput() store.ReviewCommentInput {
-	return store.ReviewCommentInput{
-		RevisionID: input.RevisionID,
-		BlockID:    input.BlockID,
-		Body:       input.Body,
-	}
-}
-
 func (input sourceRequest) toStoreInput() store.SourceInput {
 	return store.SourceInput{
 		Title:                 input.Title,
@@ -2334,31 +1969,6 @@ func (input sourcePatchRequest) toStorePatch() store.SourcePatch {
 		IsPrimary:             input.IsPrimary,
 		ArchivedCopyReference: input.ArchivedCopyReference,
 		Notes:                 input.Notes,
-	}
-}
-
-func (input claimRequest) toStoreInput() store.ClaimInput {
-	return store.ClaimInput{
-		ClaimText:  input.ClaimText,
-		BlockID:    input.BlockID,
-		Importance: input.Importance,
-		SourceIDs:  input.SourceIDs,
-	}
-}
-
-func (input claimVerificationRequest) toStoreInput() store.ClaimVerificationInput {
-	return store.ClaimVerificationInput{
-		VerificationState: input.VerificationState,
-		SourceIDs:         input.SourceIDs,
-	}
-}
-
-func (input reviewAssignmentRequest) toStoreInput() store.ReviewAssignmentInput {
-	return store.ReviewAssignmentInput{
-		RevisionID:     input.RevisionID,
-		AssignedTo:     input.AssignedTo,
-		AssignmentType: input.AssignmentType,
-		DueAt:          input.DueAt,
 	}
 }
 

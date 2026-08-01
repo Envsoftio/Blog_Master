@@ -2,7 +2,7 @@
   <div class="page-stack content-page">
     <div class="page-heading">
       <div>
-        <p>Plan, review, and publish every article in {{ project?.name || 'this project' }}.</p>
+        <p>Write, organize, and publish articles for {{ project?.name || 'this project' }}.</p>
       </div>
       <button class="button button--compact" type="button" :disabled="pending" @click="refresh">
         <RefreshCw :class="{ spin: pending }" :size="16" />
@@ -16,8 +16,8 @@
         <dd class="metric-card__value">{{ articles.length }}</dd>
       </div>
       <div class="metric-card surface">
-        <div class="metric-card__top"><dt>Needs review</dt><BookOpenCheck :size="17" /></div>
-        <dd class="metric-card__value">{{ articleStats.inReview }}</dd>
+        <div class="metric-card__top"><dt>Drafts</dt><FilePenLine :size="17" /></div>
+        <dd class="metric-card__value">{{ articleStats.drafts }}</dd>
       </div>
       <div class="metric-card surface">
         <div class="metric-card__top"><dt>Published</dt><CheckCircle2 :size="17" /></div>
@@ -34,13 +34,6 @@
         <Search :size="16" />
         <input v-model="filterDraft.search" type="search" maxlength="100" placeholder="Search title, slug, or type" aria-label="Search articles">
       </label>
-      <select v-model="filterDraft.editorialState" class="input" aria-label="Editorial state">
-        <option value="">All workflows</option>
-        <option value="draft">Draft</option>
-        <option value="in_review">In review</option>
-        <option value="changes_requested">Changes requested</option>
-        <option value="approved">Approved</option>
-      </select>
       <select v-model="filterDraft.publicationState" class="input" aria-label="Publication state">
         <option value="">All publication</option>
         <option value="unpublished">Unpublished</option>
@@ -73,7 +66,7 @@
       <div>
         <span class="empty-state__icon"><FileSearch :size="20" /></span>
         <h3>{{ filtersActive ? 'No matching content' : 'No content yet' }}</h3>
-        <p>{{ filtersActive ? 'Try a broader search or clear the active filters.' : 'Create the first article to start your editorial workflow.' }}</p>
+        <p>{{ filtersActive ? 'Try a broader search or clear the active filters.' : 'Create the first article and publish it when it is ready.' }}</p>
         <NuxtLink v-if="canWriteArticles && !filtersActive" class="button button--primary" :to="`/projects/${projectID}/articles/create`">
           Create article
         </NuxtLink>
@@ -107,16 +100,15 @@
             <div class="content-item__copy">
               <NuxtLink v-if="!article.archivedAt" :to="`/projects/${projectID}/articles/${article.id}`">{{ article.title }}</NuxtLink>
               <strong v-else>{{ article.title }}</strong>
-              <p>{{ article.latestRevision?.excerpt || `/${article.slug}` }}</p>
+              <p>/{{ article.slug }}</p>
               <div class="content-item__meta">
                 <span>{{ labelize(article.articleType) }}</span>
-                <span>{{ article.latestRevision ? `Revision ${article.latestRevision.revisionNumber}` : 'No revision' }}</span>
+                <span>Created {{ formatDate(article.createdAt) }}</span>
               </div>
             </div>
           </div>
 
           <div class="content-item__status">
-            <span class="status-pill" :class="editorialClass(article.editorialState)">{{ labelize(article.editorialState) }}</span>
             <span class="status-pill" :class="publicationClass(article.publicationState)">{{ labelize(article.publicationState) }}</span>
           </div>
 
@@ -143,15 +135,6 @@
                 <UploadCloud :size="15" />
                 {{ article.publicationState === 'published' ? 'Publish changes' : 'Publish' }}
               </button>
-              <button v-else-if="canWriteArticles && ['draft', 'changes_requested'].includes(article.editorialState)" class="button button--compact" type="button" @click="submitRevision(article)">
-                <Send :size="15" />
-                Submit
-              </button>
-              <button v-else-if="canReviewArticles && article.editorialState === 'in_review'" class="button button--primary button--compact" type="button" @click="approveRevision(article)">
-                <CheckCircle2 :size="15" />
-                Approve
-              </button>
-
               <details v-if="articleMenuVisible(article)" class="article-menu">
                 <summary class="icon-button" title="More actions" :aria-label="`More actions for ${article.title}`">
                   <Ellipsis :size="17" />
@@ -160,9 +143,6 @@
                   <a v-if="article.canonicalUrl" :href="article.canonicalUrl" target="_blank" rel="noopener noreferrer">
                     <ExternalLink :size="14" />View live URL
                   </a>
-                  <button v-if="!article.archivedAt && canReviewArticles && article.editorialState === 'in_review'" type="button" @click="requestChanges(article)">
-                    <RotateCcw :size="14" />Request changes
-                  </button>
                   <button v-if="!article.archivedAt && canPublishArticles && ['published', 'scheduled'].includes(article.publicationState)" type="button" @click="unpublishArticle(article)">
                     <XCircle :size="14" />Unpublish
                   </button>
@@ -175,14 +155,6 @@
           </div>
         </div>
 
-        <form v-if="!article.archivedAt && canPublishArticles" class="schedule-row" @submit.prevent="scheduleArticle(article)">
-          <span><CalendarClock :size="15" />Schedule publication</span>
-          <label>
-            <span class="sr-only">Schedule {{ article.title }}</span>
-            <input v-model="scheduleDrafts[article.id]" type="datetime-local" :min="minimumSchedule" :disabled="Boolean(actionPending[article.id])" required>
-          </label>
-          <button class="button button--compact" type="submit" :disabled="Boolean(actionPending[article.id]) || !scheduleDrafts[article.id]">Schedule</button>
-        </form>
       </article>
 
       <div v-if="nextCursor" class="content-list__footer">
@@ -200,7 +172,6 @@
 import {
   Archive,
   ArchiveRestore,
-  BookOpenCheck,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
@@ -211,16 +182,13 @@ import {
   FileText,
   LoaderCircle,
   RefreshCw,
-  RotateCcw,
   Search,
-  Send,
   SlidersHorizontal,
   UploadCloud,
   XCircle
 } from 'lucide-vue-next'
 import type { AdminArticle, AdminProject, ArticleListOptions } from '~/composables/useAdminApi'
 
-type EditorialFilter = NonNullable<ArticleListOptions['editorialState']>
 type PublicationFilter = NonNullable<ArticleListOptions['publicationState']>
 
 const route = useRoute()
@@ -238,11 +206,8 @@ const nextCursor = ref('')
 const errorMessage = ref('')
 const successMessage = ref('')
 const actionPending = reactive<Record<string, string>>({})
-const scheduleDrafts = reactive<Record<string, string>>({})
-const minimumSchedule = ref('')
 const filterDraft = reactive({
   search: '',
-  editorialState: '' as EditorialFilter,
   publicationState: '' as PublicationFilter,
   includeArchived: false
 })
@@ -250,17 +215,15 @@ const appliedFilters = reactive({ ...filterDraft })
 
 const projectIsActive = computed(() => project.value?.status === 'active')
 const canWriteArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'writer'].includes(project.value?.role || ''))
-const canReviewArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor', 'reviewer'].includes(project.value?.role || ''))
 const canPublishArticles = computed(() => projectIsActive.value && ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
-const filtersActive = computed(() => Boolean(appliedFilters.search || appliedFilters.editorialState || appliedFilters.publicationState || appliedFilters.includeArchived))
+const filtersActive = computed(() => Boolean(appliedFilters.search || appliedFilters.publicationState || appliedFilters.includeArchived))
 const articleStats = computed(() => ({
-  inReview: articles.value.filter(article => article.editorialState === 'in_review').length,
+  drafts: articles.value.filter(article => article.publicationState === 'unpublished').length,
   published: articles.value.filter(article => article.publicationState === 'published').length,
   scheduled: articles.value.filter(article => article.publicationState === 'scheduled').length
 }))
 
 onMounted(() => {
-  minimumSchedule.value = toLocalInputValue(new Date(Date.now() + 60_000))
   void refresh()
 })
 
@@ -275,7 +238,6 @@ async function refresh() {
     project.value = projectResponse.data
     articles.value = articleResponse.data
     nextCursor.value = articleResponse.meta?.nextCursor || ''
-    seedScheduleDrafts()
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load this project. Sign in again if your session has expired.')
   } finally {
@@ -285,7 +247,6 @@ async function refresh() {
 
 async function applyFilters() {
   appliedFilters.search = filterDraft.search.trim()
-  appliedFilters.editorialState = filterDraft.editorialState
   appliedFilters.publicationState = filterDraft.publicationState
   appliedFilters.includeArchived = filterDraft.includeArchived || filterDraft.publicationState === 'archived'
   await refresh()
@@ -293,11 +254,9 @@ async function applyFilters() {
 
 async function clearFilters() {
   filterDraft.search = ''
-  filterDraft.editorialState = ''
   filterDraft.publicationState = ''
   filterDraft.includeArchived = false
   appliedFilters.search = ''
-  appliedFilters.editorialState = ''
   appliedFilters.publicationState = ''
   appliedFilters.includeArchived = false
   await refresh()
@@ -313,7 +272,6 @@ async function loadMoreArticles() {
     for (const article of response.data) merged.set(article.id, article)
     articles.value = [...merged.values()]
     nextCursor.value = response.meta?.nextCursor || ''
-    seedScheduleDrafts()
   } catch (error) {
     errorMessage.value = normalizeAPIError(error, 'Could not load more articles.')
   } finally {
@@ -326,54 +284,15 @@ function articleQuery(cursor = ''): ArticleListOptions {
     cursor,
     limit: 25,
     search: appliedFilters.search,
-    editorialState: appliedFilters.editorialState,
     publicationState: appliedFilters.publicationState,
     includeArchived: appliedFilters.includeArchived
   }
-}
-
-async function submitRevision(article: AdminArticle) {
-  await mutateArticle(article, 'submit', async () => {
-    await api.revisionAction(projectID.value, latestRevisionID(article), 'submit')
-    successMessage.value = 'Revision submitted for review.'
-  })
-}
-
-async function requestChanges(article: AdminArticle) {
-  await mutateArticle(article, 'request-changes', async () => {
-    await api.revisionAction(projectID.value, latestRevisionID(article), 'request-changes')
-    successMessage.value = 'Changes requested.'
-  })
-}
-
-async function approveRevision(article: AdminArticle) {
-  await mutateArticle(article, 'approve', async () => {
-    await api.revisionAction(projectID.value, latestRevisionID(article), 'approve')
-    successMessage.value = 'Exact revision approved.'
-  })
 }
 
 async function publishArticle(article: AdminArticle) {
   await mutateArticle(article, 'publish', async () => {
     await api.articleAction(projectID.value, article.id, 'publish', publicationBody(article))
     successMessage.value = 'Article published.'
-  })
-}
-
-async function scheduleArticle(article: AdminArticle) {
-  const scheduledAt = scheduleDrafts[article.id]
-  if (!scheduledAt) return
-  const parsed = new Date(scheduledAt)
-  if (Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
-    errorMessage.value = 'Choose a valid future publication time.'
-    return
-  }
-  await mutateArticle(article, 'schedule', async () => {
-    await api.articleAction(projectID.value, article.id, 'schedule', {
-      ...publicationBody(article),
-      scheduledForUtc: parsed.toISOString()
-    })
-    successMessage.value = 'Article scheduled.'
   })
 }
 
@@ -388,7 +307,7 @@ async function unpublishArticle(article: AdminArticle) {
 async function archiveArticle(article: AdminArticle) {
   const warning = article.publicationState === 'published'
     ? 'It will also be removed from the Content API. You can restore it later as an unpublished article.'
-    : 'Its immutable revisions will be retained and it can be restored later.'
+    : 'Its saved content will be retained and it can be restored later.'
   if (!window.confirm(`Archive “${article.title}”? ${warning}`)) return
   await mutateArticle(article, 'archive', async () => {
     await api.deleteArticle(projectID.value, article.id)
@@ -405,10 +324,6 @@ async function restoreArticle(article: AdminArticle) {
 }
 
 async function mutateArticle(article: AdminArticle, action: string, operation: () => Promise<void>) {
-  if (!article.latestRevision && action !== 'restore' && action !== 'archive') {
-    errorMessage.value = 'This article has no revision.'
-    return
-  }
   actionPending[article.id] = action
   clearMessages()
   try {
@@ -426,36 +341,17 @@ async function fetchArticles() {
   const response = await api.listArticles(projectID.value, articleQuery())
   articles.value = response.data
   nextCursor.value = response.meta?.nextCursor || ''
-  seedScheduleDrafts()
 }
 
 function publicationBody(article: AdminArticle) {
   return {
-    revisionId: latestRevisionID(article),
     slug: article.slug,
     ...(article.canonicalUrl ? { canonicalUrl: article.canonicalUrl } : {})
   }
 }
 
-function latestRevisionID(article: AdminArticle) {
-  return article.latestRevision?.id || ''
-}
-
-function seedScheduleDrafts() {
-  for (const article of articles.value) {
-    if (scheduleDrafts[article.id]) continue
-    const date = article.scheduledForUtc ? parseBackendUTC(article.scheduledForUtc) : new Date(Date.now() + 30 * 60 * 1000)
-    scheduleDrafts[article.id] = toLocalInputValue(date)
-  }
-}
-
 function parseBackendUTC(value: string) {
   return new Date(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`)
-}
-
-function toLocalInputValue(date: Date) {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
-  return local.toISOString().slice(0, 16)
 }
 
 function formatDate(value?: string) {
@@ -469,32 +365,21 @@ function activityLabel(article: AdminArticle) {
   if (article.archivedAt) return 'Archived'
   if (article.publicationState === 'published') return 'Published'
   if (article.publicationState === 'scheduled') return 'Scheduled'
-  if (article.latestRevision) return 'Last edited'
-  return 'Created'
+  return 'Draft'
 }
 
 function activityDate(article: AdminArticle) {
   if (article.archivedAt) return article.archivedAt
   if (article.publicationState === 'published' && article.publishedAt) return article.publishedAt
   if (article.publicationState === 'scheduled' && article.scheduledForUtc) return article.scheduledForUtc
-  return article.latestRevision?.createdAt || article.createdAt
+  return article.createdAt
 }
 
 function articleMenuVisible(article: AdminArticle) {
   return Boolean(
     article.canonicalUrl
-    || (!article.archivedAt && canReviewArticles.value && article.editorialState === 'in_review')
     || (!article.archivedAt && canPublishArticles.value)
   )
-}
-
-function editorialClass(state: string) {
-  switch (state) {
-    case 'approved': return 'status-pill--success'
-    case 'in_review': return 'status-pill--info'
-    case 'changes_requested': return 'status-pill--warning'
-    default: return ''
-  }
 }
 
 function publicationClass(state: string) {
@@ -508,11 +393,7 @@ function publicationClass(state: string) {
 
 function actionLabel(action: string) {
   const labels: Record<string, string> = {
-    submit: 'Submitting revision…',
-    'request-changes': 'Requesting changes…',
-    approve: 'Approving revision…',
     publish: 'Publishing article…',
-    schedule: 'Scheduling article…',
     unpublish: 'Unpublishing article…',
     archive: 'Archiving article…',
     restore: 'Restoring article…'
@@ -548,7 +429,7 @@ function normalizeAPIError(error: unknown, fallback: string) {
 .dark .metric-card:nth-child(4) .metric-card__top svg { color: #b7a0f3; }
 .metric-card dt { font-style: normal; }
 .metric-card dd { margin-inline: 0; }
-.content-toolbar { display: grid; grid-template-columns: minmax(260px, 1fr) 160px 160px auto; gap: 8px; padding: 8px; }
+.content-toolbar { display: grid; grid-template-columns: minmax(260px, 1fr) 180px auto; gap: 8px; padding: 8px; }
 .content-search { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); }
 .content-search input { width: 100%; min-width: 0; min-height: 34px; padding: 0; border: 0 !important; box-shadow: none !important; background: transparent !important; font-size: 13px; }
 .content-toolbar > .input { min-height: 36px; padding-block: 6px; font-size: 12px; }
@@ -597,9 +478,6 @@ function normalizeAPIError(error: unknown, fallback: string) {
 .article-menu__panel a, .article-menu__panel button { display: flex; width: 100%; min-height: 34px; align-items: center; gap: 8px; padding: 7px 9px; border: 0; border-radius: 5px; background: transparent; color: var(--text); font-size: 12px; text-align: left; text-decoration: none; cursor: pointer; }
 .article-menu__panel a:hover, .article-menu__panel button:hover { background: var(--surface-subtle); }
 .article-menu__panel .article-menu__danger { color: var(--danger); }
-.schedule-row { display: grid; grid-template-columns: minmax(170px, 1fr) 220px auto; gap: 8px; align-items: center; padding: 9px 16px 9px 63px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--amber-soft) 36%, var(--surface)); }
-.schedule-row > span { display: inline-flex; align-items: center; gap: 7px; color: var(--amber); font-size: 12px; font-weight: 650; }
-.schedule-row input { width: 100%; min-height: 34px; padding: 5px 9px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12px; }
 .content-list__footer { display: flex; justify-content: center; padding: 12px; border-top: 1px solid var(--border); background: var(--surface-subtle); }
 .loading-surface { display: flex; min-height: 150px; align-items: center; justify-content: center; gap: 9px; color: var(--text-soft); }
 .empty-state .button { margin-top: 14px; }
@@ -620,15 +498,12 @@ function normalizeAPIError(error: unknown, fallback: string) {
   .content-item__row { display: block; }
   .content-item__status { margin: 11px 0; }
   .content-item__actions { justify-content: flex-start; }
-  .schedule-row { grid-template-columns: 1fr auto; padding-left: 16px; }
-  .schedule-row > span { grid-column: 1 / -1; }
 }
 @media (max-width: 520px) {
   .page-heading { align-items: stretch; flex-direction: column; }
   .page-heading .button { align-self: flex-start; }
   .content-toolbar { grid-template-columns: 1fr; }
   .content-search, .content-toolbar > .button, .content-toolbar__options { grid-column: 1; }
-  .schedule-row { grid-template-columns: 1fr; }
   .content-item__actions { flex-wrap: wrap; }
   .content-item__actions .button { flex: 1; }
 }

@@ -271,7 +271,6 @@ const roleOptions = [
   { value: 'project_owner', label: 'Project owner' },
   { value: 'project_admin', label: 'Project admin' },
   { value: 'editor', label: 'Editor' },
-  { value: 'reviewer', label: 'Reviewer' },
   { value: 'writer', label: 'Writer' }
 ]
 
@@ -541,14 +540,13 @@ function formatLocalDateTimeInput(date: Date) {
   const pad = (value: number) => String(value).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
-function roleLabel(role: string) { return roleOptions.find(option => option.value === role)?.label || 'Unknown' }
+function roleLabel(role: string) { return roleOptions.find(option => option.value === role)?.label || 'Legacy member' }
 function roleDescription(role: string) {
   const descriptions: Record<string, string> = {
     project_owner: 'Full project control, ownership transfer, account login controls, and publishing.',
-    project_admin: 'Manage members except owners, settings, content, review, and publishing.',
-    editor: 'Create, review, approve, schedule, publish, and manage taxonomy.',
-    reviewer: 'Review exact revisions, request changes, approve, and verify claims.',
-    writer: 'Create and edit drafts, submit revisions, comment, and use writing assistance.'
+    project_admin: 'Manage members except owners, settings, content, and publishing.',
+    editor: 'Create, edit, schedule, publish, and manage taxonomy.',
+    writer: 'Create and edit article drafts and use writing assistance.'
   }
   return descriptions[role] || 'Project-scoped access.'
 }

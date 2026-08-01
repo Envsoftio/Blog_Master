@@ -765,7 +765,7 @@ function insertTaskList() {
     type: 'taskList',
     content: [
       taskItem('Confirm source evidence', false),
-      taskItem('Add expert review notes', false),
+      taskItem('Add subject expert notes', false),
       taskItem('Prepare publishing checks', false)
     ]
   }).run()

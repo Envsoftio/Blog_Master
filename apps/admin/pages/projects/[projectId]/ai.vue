@@ -51,7 +51,7 @@
             <select v-model="brief.jobType">
               <option value="outline">Evidence-aware outline</option>
               <option value="draft">Section draft</option>
-              <option value="quality_check">Quality review</option>
+              <option value="quality_check">Quality check</option>
             </select>
           </label>
           <label class="field field--wide">
@@ -93,7 +93,7 @@
         </div>
 
         <div class="form-footer">
-          <span><ShieldCheck :size="15" />AI output remains a proposal until reviewed.</span>
+          <span><ShieldCheck :size="15" />AI output remains a proposal until you apply it.</span>
           <button class="button button--primary" type="submit" :disabled="creatingJob || !canSubmit || !canWriteEvidence">
             <LoaderCircle v-if="creatingJob" class="spin" :size="16" />
             <WandSparkles v-else :size="16" />
@@ -261,7 +261,7 @@
             <span>Publishing recommendation</span>
             <select v-model="evidenceForm.publicationRecommendation" required>
               <option value="" disabled>Select a recommendation</option>
-              <option value="ready">Ready for evidence review</option>
+              <option value="ready">Ready to use</option>
               <option value="request_unique_evidence">Request unique evidence</option>
               <option value="do_not_publish">Do not publish</option>
             </select>
@@ -433,7 +433,7 @@
             <span class="mono">{{ job.id }}</span>
           </div>
           <details v-if="job.result && job.status === 'succeeded'" class="job-result">
-            <summary>Review generated proposal</summary>
+            <summary>Generated proposal</summary>
             <pre>{{ prettyJSON(job.result) }}</pre>
           </details>
           <p v-else-if="job.error" class="job-error">{{ labelize(job.error) }}</p>
@@ -608,7 +608,7 @@ const readinessScore = computed(() => Math.round(readinessChecks.value.filter(it
 const canSubmit = computed(() => readinessChecks.value.every(item => item.ready))
 const canManageVoice = computed(() => project.value?.role === 'project_owner' || project.value?.role === 'project_admin')
 const canWriteEvidence = computed(() => ['project_owner', 'project_admin', 'editor', 'writer'].includes(project.value?.role || ''))
-const canApproveEvidence = computed(() => ['project_owner', 'project_admin', 'editor', 'reviewer'].includes(project.value?.role || ''))
+const canApproveEvidence = computed(() => ['project_owner', 'project_admin', 'editor'].includes(project.value?.role || ''))
 const hasUniqueEvidence = computed(() =>
   lineItems(evidenceForm.productFacts).length > 0 ||
   lineItems(evidenceForm.subjectMatterNotes).length > 0 ||

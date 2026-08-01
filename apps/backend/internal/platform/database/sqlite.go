@@ -73,6 +73,9 @@ var aiExecutionMigration string
 //go:embed migrations/0021_article_autosaves.sql
 var articleAutosavesMigration string
 
+//go:embed migrations/0023_project_publications_locale_removal.sql
+var projectPublicationsLocaleRemovalMigration string
+
 type migration struct {
 	version    string
 	statements string
@@ -130,6 +133,7 @@ func Migrate(db *sql.DB) error {
 		{version: "0019_media_expected_checksum", statements: mediaExpectedChecksumMigration},
 		{version: "0020_ai_execution", statements: aiExecutionMigration},
 		{version: "0021_article_autosaves", statements: articleAutosavesMigration},
+		{version: "0023_project_publications_locale_removal", statements: projectPublicationsLocaleRemovalMigration},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {

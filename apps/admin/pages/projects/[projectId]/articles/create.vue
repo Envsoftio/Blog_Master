@@ -2,7 +2,7 @@
   <div class="page-stack create-page">
     <div class="page-heading">
       <div>
-        <p>Start with the article brief, choose an editorial template, and prepare the opening revision.</p>
+        <p>Start with the article basics, add the content, and save your first draft.</p>
       </div>
       <div class="create-heading-actions">
         <NuxtLink class="button button--compact" :to="`/projects/${projectID}/articles`">
@@ -62,7 +62,7 @@
             <div><span>Public attribution</span><h2>Authors and credits</h2></div>
           </div>
           <div class="create-card__body">
-            <RevisionContributorsEditor v-model="articleForm.contributors" :authors="authors" />
+            <ArticleContributorsEditor v-model="articleForm.contributors" :authors="authors" />
             <small v-if="authors.length === 0" class="attribution-help">
               Create an active profile on the <NuxtLink :to="`/projects/${projectID}/authors`">Authors page</NuxtLink> before saving the draft.
             </small>
@@ -94,11 +94,11 @@
         <section class="create-card surface">
           <div class="create-card__header">
             <span class="create-card__icon"><BookOpenCheck :size="18" /></span>
-            <div><span>Opening revision</span><h2>Editorial content</h2></div>
+            <div><span>Article draft</span><h2>Content</h2></div>
           </div>
 
-          <div class="create-card__body revision-fields">
-            <div class="revision-summary-grid">
+          <div class="create-card__body article-fields">
+            <div class="article-summary-grid">
               <label class="field">
                 <span>Deck</span>
                 <textarea v-model.trim="articleForm.deck" class="textarea--compact" placeholder="Supporting line beneath the title" />
@@ -256,11 +256,11 @@ import {
   Save,
   Users
 } from 'lucide-vue-next'
-import type { AdminArticle, AdminAuthor, AdminMediaAsset, AdminProject, AdminSource, RevisionContributorInput, SEOInputPayload, TaxonomyTerm } from '~/composables/useAdminApi'
+import type { AdminArticle, AdminAuthor, AdminMediaAsset, AdminProject, AdminSource, ArticleContributorInput, SEOInputPayload, TaxonomyTerm } from '~/composables/useAdminApi'
 import {
   ARTICLE_TYPES,
   articleBodyDocumentFromHTML,
-  hasValidRevisionContributors,
+  hasValidArticleContributors,
   htmlToPlainText,
   labelize,
   normalizeAPIError,
@@ -301,7 +301,7 @@ const articleForm = reactive({
   title: '',
   slug: '',
   primaryCategoryId: '',
-  contributors: [] as RevisionContributorInput[],
+  contributors: [] as ArticleContributorInput[],
   deck: '',
   excerpt: '',
   shortAnswer: '',
@@ -331,7 +331,7 @@ const canCreateArticle = computed(() => Boolean(
   && articleForm.title.trim()
   && articleForm.slug.trim()
   && articleForm.primaryCategoryId
-  && hasValidRevisionContributors(articleForm.contributors)
+  && hasValidArticleContributors(articleForm.contributors)
 ))
 const canCreateCategory = computed(() => canManageTaxonomy.value && Boolean(categoryForm.name.trim() && categoryForm.slug.trim()))
 const htmlForSubmission = computed(() => hasMeaningfulStructuredHTML(articleForm.html)
@@ -580,7 +580,7 @@ function restoreCreateDraft() {
   })
 }
 
-function isContributorDraftValue(value: unknown): value is RevisionContributorInput[] {
+function isContributorDraftValue(value: unknown): value is ArticleContributorInput[] {
   return Array.isArray(value) && value.every((contributor) => {
     if (!contributor || typeof contributor !== 'object') return false
     const candidate = contributor as Record<string, unknown>
@@ -649,10 +649,10 @@ function escapeHTML(value: string) {
 .template-option { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; transition: border-color 140ms ease, background 140ms ease, color 140ms ease; }
 .template-option:hover { border-color: var(--border-strong); background: var(--surface-subtle); color: var(--text); }
 .template-option.is-selected { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); background: var(--primary-soft); color: var(--primary); }
-.revision-fields { gap: 16px; }
+.article-fields { gap: 16px; }
 .attribution-help { color: var(--text-faint); font-size: 12px; }
 .attribution-help a { color: var(--primary); }
-.revision-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.article-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .textarea--compact { min-height: 82px !important; }
 .seo-fields { min-width: 0; margin: 0; padding: 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); }
 .seo-fields legend { padding: 0 7px; color: var(--text-soft); font-size: 12px; font-weight: 700; text-transform: uppercase; }
@@ -699,7 +699,7 @@ function escapeHTML(value: string) {
 @media (max-width: 1180px) {
   .create-layout { grid-template-columns: minmax(0, 1fr) 300px; }
   .template-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .revision-summary-grid { grid-template-columns: 1fr; }
+  .article-summary-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 980px) {
   .create-layout { grid-template-columns: 1fr; }

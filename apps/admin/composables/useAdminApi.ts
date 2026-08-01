@@ -29,7 +29,6 @@ export type AdminProject = {
   publisherName?: string
   publisherUrl?: string
   defaultRobotsPolicy?: string
-  soloOwnerApprovalEnabled: boolean
   createdAt?: string
   updatedAt?: string
 }
@@ -51,7 +50,6 @@ export type AdminRevision = {
   deck?: string
   excerpt?: string
   shortAnswer?: string
-  editorialState: string
   contentHash?: string
   createdAt?: string
 }
@@ -62,7 +60,6 @@ export type AdminArticle = {
   articleType: string
   slug: string
   title: string
-  editorialState: string
   publicationState: string
   canonicalPolicy?: string
   scheduledForUtc?: string
@@ -71,33 +68,6 @@ export type AdminArticle = {
   archivedAt?: string
   latestRevision?: AdminRevision
   createdAt: string
-}
-
-export type AdminRevisionSummary = AdminRevision & {
-  baseRevisionId?: string
-  published: boolean
-}
-
-export type AdminRevisionDetail = AdminRevisionSummary & {
-  alternateTitle?: string
-  bodyDocument: unknown
-  tableOfContents: unknown
-  authorSnapshot: unknown
-  contributorSnapshot: unknown
-  taxonomySnapshot: unknown
-  sourceSnapshot: unknown
-  claimSnapshot: unknown
-  seoSnapshot: unknown
-  socialSnapshot: unknown
-  mediaSnapshot: unknown
-  disclosureSnapshot: unknown
-  correctionSummary: unknown
-  sanitizedHtml: string
-  plainText: string
-  markdownExport: string
-  wordCount: number
-  readingTimeSeconds: number
-  changeSummary?: string
 }
 
 export type TaxonomyTerm = {
@@ -187,37 +157,6 @@ export type AdminAPIKey = {
   createdAt: string
   revokedAt?: string
   status: 'active' | 'expired' | 'revoked'
-}
-
-export type ReviewComment = {
-  id: string
-  projectId: string
-  articleId: string
-  revisionId: string
-  blockId?: string
-  body: string
-  status: string
-  createdBy: string
-  createdAt: string
-  resolvedBy?: string
-  resolvedAt?: string
-}
-
-export type ReviewAssignment = {
-  id: string
-  projectId: string
-  articleId: string
-  revisionId?: string
-  assignedTo: string
-  assigneeEmail?: string
-  assigneeRole?: string
-  assignmentType: string
-  dueAt?: string
-  status: string
-  createdBy: string
-  createdAt: string
-  closedBy?: string
-  closedAt?: string
 }
 
 export type AuditEvent = {
@@ -490,20 +429,6 @@ export type AdminSource = {
   createdAt: string
 }
 
-export type AdminClaim = {
-  id: string
-  projectId: string
-  articleId: string
-  revisionId: string
-  claimText: string
-  blockId?: string
-  importance: string
-  verificationState: string
-  verifiedBy?: string
-  verifiedAt?: string
-  sourceIds: string[]
-}
-
 export type AdminDisclosure = {
   id: string
   projectId: string
@@ -526,25 +451,12 @@ export type AdminCorrection = {
   supersedesNoticeId?: string
 }
 
-export type PreviewToken = {
-  id: string
-  projectId: string
-  articleId: string
-  revisionId: string
-  expiresAt: string
-  lastUsedAt?: string
-  createdBy: string
-  createdAt: string
-  revokedAt?: string
-}
-
 export type ProjectCreatePayload = {
   name: string
   slug: string
   primaryDomain?: string
   blogBasePath: string
   timezone: string
-  soloOwnerApprovalEnabled?: boolean
 }
 
 export type CategoryCreatePayload = {
@@ -567,7 +479,6 @@ export type ProjectUpdatePayload = Partial<{
   publisherName: string
   publisherUrl: string
   defaultRobotsPolicy: string
-  soloOwnerApprovalEnabled: boolean
 }>
 
 export type ArticleCreatePayload = {
@@ -575,7 +486,7 @@ export type ArticleCreatePayload = {
   title: string
   slug: string
   primaryCategoryId: string
-  contributors?: RevisionContributorInput[]
+  contributors?: ArticleContributorInput[]
   deck?: string
   excerpt?: string
   shortAnswer?: string
@@ -584,11 +495,11 @@ export type ArticleCreatePayload = {
   seo?: SEOInputPayload
 }
 
-export type ArticleRevisionPayload = {
+export type ArticleSavePayload = {
   baseRevisionId: string
   title: string
   primaryCategoryId?: string
-  contributors?: RevisionContributorInput[]
+  contributors?: ArticleContributorInput[]
   deck?: string
   excerpt?: string
   shortAnswer?: string
@@ -597,13 +508,13 @@ export type ArticleRevisionPayload = {
   seo?: SEOInputPayload
 }
 
-export type RevisionContributorInput = {
+export type ArticleContributorInput = {
   authorId: string
   role: 'primary_author' | 'co_author' | 'editor' | 'expert_reviewer' | 'photographer' | 'other'
   position: number
 }
 
-export function hasValidRevisionContributors(input: RevisionContributorInput[]) {
+export function hasValidArticleContributors(input: ArticleContributorInput[]) {
   if (input.filter(contributor => contributor.role === 'primary_author').length !== 1) return false
   const assignments = new Set<string>()
   const positions = new Set<string>()
@@ -620,7 +531,6 @@ export function hasValidRevisionContributors(input: RevisionContributorInput[]) 
 
 export type ArticleCopyPayload = {
   destinationProjectId: string
-  sourceRevisionId: string
   primaryCategoryId: string
   slug: string
   canonicalDecision: 'canonical_original' | 'material_adaptation'
@@ -632,7 +542,6 @@ export type ArticleListOptions = {
   cursor?: string
   limit?: number
   search?: string
-  editorialState?: '' | 'draft' | 'in_review' | 'changes_requested' | 'approved'
   publicationState?: '' | 'unpublished' | 'scheduled' | 'published' | 'archived'
   includeArchived?: boolean
 }
@@ -920,7 +829,6 @@ export function useAdminApi() {
         limit: normalized.limit || 50,
         ...(normalized.cursor ? { cursor: normalized.cursor } : {}),
         ...(normalized.search ? { q: normalized.search } : {}),
-        ...(normalized.editorialState ? { editorialState: normalized.editorialState } : {}),
         ...(normalized.publicationState ? { publicationState: normalized.publicationState } : {}),
         ...(normalized.includeArchived ? { includeArchived: true } : {})
       }
@@ -944,24 +852,6 @@ export function useAdminApi() {
     }))
   }
 
-  async function listRevisions(projectID: string, articleID: string, options: number | { cursor?: string, limit?: number } = 100) {
-    const normalized = typeof options === 'number' ? { limit: options } : options
-    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminRevisionSummary>>(`/api/v1/projects/${projectID}/articles/${articleID}/revisions`, {
-      query: { limit: normalized.limit || 25, ...(normalized.cursor ? { cursor: normalized.cursor } : {}) }
-    }))
-  }
-
-  async function getRevision(projectID: string, articleID: string, revisionID: string) {
-    return await request<APIEnvelope<AdminRevisionDetail>>(`/api/v1/projects/${projectID}/articles/${articleID}/revisions/${revisionID}`)
-  }
-
-  async function createRevision(projectID: string, articleID: string, payload: ArticleRevisionPayload) {
-    return await request<APIEnvelope<AdminRevision>>(`/api/v1/projects/${projectID}/articles/${articleID}/revisions`, await withCSRF({
-      method: 'POST',
-      body: payload
-    }))
-  }
-
   async function copyArticle(projectID: string, articleID: string, payload: ArticleCopyPayload) {
     return await request<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID}/articles/${articleID}/copy-to-project`, await withCSRF({
       method: 'POST',
@@ -972,62 +862,12 @@ export function useAdminApi() {
   async function articleAction(
     projectID: string,
     articleID: string,
-    action: 'publish' | 'schedule' | 'unpublish' | 'rollback' | 'restore',
+    action: 'publish' | 'schedule' | 'unpublish' | 'restore',
     body: Record<string, unknown> = {}
   ) {
     return await request<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID}/articles/${articleID}/${action}`, await withCSRF({
       method: 'POST',
       body
-    }))
-  }
-
-  async function revisionAction(projectID: string, revisionID: string, action: 'submit' | 'request-changes' | 'approve', body: Record<string, unknown> = {}) {
-    return await request<APIEnvelope<AdminRevision>>(`/api/v1/projects/${projectID}/revisions/${revisionID}/${action}`, await withCSRF({
-      method: 'POST',
-      body
-    }))
-  }
-
-  async function listComments(projectID: string, articleID: string) {
-    return normalizeAPIListEnvelope(await request<APIListEnvelope<ReviewComment>>(`/api/v1/projects/${projectID}/articles/${articleID}/comments`))
-  }
-
-  async function createComment(projectID: string, articleID: string, payload: { revisionId: string, blockId?: string, body: string }) {
-    return await request<APIEnvelope<ReviewComment>>(`/api/v1/projects/${projectID}/articles/${articleID}/comments`, await withCSRF({
-      method: 'POST',
-      body: payload
-    }))
-  }
-
-  async function mutateComment(projectID: string, commentID: string, action: 'resolve' | 'reopen') {
-    return await request<APIEnvelope<ReviewComment>>(`/api/v1/projects/${projectID}/comments/${commentID}/${action}`, await withCSRF({
-      method: 'POST'
-    }))
-  }
-
-  async function listReviewAssignees(projectID: string, cursor = '', limit = 100) {
-    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminProjectMember>>(`/api/v1/projects/${projectID}/review-assignees`, {
-      query: { limit, ...(cursor ? { cursor } : {}) }
-    }))
-  }
-
-  async function listReviewAssignments(projectID: string, articleID: string, cursor = '', limit = 50) {
-    return normalizeAPIListEnvelope(await request<APIListEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID}/articles/${articleID}/assignments`, {
-      query: { limit, ...(cursor ? { cursor } : {}) }
-    }))
-  }
-
-  async function createReviewAssignment(projectID: string, articleID: string, payload: { revisionId?: string, assignedTo: string, assignmentType: string, dueAt?: string }) {
-    return await request<APIEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID}/articles/${articleID}/assignments`, await withCSRF({
-      method: 'POST',
-      body: payload
-    }))
-  }
-
-  async function mutateReviewAssignment(projectID: string, assignmentID: string, action: 'complete' | 'cancel') {
-    return await request<APIEnvelope<ReviewAssignment>>(`/api/v1/projects/${projectID}/assignments/${assignmentID}/${action}`, await withCSRF({
-      method: 'POST',
-      body: {}
     }))
   }
 
@@ -1195,29 +1035,6 @@ export function useAdminApi() {
     }))
   }
 
-  async function listClaims(projectID: string, revisionID: string) {
-    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminClaim>>(`/api/v1/projects/${projectID}/revisions/${revisionID}/claims`))
-  }
-
-  async function createClaim(projectID: string, revisionID: string, payload: {
-    claimText: string
-    blockId?: string
-    importance: string
-    sourceIds: string[]
-  }) {
-    return await request<APIEnvelope<AdminClaim>>(`/api/v1/projects/${projectID}/revisions/${revisionID}/claims`, await withCSRF({
-      method: 'POST',
-      body: payload
-    }))
-  }
-
-  async function verifyClaim(projectID: string, claimID: string, verificationState: string, sourceIds?: string[]) {
-    return await request<APIEnvelope<AdminClaim>>(`/api/v1/projects/${projectID}/claims/${claimID}/verify`, await withCSRF({
-      method: 'POST',
-      body: { verificationState, ...(sourceIds ? { sourceIds } : {}) }
-    }))
-  }
-
   async function listDisclosures(projectID: string, articleID: string) {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminDisclosure>>(`/api/v1/projects/${projectID}/articles/${articleID}/disclosures`))
   }
@@ -1245,20 +1062,6 @@ export function useAdminApi() {
     return await request<APIEnvelope<AdminCorrection>>(`/api/v1/projects/${projectID}/articles/${articleID}/corrections`, await withCSRF({
       method: 'POST',
       body: payload
-    }))
-  }
-
-  async function createPreviewToken(projectID: string, articleID: string, revisionID: string, ttlMinutes = 30) {
-    return await request<APIEnvelope<{ token: PreviewToken, secret: string }>>(`/api/v1/projects/${projectID}/preview-tokens`, await withCSRF({
-      method: 'POST',
-      body: { articleId: articleID, revisionId: revisionID, ttlMinutes }
-    }))
-  }
-
-  async function revokePreviewToken(projectID: string, tokenID: string) {
-    return await request<APIEnvelope<PreviewToken>>(`/api/v1/projects/${projectID}/preview-tokens/${tokenID}/revoke`, await withCSRF({
-      method: 'POST',
-      body: {}
     }))
   }
 
@@ -1301,19 +1104,8 @@ export function useAdminApi() {
     createArticle,
     getArticle,
     deleteArticle,
-    listRevisions,
-    getRevision,
-    createRevision,
     copyArticle,
     articleAction,
-    revisionAction,
-    listComments,
-    createComment,
-    mutateComment,
-    listReviewAssignees,
-    listReviewAssignments,
-    createReviewAssignment,
-    mutateReviewAssignment,
     listAuditEvents,
     listMedia,
     initiateMediaUpload,
@@ -1338,15 +1130,10 @@ export function useAdminApi() {
     listSources,
     createSource,
     updateSource,
-    listClaims,
-    createClaim,
-    verifyClaim,
     listDisclosures,
     createDisclosure,
     listCorrections,
-    createCorrection,
-    createPreviewToken,
-    revokePreviewToken
+    createCorrection
   }
 }
 

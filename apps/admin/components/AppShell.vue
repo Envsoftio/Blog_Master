@@ -71,10 +71,6 @@
 
           <div class="nav-group">
             <p class="nav-group__label">Editorial</p>
-            <NuxtLink class="nav-item" :class="{ 'is-active': isProjectSection('review') }" :to="projectPath('review')">
-              <ListChecks :size="18" />
-              <span>Review queue</span>
-            </NuxtLink>
             <NuxtLink class="nav-item" :class="{ 'is-active': isProjectSection('authors') }" :to="projectPath('authors')">
               <UsersRound :size="18" />
               <span>Authors</span>
@@ -182,7 +178,6 @@ import {
   KeyRound,
   Laptop,
   LayoutDashboard,
-  ListChecks,
   LogOut,
   Menu,
   Moon,
@@ -234,12 +229,11 @@ const pageTitle = computed(() => {
   if (route.path === '/projects') return 'Projects'
   const titles: Record<string, string> = {
     articles: route.path.endsWith('/create') ? 'Create article' : route.params.articleId ? 'Article editor' : 'Content',
-    calendar: 'Editorial calendar',
+    calendar: 'Publishing calendar',
     categories: 'Taxonomy',
     tags: 'Tags',
     series: 'Series',
     media: 'Media library',
-    review: 'Review queue',
     authors: 'Authors',
     ai: 'AI workspace',
     members: 'Members',

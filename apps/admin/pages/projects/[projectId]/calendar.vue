@@ -25,8 +25,8 @@
         <p class="metric-card__value">{{ publishedThisMonth }}</p>
       </article>
       <article class="metric-card surface">
-        <div class="metric-card__top"><span>In review</span><ListChecks :size="17" /></div>
-        <p class="metric-card__value">{{ inReview.length }}</p>
+        <div class="metric-card__top"><span>Published total</span><FileText :size="17" /></div>
+        <p class="metric-card__value">{{ publishedTotal }}</p>
       </article>
       <article class="metric-card surface">
         <div class="metric-card__top"><span>Unscheduled drafts</span><Inbox :size="17" /></div>
@@ -42,7 +42,7 @@
     </div>
 
     <div v-else class="calendar-layout">
-      <section class="calendar surface" aria-label="Monthly editorial calendar">
+      <section class="calendar surface" aria-label="Monthly publishing calendar">
         <header class="calendar__header">
           <div>
             <p class="calendar__eyebrow">{{ currentYear }}</p>
@@ -128,7 +128,7 @@
               <span class="article-type-icon"><FileText :size="16" /></span>
               <span class="rail-list__copy">
                 <strong>{{ article.title }}</strong>
-                <small>{{ labelize(article.editorialState) }}</small>
+                <small>Draft</small>
               </span>
             </NuxtLink>
           </div>
@@ -147,7 +147,6 @@ import {
   CircleCheck,
   FileText,
   Inbox,
-  ListChecks,
   LoaderCircle
 } from 'lucide-vue-next'
 import type { AdminArticle } from '~/composables/useAdminApi'
@@ -166,12 +165,11 @@ const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const scheduled = computed(() => articles.value
   .filter(article => article.publicationState === 'scheduled' && article.scheduledForUtc)
   .sort((a, b) => dateValue(a.scheduledForUtc) - dateValue(b.scheduledForUtc)))
-const inReview = computed(() => articles.value.filter(article => article.editorialState === 'in_review'))
 const unscheduled = computed(() => articles.value.filter(article =>
-  ['draft', 'changes_requested', 'approved'].includes(article.editorialState)
+  article.publicationState === 'unpublished'
   && !article.scheduledForUtc
-  && article.publicationState !== 'published'
 ))
+const publishedTotal = computed(() => articles.value.filter(article => article.publicationState === 'published').length)
 const currentMonthLabel = computed(() => visibleMonth.value.toLocaleDateString(undefined, { month: 'long' }))
 const currentYear = computed(() => visibleMonth.value.getFullYear())
 const publishedThisMonth = computed(() => articles.value.filter(article => {
@@ -213,7 +211,7 @@ async function loadArticles() {
   try {
     articles.value = (await api.listArticles(projectID.value)).data
   } catch (error) {
-    errorMessage.value = normalizeAPIError(error, 'Could not load the editorial calendar.')
+    errorMessage.value = normalizeAPIError(error, 'Could not load the publishing calendar.')
   } finally {
     pending.value = false
   }

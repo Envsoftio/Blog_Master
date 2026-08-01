@@ -30,6 +30,17 @@ type WebhookDelivery struct {
 	SigningSecretErrorSafe string
 }
 
+func requireOneRowAffected(result sql.Result) error {
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 type WebhookDeliveryOutcome struct {
 	StatusCode             int
 	ResponseDurationMillis int64

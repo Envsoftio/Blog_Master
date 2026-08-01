@@ -20,6 +20,252 @@ func testDatabase(t *testing.T) *sql.DB {
 	return db
 }
 
+func legacyLocaleInitialMigration(t *testing.T) string {
+	t.Helper()
+	legacy := initialMigration
+	replacements := [][2]string{
+		{
+			"CREATE TABLE project_publications (\n    id TEXT PRIMARY KEY,\n    project_id TEXT NOT NULL,\n    content_id TEXT NOT NULL,\n    slug TEXT NOT NULL,",
+			"CREATE TABLE project_publications (\n    id TEXT PRIMARY KEY,\n    project_id TEXT NOT NULL,\n    content_id TEXT NOT NULL,\n    locale TEXT NOT NULL,\n    slug TEXT NOT NULL,",
+		},
+		{
+			"    UNIQUE(project_id, content_id),\n    UNIQUE(project_id, slug)\n);\n-- statement\nCREATE TABLE article_taxonomy",
+			"    UNIQUE(project_id, content_id, locale),\n    UNIQUE(project_id, locale, slug)\n);\n-- statement\nCREATE TABLE article_taxonomy",
+		},
+		{
+			"CREATE INDEX idx_publications_project_slug ON project_publications(project_id, slug, publication_state);",
+			"CREATE INDEX idx_publications_project_slug ON project_publications(project_id, locale, slug, publication_state);",
+		},
+	}
+	for _, replacement := range replacements {
+		if strings.Count(legacy, replacement[0]) != 1 {
+			t.Fatalf("legacy publication fixture expected one occurrence of %q", replacement[0])
+		}
+		legacy = strings.Replace(legacy, replacement[0], replacement[1], 1)
+	}
+	return legacy
+}
+
+func seedLegacyLocalePublication(t *testing.T, db *sql.DB, id, contentID, locale, slug, updatedAt string) {
+	t.Helper()
+	if _, err := db.Exec(`
+		INSERT INTO project_publications(
+		  id, project_id, content_id, locale, slug, canonical_url,
+		  publication_state, publication_version, robots_directive,
+		  draft_seo_overrides_json, draft_social_overrides_json, updated_at
+		) VALUES (?, 'project-a', ?, ?, ?, ?, 'unpublished', 7, 'noindex,follow', '{"title":"draft"}', '{"image":"draft.png"}', ?)
+	`, id, contentID, locale, slug, "https://example.test/blog/"+slug, updatedAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProjectPublicationMigrationRepairsLegacyLocaleConstraint(t *testing.T) {
+	db, err := OpenSQLite(filepath.Join(t.TempDir(), "legacy-publication.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigration(db, migration{version: "0001_initial", statements: legacyLocaleInitialMigration(t)}); err != nil {
+		t.Fatal(err)
+	}
+	seedProjects(t, db)
+	if _, err := db.Exec(`
+		INSERT INTO content_items(id, project_id, article_type, created_by)
+		VALUES ('article', 'project-a', 'guide', 'owner');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	seedLegacyLocalePublication(t, db, "publication", "article", "en", "legacy-guide", "2026-01-01 00:00:00")
+
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	var localeColumns int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM pragma_table_info('project_publications')
+		WHERE name = 'locale'
+	`).Scan(&localeColumns); err != nil {
+		t.Fatal(err)
+	}
+	if localeColumns != 0 {
+		t.Fatal("expected the legacy publication locale column to be removed")
+	}
+	var archivedRows, archivedLocaleColumns int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM project_publications_locale_archive`).Scan(&archivedRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM pragma_table_info('project_publications_locale_archive')
+		WHERE name = 'locale'
+	`).Scan(&archivedLocaleColumns); err != nil {
+		t.Fatal(err)
+	}
+	if archivedRows != 1 || archivedLocaleColumns != 1 {
+		t.Fatalf("expected a locale-preserving archive row, rows=%d localeColumns=%d", archivedRows, archivedLocaleColumns)
+	}
+	var version int64
+	var robots, seoOverrides, socialOverrides string
+	if err := db.QueryRow(`
+		SELECT publication_version, robots_directive,
+		       draft_seo_overrides_json, draft_social_overrides_json
+		FROM project_publications
+		WHERE id = 'publication'
+	`).Scan(&version, &robots, &seoOverrides, &socialOverrides); err != nil {
+		t.Fatal(err)
+	}
+	if version != 7 || robots != "noindex,follow" || seoOverrides != `{"title":"draft"}` || socialOverrides != `{"image":"draft.png"}` {
+		t.Fatalf("legacy publication metadata was not preserved: version=%d robots=%q seo=%q social=%q", version, robots, seoOverrides, socialOverrides)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO project_publications(id, project_id, content_id, slug, canonical_url)
+		VALUES ('replacement', 'project-a', 'article', 'updated-guide', 'https://example.test/blog/updated-guide')
+		ON CONFLICT(project_id, content_id) DO UPDATE SET
+		  slug = excluded.slug,
+		  canonical_url = excluded.canonical_url
+	`); err != nil {
+		t.Fatalf("expected the repaired conflict target to be usable: %v", err)
+	}
+	if _, err := db.Exec(`
+		UPDATE project_publications
+		SET publication_state = 'published'
+		WHERE project_id = 'project-a' AND content_id = 'article'
+	`); err == nil || !strings.Contains(err.Error(), "publication requires") {
+		t.Fatalf("expected the recreated publication update trigger to reject an invalid publish, got %v", err)
+	}
+}
+
+func TestProjectPublicationMigrationArchivesExtraLocalesForOneArticle(t *testing.T) {
+	db, err := OpenSQLite(filepath.Join(t.TempDir(), "legacy-publication-collision.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigration(db, migration{version: "0001_initial", statements: legacyLocaleInitialMigration(t)}); err != nil {
+		t.Fatal(err)
+	}
+	seedProjects(t, db)
+	if _, err := db.Exec(`
+		INSERT INTO content_items(id, project_id, article_type, created_by)
+		VALUES ('article', 'project-a', 'guide', 'owner');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	seedLegacyLocalePublication(t, db, "publication-en", "article", "en", "english-guide", "2026-01-01 00:00:00")
+	seedLegacyLocalePublication(t, db, "publication-fr", "article", "fr", "french-guide", "2026-02-01 00:00:00")
+
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	var applied, rows, archivedRows, localeColumns int
+	if err := db.QueryRow(`
+		SELECT COUNT(1) FROM schema_migrations
+		WHERE version = '0023_project_publications_locale_removal'
+	`).Scan(&applied); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(1) FROM project_publications`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(1) FROM project_publications_locale_archive`).Scan(&archivedRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM pragma_table_info('project_publications')
+		WHERE name = 'locale'
+	`).Scan(&localeColumns); err != nil {
+		t.Fatal(err)
+	}
+	if applied != 1 || rows != 1 || archivedRows != 2 || localeColumns != 0 {
+		t.Fatalf("unexpected migrated/archive state, applied=%d rows=%d archivedRows=%d localeColumns=%d", applied, rows, archivedRows, localeColumns)
+	}
+	var retainedID, retainedSlug string
+	if err := db.QueryRow(`SELECT id, slug FROM project_publications`).Scan(&retainedID, &retainedSlug); err != nil {
+		t.Fatal(err)
+	}
+	if retainedID != "publication-fr" || retainedSlug != "french-guide" {
+		t.Fatalf("expected the most recently updated locale row to remain current, id=%q slug=%q", retainedID, retainedSlug)
+	}
+	var archivedLocales string
+	if err := db.QueryRow(`
+		SELECT group_concat(locale, ',')
+		FROM (
+			SELECT locale FROM project_publications_locale_archive ORDER BY locale
+		)
+	`).Scan(&archivedLocales); err != nil {
+		t.Fatal(err)
+	}
+	if archivedLocales != "en,fr" {
+		t.Fatalf("expected both original locales in the archive, got %q", archivedLocales)
+	}
+}
+
+func TestProjectPublicationMigrationDisambiguatesCrossLocaleSlugs(t *testing.T) {
+	db, err := OpenSQLite(filepath.Join(t.TempDir(), "legacy-publication-slugs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigration(db, migration{version: "0001_initial", statements: legacyLocaleInitialMigration(t)}); err != nil {
+		t.Fatal(err)
+	}
+	seedProjects(t, db)
+	if _, err := db.Exec(`
+		INSERT INTO content_items(id, project_id, article_type, created_by)
+		VALUES
+		  ('article-en', 'project-a', 'guide', 'owner'),
+		  ('article-fr', 'project-a', 'guide', 'owner')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	seedLegacyLocalePublication(t, db, "publication-en", "article-en", "en", "shared-guide", "2026-01-01 00:00:00")
+	seedLegacyLocalePublication(t, db, "publication-fr", "article-fr", "fr", "shared-guide", "2026-02-01 00:00:00")
+
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Query(`SELECT slug FROM project_publications ORDER BY slug`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var slugs []string
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			t.Fatal(err)
+		}
+		slugs = append(slugs, slug)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(slugs) != 2 || slugs[1] != "shared-guide" || !strings.HasPrefix(slugs[0], "legacy-locale-") {
+		t.Fatalf("expected one original and one deterministic migration slug, got %#v", slugs)
+	}
+	var archivedRows, archivedSharedSlugs int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM project_publications_locale_archive`).Scan(&archivedRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(1) FROM project_publications_locale_archive WHERE slug = 'shared-guide'`).Scan(&archivedSharedSlugs); err != nil {
+		t.Fatal(err)
+	}
+	if archivedRows != 2 || archivedSharedSlugs != 2 {
+		t.Fatalf("expected both original slug rows in the archive, rows=%d shared=%d", archivedRows, archivedSharedSlugs)
+	}
+}
+
 func seedProjects(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec(`

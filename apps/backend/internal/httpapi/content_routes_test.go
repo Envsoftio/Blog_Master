@@ -111,8 +111,7 @@ func TestPublishedPostCacheIsGenerationScopedAndPreservesValidators(t *testing.T
 		"primaryCategoryId":"`+category.ID+`",
 		"html":"<p>Cached body</p>"
 	}`)
-	approveTestRevision(t, server, login, project.ID, article.LatestRevision.ID)
-	publishTestArticle(t, server, login, project.ID, article.ID, article.LatestRevision.ID, "cached-guide")
+	publishTestArticle(t, server, login, project.ID, article.ID, "cached-guide")
 
 	firstResponse := getContentPost(t, server, project.ID, "cached-guide", "")
 	if firstResponse.StatusCode != http.StatusOK {
@@ -139,12 +138,11 @@ func TestPublishedPostCacheIsGenerationScopedAndPreservesValidators(t *testing.T
 		t.Fatal("expected second content read to check cache")
 	}
 
-	revision := createTestRevision(t, server, login, project.ID, article.ID, `{
+	createTestRevision(t, server, login, project.ID, article.ID, `{
 		"title":"Fresh Guide",
 		"html":"<p>Fresh body</p>"
 	}`)
-	approveTestRevision(t, server, login, project.ID, revision.ID)
-	publishTestArticle(t, server, login, project.ID, article.ID, revision.ID, "cached-guide")
+	publishTestArticle(t, server, login, project.ID, article.ID, "cached-guide")
 
 	updatedResponse := getContentPost(t, server, project.ID, "cached-guide", firstETag)
 	if updatedResponse.StatusCode != http.StatusOK {
@@ -174,8 +172,7 @@ func TestPublishedPostCacheFailureFallsBackToSQLite(t *testing.T) {
 		"primaryCategoryId":"`+category.ID+`",
 		"html":"<p>Fallback body</p>"
 	}`)
-	approveTestRevision(t, server, login, project.ID, article.LatestRevision.ID)
-	publishTestArticle(t, server, login, project.ID, article.ID, article.LatestRevision.ID, "fallback-post")
+	publishTestArticle(t, server, login, project.ID, article.ID, "fallback-post")
 
 	response := getContentPost(t, server, project.ID, "fallback-post", "")
 	if response.StatusCode != http.StatusOK {
