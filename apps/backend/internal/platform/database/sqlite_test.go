@@ -55,6 +55,51 @@ func legacyProjectApprovalInitialMigration(t *testing.T) string {
 	return strings.Replace(initialMigration, approvalColumn, "", 1)
 }
 
+func legacyWorkspaceInitialMigration(t *testing.T) string {
+	t.Helper()
+	legacy := "CREATE TABLE workspaces (\n" +
+		"    id TEXT PRIMARY KEY,\n" +
+		"    slug TEXT NOT NULL UNIQUE,\n" +
+		"    name TEXT NOT NULL,\n" +
+		"    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+		"    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n" +
+		");\n-- statement\n" + initialMigration
+	replacements := [][2]string{
+		{
+			"CREATE TABLE projects (\n    id TEXT PRIMARY KEY,\n    slug TEXT NOT NULL UNIQUE,",
+			"CREATE TABLE projects (\n    id TEXT PRIMARY KEY,\n    workspace_id TEXT NOT NULL,\n    slug TEXT NOT NULL,",
+		},
+		{
+			"    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    archived_at TEXT\n);\n-- statement\nCREATE TABLE project_memberships",
+			"    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    archived_at TEXT,\n    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE RESTRICT,\n    UNIQUE(workspace_id, slug)\n);\n-- statement\nCREATE TABLE project_memberships",
+		},
+	}
+	for _, replacement := range replacements {
+		if strings.Count(legacy, replacement[0]) != 1 {
+			t.Fatalf("legacy workspace fixture expected one occurrence of %q", replacement[0])
+		}
+		legacy = strings.Replace(legacy, replacement[0], replacement[1], 1)
+	}
+	legacy += `
+-- statement
+CREATE INDEX idx_projects_workspace ON projects(workspace_id, slug)
+-- statement
+CREATE TABLE workspace_memberships (
+    workspace_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('workspace_owner','workspace_operator')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','removed')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    removed_at TEXT,
+    PRIMARY KEY(workspace_id, user_id),
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+)
+`
+	return legacy
+}
+
 func seedLegacyLocalePublication(t *testing.T, db *sql.DB, id, contentID, locale, slug, updatedAt string) {
 	t.Helper()
 	if _, err := db.Exec(`
@@ -137,6 +182,76 @@ func TestProjectSoloOwnerApprovalMigrationIsNoOpForCurrentInitialSchema(t *testi
 	}
 	if columnCount != 1 || applied != 1 {
 		t.Fatalf("expected current schema to retain one approval column and mark migration applied, columns=%d applied=%d", columnCount, applied)
+	}
+}
+
+func TestProjectWorkspaceRemovalMigrationRepairsLegacyProjectsTable(t *testing.T) {
+	db, err := OpenSQLite(filepath.Join(t.TempDir(), "legacy-workspace.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE schema_migrations(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMigration(db, migration{version: "0001_initial", statements: legacyWorkspaceInitialMigration(t)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO users(id, email_normalized, status)
+		VALUES ('owner', 'owner@example.test', 'active');
+		INSERT INTO workspaces(id, slug, name)
+		VALUES ('workspace-a', 'workspace-a', 'Workspace A');
+		INSERT INTO workspace_memberships(workspace_id, user_id, role, status)
+		VALUES ('workspace-a', 'owner', 'workspace_owner', 'active');
+		INSERT INTO projects(id, workspace_id, slug, name, public_project_key, created_by)
+		VALUES ('project-a', 'workspace-a', 'project-a', 'Project A', 'public-a', 'owner');
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES ('project-a', 'owner', 'project_owner', 'active', CURRENT_TIMESTAMP);
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+
+	var workspaceColumns, workspaceTables, projectRows, membershipRows, applied int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM pragma_table_info('projects') WHERE name = 'workspace_id'`).Scan(&workspaceColumns); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name IN ('workspaces', 'workspace_memberships')`).Scan(&workspaceTables); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(1) FROM projects WHERE id = 'project-a' AND slug = 'project-a'`).Scan(&projectRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(1) FROM project_memberships WHERE project_id = 'project-a' AND user_id = 'owner'`).Scan(&membershipRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(1) FROM schema_migrations WHERE version = '0025_project_workspace_removal'`).Scan(&applied); err != nil {
+		t.Fatal(err)
+	}
+	if workspaceColumns != 0 || workspaceTables != 0 || projectRows != 1 || membershipRows != 1 || applied != 1 {
+		t.Fatalf("expected workspace-free schema with preserved data, columns=%d tables=%d projects=%d memberships=%d applied=%d", workspaceColumns, workspaceTables, projectRows, membershipRows, applied)
+	}
+	if _, err := db.Exec(`INSERT INTO projects(id, slug, name, public_project_key, created_by) VALUES ('project-b', 'project-b', 'Project B', 'public-b', 'owner')`); err != nil {
+		t.Fatalf("expected project insert without workspace ID to succeed: %v", err)
+	}
+	var foreignKeysEnabled int
+	if err := db.QueryRow(`PRAGMA foreign_keys`).Scan(&foreignKeysEnabled); err != nil {
+		t.Fatal(err)
+	}
+	if foreignKeysEnabled != 1 {
+		t.Fatal("expected foreign key enforcement to be restored after migration")
+	}
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		t.Fatal("expected no foreign key violations after workspace removal")
 	}
 }
 

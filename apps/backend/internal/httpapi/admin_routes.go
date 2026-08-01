@@ -215,6 +215,7 @@ type articleRequest struct {
 	Title             string               `json:"title"`
 	Slug              string               `json:"slug"`
 	PrimaryCategoryID string               `json:"primaryCategoryId"`
+	TagIDs            []string             `json:"tagIds"`
 	Contributors      []contributorRequest `json:"contributors"`
 	Deck              string               `json:"deck"`
 	Excerpt           string               `json:"excerpt"`
@@ -228,6 +229,7 @@ type articleSaveRequest struct {
 	BaseRevisionID    string               `json:"baseRevisionId"`
 	Title             string               `json:"title"`
 	PrimaryCategoryID string               `json:"primaryCategoryId"`
+	TagIDs            []string             `json:"tagIds"`
 	Contributors      []contributorRequest `json:"contributors"`
 	Deck              string               `json:"deck"`
 	Excerpt           string               `json:"excerpt"`
@@ -1020,6 +1022,9 @@ func (s *Server) updateArticle(c fiber.Ctx) error {
 	if current.LatestRevision != nil && strings.TrimSpace(input.BaseRevisionID) == "" {
 		input.BaseRevisionID = current.LatestRevision.ID
 	}
+	if _, ok := provided["tagIds"]; !ok {
+		input.TagIDs = current.TagIDs
+	}
 	if _, ok := provided["deck"]; !ok {
 		input.Deck = current.Deck
 	}
@@ -1771,6 +1776,7 @@ func (input articleRequest) toStoreInput() store.ArticleInput {
 		Title:             input.Title,
 		Slug:              input.Slug,
 		PrimaryCategoryID: input.PrimaryCategoryID,
+		TagIDs:            input.TagIDs,
 		Contributors:      contributorInputs(input.Contributors),
 		Deck:              input.Deck,
 		Excerpt:           input.Excerpt,
@@ -1786,6 +1792,7 @@ func (input articleSaveRequest) toStoreInput() store.RevisionInput {
 		BaseRevisionID:    input.BaseRevisionID,
 		Title:             input.Title,
 		PrimaryCategoryID: input.PrimaryCategoryID,
+		TagIDs:            input.TagIDs,
 		Contributors:      contributorInputs(input.Contributors),
 		Deck:              input.Deck,
 		Excerpt:           input.Excerpt,

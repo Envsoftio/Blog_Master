@@ -83,6 +83,8 @@ type AdminArticle struct {
 	Excerpt           string                     `json:"excerpt,omitempty"`
 	ShortAnswer       string                     `json:"shortAnswer,omitempty"`
 	PrimaryCategoryID string                     `json:"primaryCategoryId,omitempty"`
+	TagIDs            []string                   `json:"tagIds,omitempty"`
+	Tags              []TaxonomyTerm             `json:"tags,omitempty"`
 	Contributors      []RevisionContributorInput `json:"contributors,omitempty"`
 	BodyDocument      any                        `json:"bodyDocument,omitempty"`
 	HTML              string                     `json:"html,omitempty"`
@@ -109,6 +111,7 @@ type ArticleInput struct {
 	Title             string
 	Slug              string
 	PrimaryCategoryID string
+	TagIDs            []string
 	Contributors      []RevisionContributorInput
 	Deck              string
 	Excerpt           string
@@ -122,6 +125,7 @@ type RevisionInput struct {
 	BaseRevisionID    string
 	Title             string
 	PrimaryCategoryID string
+	TagIDs            []string
 	Contributors      []RevisionContributorInput
 	Deck              string
 	Excerpt           string
@@ -340,6 +344,12 @@ func (s *Store) loadArticleEditableFields(ctx context.Context, article *AdminArt
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	tags, err := loadArticleTags(ctx, s.db, article.ProjectID, article.ID)
+	if err != nil {
+		return err
+	}
+	article.Tags = tags
+	article.TagIDs = termIDs(tags)
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT author_id, role, position
@@ -393,6 +403,10 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 	if err != nil {
 		return AdminArticle{}, err
 	}
+	tags, err := loadTagsByID(ctx, tx, projectID, input.TagIDs)
+	if err != nil {
+		return AdminArticle{}, err
+	}
 
 	articleID, err := securityRandomID("art")
 	if err != nil {
@@ -410,7 +424,7 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 	if err != nil {
 		return AdminArticle{}, err
 	}
-	taxonomyJSON, err := taxonomySnapshotJSON(category)
+	taxonomyJSON, err := taxonomySnapshotJSON(category, tags)
 	if err != nil {
 		return AdminArticle{}, err
 	}
@@ -443,6 +457,9 @@ func (s *Store) CreateArticle(ctx context.Context, actorUserID, projectID string
 		INSERT INTO article_taxonomy(project_id, content_id, taxonomy_term_id, is_primary)
 		VALUES (?, ?, ?, 1)
 	`, projectID, articleID, category.ID); err != nil {
+		return AdminArticle{}, err
+	}
+	if err := replaceArticleTags(ctx, tx, projectID, articleID, tags); err != nil {
 		return AdminArticle{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -485,6 +502,7 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	}
 	input.BaseRevisionID = strings.TrimSpace(input.BaseRevisionID)
 	input.Title = strings.TrimSpace(input.Title)
+	input.TagIDs = normalizeIDList(input.TagIDs)
 	seoProvided := hasSEOInput(input.SEO)
 	if input.Title == "" {
 		return AdminRevision{}, fmt.Errorf("%w: title is required", ErrValidation)
@@ -511,6 +529,20 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	}
 	if input.PrimaryCategoryID != "" {
 		if err := replacePrimaryCategory(ctx, tx, projectID, articleID, category.ID); err != nil {
+			return AdminRevision{}, err
+		}
+	}
+	var tags []TaxonomyTerm
+	if input.TagIDs == nil {
+		tags, err = loadArticleTags(ctx, tx, projectID, articleID)
+	} else {
+		tags, err = loadTagsByID(ctx, tx, projectID, input.TagIDs)
+	}
+	if err != nil {
+		return AdminRevision{}, err
+	}
+	if input.TagIDs != nil {
+		if err := replaceArticleTags(ctx, tx, projectID, articleID, tags); err != nil {
 			return AdminRevision{}, err
 		}
 	}
@@ -551,7 +583,7 @@ func (s *Store) CreateRevision(ctx context.Context, actorUserID, projectID, arti
 	if err != nil {
 		return AdminRevision{}, err
 	}
-	taxonomyJSON, err := taxonomySnapshotJSON(category)
+	taxonomyJSON, err := taxonomySnapshotJSON(category, tags)
 	if err != nil {
 		return AdminRevision{}, err
 	}
@@ -682,7 +714,7 @@ func (s *Store) CopyArticleToProject(ctx context.Context, actorUserID, sourcePro
 	if err != nil {
 		return AdminArticle{}, err
 	}
-	taxonomyJSON, err := taxonomySnapshotJSON(destinationCategory)
+	taxonomyJSON, err := taxonomySnapshotJSON(destinationCategory, nil)
 	if err != nil {
 		return AdminArticle{}, err
 	}
@@ -2024,6 +2056,144 @@ func replacePrimaryCategory(ctx context.Context, tx *sql.Tx, projectID, articleI
 	return err
 }
 
+type tagQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+const maxArticleTags = 100
+
+func loadTagsByID(ctx context.Context, queryer tagQueryer, projectID string, tagIDs []string) ([]TaxonomyTerm, error) {
+	tagIDs = normalizeIDList(tagIDs)
+	if len(tagIDs) == 0 {
+		return []TaxonomyTerm{}, nil
+	}
+	if len(tagIDs) > maxArticleTags {
+		return nil, fmt.Errorf("%w: articles cannot have more than %d tags", ErrValidation, maxArticleTags)
+	}
+
+	args := make([]any, 0, len(tagIDs)+1)
+	args = append(args, projectID)
+	for _, tagID := range tagIDs {
+		args = append(args, tagID)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(tagIDs)), ",")
+	rows, err := queryer.QueryContext(ctx, `
+		SELECT id, type, slug, name, COALESCE(description, ''), COALESCE(parent_id, ''), indexability
+		FROM taxonomy_terms
+		WHERE project_id = ? AND id IN (`+placeholders+`) AND type = 'tag' AND status = 'active'
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byID := make(map[string]TaxonomyTerm, len(tagIDs))
+	for rows.Next() {
+		tag, err := scanTerm(rows)
+		if err != nil {
+			return nil, err
+		}
+		byID[tag.ID] = tag
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(byID) != len(tagIDs) {
+		return nil, fmt.Errorf("%w: tagIds must reference active tags in this project", ErrValidation)
+	}
+	tags := make([]TaxonomyTerm, 0, len(tagIDs))
+	for _, tagID := range tagIDs {
+		tags = append(tags, byID[tagID])
+	}
+	return tags, nil
+}
+
+func loadArticleTags(ctx context.Context, queryer tagQueryer, projectID, articleID string) ([]TaxonomyTerm, error) {
+	rows, err := queryer.QueryContext(ctx, `
+		SELECT term.id, term.type, term.slug, term.name, COALESCE(term.description, ''), COALESCE(term.parent_id, ''), term.indexability
+		FROM article_taxonomy assignment
+		JOIN taxonomy_terms term
+		  ON term.project_id = assignment.project_id
+		 AND term.id = assignment.taxonomy_term_id
+		WHERE assignment.project_id = ?
+		  AND assignment.content_id = ?
+		  AND assignment.is_primary = 0
+		  AND term.type = 'tag'
+		  AND term.status = 'active'
+		ORDER BY assignment.position, term.name, term.id
+	`, projectID, articleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tags []TaxonomyTerm
+	for rows.Next() {
+		tag, err := scanTerm(rows)
+		if err != nil {
+			return nil, err
+		}
+		tags = append(tags, tag)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if tags == nil {
+		return []TaxonomyTerm{}, nil
+	}
+	return tags, nil
+}
+
+func replaceArticleTags(ctx context.Context, tx *sql.Tx, projectID, articleID string, tags []TaxonomyTerm) error {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM article_taxonomy
+		WHERE project_id = ?
+		  AND content_id = ?
+		  AND taxonomy_term_id IN (
+		    SELECT id
+		    FROM taxonomy_terms
+		    WHERE project_id = ? AND type = 'tag'
+		  )
+	`, projectID, articleID, projectID); err != nil {
+		return err
+	}
+	for index, tag := range tags {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO article_taxonomy(project_id, content_id, taxonomy_term_id, is_primary, position)
+			VALUES (?, ?, ?, 0, ?)
+		`, projectID, articleID, tag.ID, index+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizeIDList(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func termIDs(terms []TaxonomyTerm) []string {
+	if len(terms) == 0 {
+		return []string{}
+	}
+	ids := make([]string, 0, len(terms))
+	for _, term := range terms {
+		ids = append(ids, term.ID)
+	}
+	return ids
+}
+
 func nextRevisionNumber(ctx context.Context, tx *sql.Tx, projectID, articleID string) (int64, error) {
 	var current int64
 	err := tx.QueryRowContext(ctx, `
@@ -2298,6 +2468,7 @@ func applyArticleDefaults(input ArticleInput) ArticleInput {
 		input.Slug = slugify(input.Title)
 	}
 	input.PrimaryCategoryID = strings.TrimSpace(input.PrimaryCategoryID)
+	input.TagIDs = normalizeIDList(input.TagIDs)
 	input.Deck = strings.TrimSpace(input.Deck)
 	input.Excerpt = strings.TrimSpace(input.Excerpt)
 	input.ShortAnswer = strings.TrimSpace(input.ShortAnswer)
@@ -2614,11 +2785,14 @@ func seriesConstraintError(err error) error {
 	return err
 }
 
-func taxonomySnapshotJSON(primary TaxonomyTerm) (string, error) {
+func taxonomySnapshotJSON(primary TaxonomyTerm, tags []TaxonomyTerm) (string, error) {
+	if tags == nil {
+		tags = []TaxonomyTerm{}
+	}
 	raw, err := json.Marshal(PublishedTaxonomy{
 		PrimaryCategory: &primary,
 		Categories:      []TaxonomyTerm{primary},
-		Tags:            []TaxonomyTerm{},
+		Tags:            tags,
 		Topics:          []TaxonomyTerm{},
 	})
 	return string(raw), err

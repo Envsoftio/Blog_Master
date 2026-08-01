@@ -67,6 +67,9 @@ export type AdminArticle = {
   canonicalUrl?: string
   archivedAt?: string
   latestRevision?: AdminRevision
+  primaryCategoryId?: string
+  tagIds?: string[]
+  tags?: TaxonomyTerm[]
   createdAt: string
 }
 
@@ -486,6 +489,7 @@ export type ArticleCreatePayload = {
   title: string
   slug: string
   primaryCategoryId: string
+  tagIds?: string[]
   contributors?: ArticleContributorInput[]
   deck?: string
   excerpt?: string
@@ -499,6 +503,7 @@ export type ArticleSavePayload = {
   baseRevisionId: string
   title: string
   primaryCategoryId?: string
+  tagIds?: string[]
   contributors?: ArticleContributorInput[]
   deck?: string
   excerpt?: string
@@ -776,6 +781,26 @@ export function useAdminApi() {
     return {
       data: [...categories.values()],
       meta: { projectId: projectID, limit: categories.size }
+    } satisfies APIListEnvelope<TaxonomyTerm>
+  }
+
+  async function listTags(projectID: string) {
+    const tags = new Map<string, TaxonomyTerm>()
+    const seenCursors = new Set<string>()
+    let cursor = ''
+
+    do {
+      const response = await listTaxonomy(projectID, 'tags', cursor, 100)
+      for (const tag of response.data) tags.set(tag.id, tag)
+      const nextCursor = response.meta?.nextCursor || ''
+      if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Tag pagination returned a repeated cursor')
+      if (nextCursor) seenCursors.add(nextCursor)
+      cursor = nextCursor
+    } while (cursor)
+
+    return {
+      data: [...tags.values()],
+      meta: { projectId: projectID, limit: tags.size }
     } satisfies APIListEnvelope<TaxonomyTerm>
   }
 
@@ -1092,6 +1117,7 @@ export function useAdminApi() {
     listTaxonomy,
     createTaxonomy,
     listCategories,
+    listTags,
     createCategory,
     updateCategory,
     listAuthors,

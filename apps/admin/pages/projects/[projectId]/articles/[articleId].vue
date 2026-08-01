@@ -189,6 +189,16 @@
                   <option v-for="category in categories" :key="category.id" :value="category.id">{{ categoryPathLabel(category) }}</option>
                 </select>
               </label>
+              <fieldset class="article-tag-picker">
+                <legend>Tags</legend>
+                <div v-if="tags.length" class="article-tag-picker__grid">
+                  <label v-for="tag in tags" :key="tag.id" class="article-tag-choice" :class="{ 'is-selected': articleForm.tagIds.includes(tag.id), 'is-disabled': tagSelectionDisabled(tag.id) }">
+                    <input v-model="articleForm.tagIds" type="checkbox" :value="tag.id" :disabled="tagSelectionDisabled(tag.id)">
+                    <span>{{ tag.name }}</span>
+                  </label>
+                </div>
+                <small v-else>No tags have been created for this project.</small>
+              </fieldset>
               <ArticleContributorsEditor
                 :model-value="articleForm.contributors"
                 :authors="authors"
@@ -532,6 +542,7 @@ type ArticleSEO = {
 type ArticleDraftFields = {
   title: string
   primaryCategoryId: string
+  tagIds: string[]
   contributors: ArticleContributorInput[]
   attributionEdited: boolean
   deck: string
@@ -586,6 +597,8 @@ type AdminArticle = {
   excerpt?: string
   shortAnswer?: string
   primaryCategoryId?: string
+  tagIds?: string[]
+  tags?: TaxonomyTerm[]
   contributors?: ArticleContributorInput[]
   bodyDocument?: unknown
   html?: string
@@ -626,6 +639,7 @@ const projects = ref<AdminProject[]>([])
 const article = ref<AdminArticle | null>(null)
 const workspaceTab = ref<'write' | 'overview' | 'publish'>('write')
 const categories = ref<TaxonomyTerm[]>([])
+const tags = ref<TaxonomyTerm[]>([])
 const authors = ref<AdminAuthor[]>([])
 const mediaAssets = ref<AdminMediaAsset[]>([])
 const sources = ref<AdminSource[]>([])
@@ -666,6 +680,7 @@ let serverSaveGeneration = 0
 const articleForm = reactive({
   title: '',
   primaryCategoryId: '',
+  tagIds: [] as string[],
   contributors: [] as ArticleContributorInput[],
   deck: '',
   excerpt: '',
@@ -678,6 +693,7 @@ const articleForm = reactive({
   openGraphImage: '',
   html: ''
 })
+const maxArticleTags = 100
 
 const publicationForm = reactive({
   slug: '',
@@ -780,10 +796,11 @@ async function refresh() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, projectListResponse, categoryResponse, authorResponse, articleResponse, autosaveResponse, mediaResponse, sourceResponse] = await Promise.all([
+    const [projectResponse, projectListResponse, categoryResponse, tagResponse, authorResponse, articleResponse, autosaveResponse, mediaResponse, sourceResponse] = await Promise.all([
       $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
       fetchAllCopyProjects(),
       fetchAllCategories(projectID.value),
+      fetchAllTags(projectID.value),
       $fetch<APIListEnvelope<AdminAuthor>>(`/api/v1/projects/${projectID.value}/authors`, { credentials: 'include' }),
       $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}`, { credentials: 'include' }),
       fetchArticleAutosave(),
@@ -794,6 +811,7 @@ async function refresh() {
     if (!canWriteArticles.value && workspaceTab.value === 'write') workspaceTab.value = 'overview'
     projects.value = projectListResponse
     categories.value = sortCategories(categoryResponse)
+    tags.value = tagResponse.sort((left, right) => left.name.localeCompare(right.name))
     authors.value = apiListData(authorResponse).sort((left, right) => left.displayName.localeCompare(right.displayName))
     mediaAssets.value = apiListData(mediaResponse)
     sources.value = apiListData(sourceResponse)
@@ -866,6 +884,7 @@ async function saveArticle() {
         baseRevisionId: baseContentVersionID.value || latestContentVersionID(),
         title: articleForm.title,
         primaryCategoryId: articleForm.primaryCategoryId,
+        tagIds: articleForm.tagIds,
         contributors: articleForm.contributors,
         deck: articleForm.deck,
         excerpt: articleForm.excerpt,
@@ -1044,6 +1063,26 @@ async function fetchAllCategories(targetProjectID: string) {
   return [...allCategories.values()]
 }
 
+async function fetchAllTags(targetProjectID: string) {
+  const allTags = new Map<string, TaxonomyTerm>()
+  const seenCursors = new Set<string>()
+  let cursor = ''
+
+  do {
+    const response = await $fetch<APIListEnvelope<TaxonomyTerm>>(`/api/v1/projects/${targetProjectID}/tags`, {
+      credentials: 'include',
+      query: { limit: 100, ...(cursor ? { cursor } : {}) }
+    })
+    for (const tag of apiListData(response)) allTags.set(tag.id, tag)
+    const nextCursor = response.meta?.nextCursor || ''
+    if (nextCursor && seenCursors.has(nextCursor)) throw new Error('Tag pagination returned a repeated cursor')
+    if (nextCursor) seenCursors.add(nextCursor)
+    cursor = nextCursor
+  } while (cursor)
+
+  return [...allTags.values()]
+}
+
 async function publishArticle() {
   if (!validatePublicationSettings()) return
   if (!await saveBeforePublication()) return
@@ -1178,6 +1217,7 @@ function setArticleForm(value: AdminArticle) {
   const seo = value.seo || {}
   articleForm.title = value.title
   articleForm.primaryCategoryId = value.primaryCategoryId || ''
+  articleForm.tagIds = [...(value.tagIds || value.tags?.map(tag => tag.id) || [])]
   articleForm.contributors = (value.contributors || []).map(contributor => ({ ...contributor }))
   attributionEdited.value = false
   articleForm.deck = value.deck || ''
@@ -1265,6 +1305,7 @@ function localDraftKey() {
 function draftFieldsSnapshot(): ArticleDraftFields {
   return {
     ...articleForm,
+    tagIds: [...articleForm.tagIds],
     contributors: articleForm.contributors.map(contributor => ({ ...contributor })),
     attributionEdited: attributionEdited.value,
     bodyDocument: draftBodyDocument()
@@ -1476,6 +1517,7 @@ async function applyDraftRecovery(recovery: ArticleDraftRecovery) {
   const snapshot = recovery.snapshot
   const { attributionEdited: savedAttributionEdited, bodyDocument, ...fields } = snapshot.fields
   Object.assign(articleForm, fields)
+  articleForm.tagIds = [...snapshot.fields.tagIds]
   attributionEdited.value = savedAttributionEdited
   articleBodyDocument.value = bodyDocument
   draftSavedAt.value = snapshot.savedAt
@@ -1496,6 +1538,7 @@ function articleAutosaveSnapshot(autosave: ArticleAutosave): ArticleDraftSnapsho
     savedAt: autosave.updatedAt,
     fields: {
       ...autosave.draft,
+      tagIds: [...(autosave.draft.tagIds || [])],
       bodyDocument,
       contributors: autosave.draft.contributors.map(contributor => ({ ...contributor }))
     }
@@ -1623,6 +1666,7 @@ function readLocalDraft(): ArticleDraftSnapshot | null {
         savedAt: value.savedAt,
         fields: {
           ...value.fields,
+          tagIds: [],
           contributors: articleForm.contributors.map(contributor => ({ ...contributor })),
           attributionEdited: false,
           bodyDocument: articleBodyDocumentFromHTML(value.fields.html, value.fields.title)
@@ -1645,6 +1689,7 @@ function readLocalDraft(): ArticleDraftSnapshot | null {
         savedAt: value.savedAt,
         fields: {
           ...value.fields,
+          tagIds: stringArrayValue((value.fields as Record<string, unknown>).tagIds),
           bodyDocument: articleBodyDocumentFromHTML(value.fields.html, value.fields.title)
         }
       }
@@ -1660,7 +1705,17 @@ function readLocalDraft(): ArticleDraftSnapshot | null {
       removeLocalDraft()
       return null
     }
-    return value as ArticleDraftSnapshot
+    return {
+      schemaVersion: 3,
+      projectId: value.projectId,
+      articleId: value.articleId,
+      baseRevisionId: value.baseRevisionId,
+      savedAt: value.savedAt,
+      fields: {
+        ...(value.fields as ArticleDraftFields),
+        tagIds: stringArrayValue((value.fields as Record<string, unknown>).tagIds)
+      }
+    }
   } catch {
     removeLocalDraft()
     return null
@@ -1691,7 +1746,20 @@ function isArticleDraftFieldsV2(value: unknown): value is Omit<ArticleDraftField
     .every(key => typeof fields[key] === 'string')
   return stringsAreValid
     && typeof fields.attributionEdited === 'boolean'
+    && (!('tagIds' in fields) || isStringArray(fields.tagIds))
     && isContributorDraftValue(fields.contributors)
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string')
+}
+
+function tagSelectionDisabled(tagID: string) {
+  return articleForm.tagIds.length >= maxArticleTags && !articleForm.tagIds.includes(tagID)
+}
+
+function stringArrayValue(value: unknown) {
+  return isStringArray(value) ? [...value] : []
 }
 
 function isStructuredBodyDocument(value: unknown): value is Record<string, unknown> {
@@ -1988,6 +2056,75 @@ function apiErrorStatus(error: unknown) {
   padding-left: 14px;
   font-size: 20px;
   font-weight: 650;
+}
+
+.article-tag-picker {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+}
+
+.article-tag-picker legend {
+  padding: 0 6px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.article-tag-picker small {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.article-tag-picker__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.article-tag-choice {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.article-tag-choice.is-selected {
+  border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.article-tag-choice.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.article-tag-choice input {
+  width: 14px;
+  height: 14px;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.article-tag-choice span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .article-compose__summaries {

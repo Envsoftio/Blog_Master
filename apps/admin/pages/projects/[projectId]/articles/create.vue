@@ -53,6 +53,16 @@
               </select>
               <small v-if="categories.length === 0">Create a category from the side panel before saving the draft.</small>
             </label>
+            <fieldset class="tag-picker">
+              <legend>Tags</legend>
+              <div v-if="tags.length" class="tag-picker__grid">
+                <label v-for="tag in tags" :key="tag.id" class="tag-choice" :class="{ 'is-selected': articleForm.tagIds.includes(tag.id), 'is-disabled': tagSelectionDisabled(tag.id) }">
+                  <input v-model="articleForm.tagIds" type="checkbox" :value="tag.id" :disabled="tagSelectionDisabled(tag.id)">
+                  <span>{{ tag.name }}</span>
+                </label>
+              </div>
+              <small v-else>Create tags from the Tags page to label this article.</small>
+            </fieldset>
           </div>
         </section>
 
@@ -194,6 +204,7 @@
               <div><dt>Template</dt><dd>{{ labelize(articleForm.articleType) }}</dd></div>
               <div><dt>Words</dt><dd>{{ wordCount }}</dd></div>
               <div><dt>Category</dt><dd>{{ selectedCategory ? categoryPathLabel(selectedCategory) : 'Not set' }}</dd></div>
+              <div><dt>Tags</dt><dd>{{ selectedTags.length ? selectedTags.map(tag => tag.name).join(', ') : 'None' }}</dd></div>
               <div><dt>Author</dt><dd>{{ selectedAuthor?.displayName || 'Not set' }}</dd></div>
               <div><dt>Credits</dt><dd>{{ articleForm.contributors.length }}</dd></div>
             </dl>
@@ -277,6 +288,7 @@ const projectID = computed(() => {
 
 const project = ref<AdminProject | null>(null)
 const categories = ref<TaxonomyTerm[]>([])
+const tags = ref<TaxonomyTerm[]>([])
 const authors = ref<AdminAuthor[]>([])
 const mediaAssets = ref<AdminMediaAsset[]>([])
 const sources = ref<AdminSource[]>([])
@@ -301,6 +313,7 @@ const articleForm = reactive({
   title: '',
   slug: '',
   primaryCategoryId: '',
+  tagIds: [] as string[],
   contributors: [] as ArticleContributorInput[],
   deck: '',
   excerpt: '',
@@ -313,6 +326,7 @@ const articleForm = reactive({
   openGraphImage: '',
   html: ''
 })
+const maxArticleTags = 100
 
 const categoryForm = reactive({
   name: '',
@@ -343,6 +357,7 @@ const bodyDocumentForSubmission = computed(() => hasMeaningfulStructuredHTML(art
 const plainText = computed(() => htmlToPlainText(htmlForSubmission.value))
 const wordCount = computed(() => plainText.value ? plainText.value.split(/\s+/).length : 0)
 const selectedCategory = computed(() => categories.value.find(category => category.id === articleForm.primaryCategoryId) || null)
+const selectedTags = computed(() => tags.value.filter(tag => articleForm.tagIds.includes(tag.id)))
 const selectedAuthor = computed(() => {
   const primaryAuthorID = articleForm.contributors.find(contributor => contributor.role === 'primary_author')?.authorId
   return authors.value.find(author => author.id === primaryAuthorID) || null
@@ -392,9 +407,10 @@ async function refresh() {
   pending.value = true
   clearMessages()
   try {
-    const [projectResponse, categoryResponse, authorResponse, articleResponse, mediaResponse, sourceResponse] = await Promise.all([
+    const [projectResponse, categoryResponse, tagResponse, authorResponse, articleResponse, mediaResponse, sourceResponse] = await Promise.all([
       api.getProject(projectID.value),
       api.listCategories(projectID.value),
+      api.listTags(projectID.value),
       api.listAuthors(projectID.value),
       api.listArticles(projectID.value, 20),
       api.listMedia(projectID.value),
@@ -402,6 +418,7 @@ async function refresh() {
     ])
     project.value = projectResponse.data
     categories.value = [...categoryResponse.data].sort((left, right) => categoryPathLabel(left).localeCompare(categoryPathLabel(right)))
+    tags.value = [...tagResponse.data].sort((left, right) => left.name.localeCompare(right.name))
     authors.value = authorResponse.data
       .filter(author => author.status === 'active')
       .sort((left, right) => left.displayName.localeCompare(right.displayName))
@@ -458,6 +475,7 @@ async function createArticle() {
       title: articleForm.title,
       slug: articleForm.slug,
       primaryCategoryId: articleForm.primaryCategoryId,
+      tagIds: articleForm.tagIds,
       contributors: articleForm.contributors,
       deck: articleForm.deck,
       excerpt: articleForm.excerpt,
@@ -543,10 +561,12 @@ function restoreCreateDraft() {
         && typeof saved.savedAt === 'string'
         && saved.fields
         && stringKeys.every(key => typeof saved.fields?.[key] === 'string')
+        && (!('tagIds' in saved.fields) || isStringArray(saved.fields.tagIds))
         && isContributorDraftValue(saved.fields.contributors)
         && (saved.schemaVersion !== 3 || isStructuredBodyDocument(saved.fields.bodyDocument))
       ) {
         Object.assign(articleForm, Object.fromEntries(stringKeys.map(key => [key, saved.fields?.[key]])))
+        articleForm.tagIds = isStringArray(saved.fields.tagIds) ? [...saved.fields.tagIds] : []
         articleForm.contributors = saved.fields.contributors.map(contributor => ({ ...contributor }))
         createBodyDocument.value = saved.schemaVersion === 3
           ? saved.fields.bodyDocument
@@ -562,6 +582,7 @@ function restoreCreateDraft() {
         && typeof saved.fields.primaryAuthorId === 'string'
       ) {
         Object.assign(articleForm, Object.fromEntries(stringKeys.map(key => [key, saved.fields?.[key]])))
+        articleForm.tagIds = []
         articleForm.contributors = saved.fields.primaryAuthorId
           ? [{ authorId: saved.fields.primaryAuthorId, role: 'primary_author', position: 0 }]
           : articleForm.contributors
@@ -588,6 +609,14 @@ function isContributorDraftValue(value: unknown): value is ArticleContributorInp
       && typeof candidate.role === 'string'
       && typeof candidate.position === 'number'
   })
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string')
+}
+
+function tagSelectionDisabled(tagID: string) {
+  return articleForm.tagIds.length >= maxArticleTags && !articleForm.tagIds.includes(tagID)
 }
 
 function isStructuredBodyDocument(value: unknown): value is Record<string, unknown> {
@@ -643,6 +672,15 @@ function escapeHTML(value: string) {
 .setup-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .setup-fields__title,
 .setup-fields__category { grid-column: 1 / -1; }
+.tag-picker { grid-column: 1 / -1; min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); }
+.tag-picker legend { padding: 0 6px; color: var(--text-soft); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.tag-picker small { color: var(--text-faint); font-size: 12px; }
+.tag-picker__grid { display: flex; flex-wrap: wrap; gap: 7px; }
+.tag-choice { display: inline-flex; max-width: 100%; min-height: 34px; align-items: center; gap: 7px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text-soft); font-size: 12px; font-weight: 650; cursor: pointer; }
+.tag-choice.is-selected { border-color: color-mix(in srgb, var(--primary) 50%, var(--border)); background: var(--primary-soft); color: var(--primary); }
+.tag-choice.is-disabled { opacity: 0.55; cursor: not-allowed; }
+.tag-choice input { width: 14px; height: 14px; min-height: 0; margin: 0; accent-color: var(--primary); }
+.tag-choice span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .field small { color: var(--text-faint); font-size: 12px; line-height: 1.45; }
 .mono-input { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 .template-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; padding: 14px 16px 16px; }

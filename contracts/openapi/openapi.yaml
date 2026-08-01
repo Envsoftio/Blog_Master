@@ -112,6 +112,18 @@ components:
           type: string
         slug:
           type: string
+        tagIds:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        tags:
+          items:
+            $ref: "#/components/schemas/TaxonomyTerm"
+          type:
+            - array
+            - "null"
         title:
           type: string
       required:
@@ -262,11 +274,18 @@ components:
           type: string
         shortAnswer:
           type: string
+        tagIds:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
         title:
           type: string
       required:
         - title
         - primaryCategoryId
+        - tagIds
         - contributors
         - attributionEdited
         - deck
@@ -333,6 +352,12 @@ components:
           $ref: "#/components/schemas/SeoRequest"
         shortAnswer:
           type: string
+        tagIds:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
         title:
           type: string
       required:
@@ -762,6 +787,42 @@ components:
         - openGraphTitle
         - openGraphDescription
         - openGraphImage
+      type: object
+    TaxonomyTerm:
+      additionalProperties: false
+      properties:
+        ancestors:
+          items:
+            $ref: "#/components/schemas/TaxonomyTerm"
+          type:
+            - array
+            - "null"
+        children:
+          items:
+            $ref: "#/components/schemas/TaxonomyTerm"
+          type:
+            - array
+            - "null"
+        description:
+          type: string
+        id:
+          type: string
+        indexable:
+          type: boolean
+        name:
+          type: string
+        parentId:
+          type: string
+        slug:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - type
+        - slug
+        - name
+        - indexable
       type: object
   securitySchemes:
     adminSession:

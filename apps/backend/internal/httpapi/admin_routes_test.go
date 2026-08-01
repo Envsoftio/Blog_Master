@@ -3228,6 +3228,7 @@ func TestArticleAutosaveRecoversDraftsAndRejectsConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	category := createTestCategory(t, server, ownerLogin, project.ID, `{"slug":"guides","name":"Guides"}`)
+	tag := createTestTag(t, server, ownerLogin, project.ID, `{"slug":"autosave-tag","name":"Autosave Tag"}`)
 	author := createTestAuthor(t, server, ownerLogin, project.ID, `{"slug":"autosave-author","displayName":"Autosave Author"}`)
 	article := createTestArticle(t, server, ownerLogin, project.ID, `{
 		"articleType":"guide",
@@ -3247,6 +3248,7 @@ func TestArticleAutosaveRecoversDraftsAndRejectsConflicts(t *testing.T) {
 			"draft": map[string]any{
 				"title":             title,
 				"primaryCategoryId": category.ID,
+				"tagIds":            []string{tag.ID},
 				"contributors": []map[string]any{{
 					"authorId": author.ID,
 					"role":     "primary_author",
@@ -3290,7 +3292,7 @@ func TestArticleAutosaveRecoversDraftsAndRejectsConflicts(t *testing.T) {
 	}
 	var created Envelope[store.ArticleAutosave]
 	decodeJSONResponse(t, createResponse, &created)
-	if created.Data.Version != 1 || created.Data.Stale || created.Data.Draft.Title != "First autosave" {
+	if created.Data.Version != 1 || created.Data.Stale || created.Data.Draft.Title != "First autosave" || !reflect.DeepEqual(created.Data.Draft.TagIDs, []string{tag.ID}) {
 		t.Fatalf("unexpected created autosave: %#v", created.Data)
 	}
 	createdDocument, ok := created.Data.Draft.BodyDocument.(map[string]any)
@@ -3497,6 +3499,118 @@ func TestArticlePartialSavePreservesOmittedFieldsAndMergesSEO(t *testing.T) {
 	mismatchedResponse := mustTest(t, server, mismatchedBody)
 	if mismatchedResponse.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected one-sided body save to fail with 400, got %d: %s", mismatchedResponse.StatusCode, readBody(t, mismatchedResponse))
+	}
+}
+
+func TestArticleTagAssignmentsCreatePreserveReplaceAndClear(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	login := seedAndLogin(t, server, db, "article-tags@example.test", "correct horse battery staple")
+	project := createTestProject(t, server, login, `{"slug":"article-tags","name":"Article Tags"}`)
+	category := createTestCategory(t, server, login, project.ID, `{"slug":"guides","name":"Guides"}`)
+	secondaryCategory := createTestCategory(t, server, login, project.ID, `{"slug":"reference","name":"Reference"}`)
+	firstTag := createTestTag(t, server, login, project.ID, `{"slug":"technical-seo","name":"Technical SEO"}`)
+	secondTag := createTestTag(t, server, login, project.ID, `{"slug":"content-strategy","name":"Content Strategy"}`)
+
+	article := createTestArticle(t, server, login, project.ID, `{
+		"title":"Tagged article",
+		"slug":"tagged-article",
+		"primaryCategoryId":"`+category.ID+`",
+		"tagIds":["`+firstTag.ID+`"]
+	}`)
+	if !reflect.DeepEqual(article.TagIDs, []string{firstTag.ID}) || len(article.Tags) != 1 || article.Tags[0].ID != firstTag.ID {
+		t.Fatalf("expected created article tags to round-trip, got ids=%#v tags=%#v", article.TagIDs, article.Tags)
+	}
+	topicID := "term-article-tags-topic"
+	if _, err := db.Exec(`
+		INSERT INTO taxonomy_terms(id, project_id, type, slug, name)
+		VALUES (?, ?, 'topic', 'search-intent', 'Search Intent')
+	`, topicID, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO article_taxonomy(project_id, content_id, taxonomy_term_id, is_primary, position)
+		VALUES (?, ?, ?, 0, 20), (?, ?, ?, 0, 21)
+	`, project.ID, article.ID, secondaryCategory.ID, project.ID, article.ID, topicID); err != nil {
+		t.Fatal(err)
+	}
+	nonTagAssignments := []string{secondaryCategory.ID, topicID}
+	assertArticleNonTagAssignments(t, db, project.ID, article.ID, nonTagAssignments)
+	assertArticleTagAssignments(t, db, project.ID, article.ID, []string{firstTag.ID})
+	assertRevisionSnapshotTags(t, db, project.ID, article.ID, []string{firstTag.ID})
+
+	titleOnly := newMemberMutationRequest(
+		http.MethodPut,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID,
+		`{"title":"Still tagged"}`,
+		login,
+	)
+	titleOnlyResponse := mustTest(t, server, titleOnly)
+	if titleOnlyResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected title-only save 200, got %d: %s", titleOnlyResponse.StatusCode, readBody(t, titleOnlyResponse))
+	}
+	var preserved Envelope[store.AdminArticle]
+	decodeJSONResponse(t, titleOnlyResponse, &preserved)
+	if !reflect.DeepEqual(preserved.Data.TagIDs, []string{firstTag.ID}) {
+		t.Fatalf("expected omitted tagIds to preserve tags, got %#v", preserved.Data.TagIDs)
+	}
+	assertArticleTagAssignments(t, db, project.ID, article.ID, []string{firstTag.ID})
+	assertArticleNonTagAssignments(t, db, project.ID, article.ID, nonTagAssignments)
+
+	replace := newMemberMutationRequest(
+		http.MethodPut,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID,
+		`{"title":"Retagged","tagIds":["`+secondTag.ID+`"]}`,
+		login,
+	)
+	replaceResponse := mustTest(t, server, replace)
+	if replaceResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected retag save 200, got %d: %s", replaceResponse.StatusCode, readBody(t, replaceResponse))
+	}
+	var retagged Envelope[store.AdminArticle]
+	decodeJSONResponse(t, replaceResponse, &retagged)
+	if !reflect.DeepEqual(retagged.Data.TagIDs, []string{secondTag.ID}) {
+		t.Fatalf("expected replacement tags, got %#v", retagged.Data.TagIDs)
+	}
+	assertArticleTagAssignments(t, db, project.ID, article.ID, []string{secondTag.ID})
+	assertArticleNonTagAssignments(t, db, project.ID, article.ID, nonTagAssignments)
+	assertRevisionSnapshotTags(t, db, project.ID, article.ID, []string{secondTag.ID})
+
+	clear := newMemberMutationRequest(
+		http.MethodPut,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID,
+		`{"title":"Untagged","tagIds":[]}`,
+		login,
+	)
+	clearResponse := mustTest(t, server, clear)
+	if clearResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected clear tags save 200, got %d: %s", clearResponse.StatusCode, readBody(t, clearResponse))
+	}
+	var cleared Envelope[store.AdminArticle]
+	decodeJSONResponse(t, clearResponse, &cleared)
+	if len(cleared.Data.TagIDs) != 0 || len(cleared.Data.Tags) != 0 {
+		t.Fatalf("expected explicit empty tagIds to clear tags, got ids=%#v tags=%#v", cleared.Data.TagIDs, cleared.Data.Tags)
+	}
+	assertArticleTagAssignments(t, db, project.ID, article.ID, nil)
+	assertArticleNonTagAssignments(t, db, project.ID, article.ID, nonTagAssignments)
+	assertRevisionSnapshotTags(t, db, project.ID, article.ID, nil)
+
+	tooManyTagIDs := make([]string, 101)
+	for index := range tooManyTagIDs {
+		tooManyTagIDs[index] = fmt.Sprintf("tag-%03d", index)
+	}
+	tooManyBody, err := json.Marshal(map[string]any{"title": "Too many tags", "tagIds": tooManyTagIDs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tooManyRequest := newMemberMutationRequest(
+		http.MethodPut,
+		"/api/v1/projects/"+project.ID+"/articles/"+article.ID,
+		string(tooManyBody),
+		login,
+	)
+	tooManyResponse := mustTest(t, server, tooManyRequest)
+	if tooManyResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected more than 100 article tags to fail with 400, got %d: %s", tooManyResponse.StatusCode, readBody(t, tooManyResponse))
 	}
 }
 
@@ -4391,6 +4505,117 @@ func createTestCategory(t *testing.T, server *Server, login adminLoginResult, pr
 	var payload Envelope[store.TaxonomyTerm]
 	decodeJSONResponse(t, response, &payload)
 	return payload.Data
+}
+
+func createTestTag(t *testing.T, server *Server, login adminLoginResult, projectID, body string) store.TaxonomyTerm {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+projectID+"/tags", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", login.csrfToken)
+	addCookies(request, login.cookies)
+	response := mustTest(t, server, request)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("expected create tag 201, got %d: %s", response.StatusCode, readBody(t, response))
+	}
+	var payload Envelope[store.TaxonomyTerm]
+	decodeJSONResponse(t, response, &payload)
+	return payload.Data
+}
+
+func assertArticleTagAssignments(t *testing.T, db *sql.DB, projectID, articleID string, expected []string) {
+	t.Helper()
+	rows, err := db.Query(`
+		SELECT assignment.taxonomy_term_id
+		FROM article_taxonomy assignment
+		JOIN taxonomy_terms term
+		  ON term.project_id = assignment.project_id
+		 AND term.id = assignment.taxonomy_term_id
+		WHERE assignment.project_id = ?
+		  AND assignment.content_id = ?
+		  AND assignment.is_primary = 0
+		  AND term.type = 'tag'
+		ORDER BY assignment.position, assignment.taxonomy_term_id
+	`, projectID, articleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var actual []string
+	for rows.Next() {
+		var tagID string
+		if err := rows.Scan(&tagID); err != nil {
+			t.Fatal(err)
+		}
+		actual = append(actual, tagID)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("expected article tag assignments %#v, got %#v", expected, actual)
+	}
+}
+
+func assertArticleNonTagAssignments(t *testing.T, db *sql.DB, projectID, articleID string, expected []string) {
+	t.Helper()
+	rows, err := db.Query(`
+		SELECT assignment.taxonomy_term_id
+		FROM article_taxonomy assignment
+		JOIN taxonomy_terms term
+		  ON term.project_id = assignment.project_id
+		 AND term.id = assignment.taxonomy_term_id
+		WHERE assignment.project_id = ?
+		  AND assignment.content_id = ?
+		  AND assignment.is_primary = 0
+		  AND term.type <> 'tag'
+		ORDER BY assignment.position, assignment.taxonomy_term_id
+	`, projectID, articleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var actual []string
+	for rows.Next() {
+		var termID string
+		if err := rows.Scan(&termID); err != nil {
+			t.Fatal(err)
+		}
+		actual = append(actual, termID)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("expected non-tag assignments %#v, got %#v", expected, actual)
+	}
+}
+
+func assertRevisionSnapshotTags(t *testing.T, db *sql.DB, projectID, articleID string, expected []string) {
+	t.Helper()
+	if expected == nil {
+		expected = []string{}
+	}
+	var raw string
+	if err := db.QueryRow(`
+		SELECT taxonomy_snapshot_json
+		FROM content_revisions
+		WHERE project_id = ? AND content_id = ?
+		ORDER BY revision_number DESC
+		LIMIT 1
+	`, projectID, articleID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot store.PublishedTaxonomy
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	actual := make([]string, 0, len(snapshot.Tags))
+	for _, tag := range snapshot.Tags {
+		actual = append(actual, tag.ID)
+	}
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("expected revision snapshot tags %#v, got %#v in %s", expected, actual, raw)
+	}
 }
 
 func createTestAuthor(t *testing.T, server *Server, login adminLoginResult, projectID, body string) store.Author {

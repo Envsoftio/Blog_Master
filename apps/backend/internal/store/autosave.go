@@ -14,6 +14,7 @@ const maxArticleAutosaveBytes = 2 << 20
 type ArticleAutosaveDraft struct {
 	Title                string                     `json:"title"`
 	PrimaryCategoryID    string                     `json:"primaryCategoryId"`
+	TagIDs               []string                   `json:"tagIds"`
 	Contributors         []RevisionContributorInput `json:"contributors"`
 	AttributionEdited    bool                       `json:"attributionEdited"`
 	Deck                 string                     `json:"deck"`
@@ -88,14 +89,6 @@ func (s *Store) SaveArticleAutosave(
 	if input.ExpectedVersion < 0 {
 		return ArticleAutosave{}, fmt.Errorf("%w: expectedVersion cannot be negative", ErrValidation)
 	}
-	draftJSON, err := json.Marshal(input.Draft)
-	if err != nil {
-		return ArticleAutosave{}, fmt.Errorf("%w: draft must be valid JSON", ErrValidation)
-	}
-	if len(draftJSON) > maxArticleAutosaveBytes {
-		return ArticleAutosave{}, fmt.Errorf("%w: autosave draft cannot exceed %d bytes", ErrValidation, maxArticleAutosaveBytes)
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ArticleAutosave{}, err
@@ -129,6 +122,17 @@ func (s *Store) SaveArticleAutosave(
 		if _, err := loadCategory(ctx, tx, projectID, categoryID); err != nil {
 			return ArticleAutosave{}, err
 		}
+	}
+	input.Draft.TagIDs = normalizeIDList(input.Draft.TagIDs)
+	if _, err := loadTagsByID(ctx, tx, projectID, input.Draft.TagIDs); err != nil {
+		return ArticleAutosave{}, err
+	}
+	draftJSON, err := json.Marshal(input.Draft)
+	if err != nil {
+		return ArticleAutosave{}, fmt.Errorf("%w: draft must be valid JSON", ErrValidation)
+	}
+	if len(draftJSON) > maxArticleAutosaveBytes {
+		return ArticleAutosave{}, fmt.Errorf("%w: autosave draft cannot exceed %d bytes", ErrValidation, maxArticleAutosaveBytes)
 	}
 	for _, contributor := range input.Draft.Contributors {
 		authorID := strings.TrimSpace(contributor.AuthorID)

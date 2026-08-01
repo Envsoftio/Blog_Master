@@ -79,9 +79,13 @@ var projectPublicationsLocaleRemovalMigration string
 //go:embed migrations/0024_project_solo_owner_approval.sql
 var projectSoloOwnerApprovalMigration string
 
+//go:embed migrations/0025_project_workspace_removal.sql
+var projectWorkspaceRemovalMigration string
+
 type migration struct {
-	version    string
-	statements string
+	version            string
+	statements         string
+	disableForeignKeys bool
 }
 
 func OpenSQLite(path string) (*sql.DB, error) {
@@ -138,6 +142,7 @@ func Migrate(db *sql.DB) error {
 		{version: "0021_article_autosaves", statements: articleAutosavesMigration},
 		{version: "0023_project_publications_locale_removal", statements: projectPublicationsLocaleRemovalMigration},
 		{version: "0024_project_solo_owner_approval", statements: projectSoloOwnerApprovalMigration},
+		{version: "0025_project_workspace_removal", statements: projectWorkspaceRemovalMigration, disableForeignKeys: true},
 	}
 	for _, item := range migrations {
 		if err := applyMigration(db, item); err != nil {
@@ -154,6 +159,19 @@ func applyMigration(db *sql.DB, item migration) error {
 	}
 	if exists > 0 {
 		return nil
+	}
+
+	foreignKeysDisabled := false
+	if item.disableForeignKeys {
+		if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+			return fmt.Errorf("migration %s: disable foreign keys: %w", item.version, err)
+		}
+		foreignKeysDisabled = true
+		defer func() {
+			if foreignKeysDisabled {
+				_, _ = db.Exec(`PRAGMA foreign_keys = ON`)
+			}
+		}()
 	}
 
 	tx, err := db.Begin()
@@ -174,9 +192,38 @@ func applyMigration(db *sql.DB, item migration) error {
 			return fmt.Errorf("migration %s: %w\n%s", item.version, err, stmt)
 		}
 	}
+	if item.disableForeignKeys {
+		rows, err := tx.Query(`PRAGMA foreign_key_check`)
+		if err != nil {
+			return fmt.Errorf("migration %s: check foreign keys: %w", item.version, err)
+		}
+		if rows.Next() {
+			var table, parent string
+			var rowID any
+			var foreignKeyID int
+			if err := rows.Scan(&table, &rowID, &parent, &foreignKeyID); err != nil {
+				rows.Close()
+				return fmt.Errorf("migration %s: read foreign key violation: %w", item.version, err)
+			}
+			rows.Close()
+			return fmt.Errorf("migration %s: foreign key violation in %s row %v referencing %s (%d)", item.version, table, rowID, parent, foreignKeyID)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("migration %s: close foreign key check: %w", item.version, err)
+		}
+	}
 
 	if _, err := tx.Exec(`INSERT INTO schema_migrations(version) VALUES (?)`, item.version); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if item.disableForeignKeys {
+		if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+			return fmt.Errorf("migration %s: restore foreign keys: %w", item.version, err)
+		}
+		foreignKeysDisabled = false
+	}
+	return nil
 }
