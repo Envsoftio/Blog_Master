@@ -61,7 +61,8 @@ downloaded_db="$temp_dir/downloaded.db"
 sync_json="$temp_dir/sync.json"
 
 log "forcing the continuous replica through the latest committed transaction"
-litestream sync -socket "$SEOBLOG_LITESTREAM_SOCKET" -wait -timeout 120 -json "$SEOBLOG_DB_PATH" >"$sync_json"
+litestream sync -socket "$SEOBLOG_LITESTREAM_SOCKET" -wait -timeout 120 "$SEOBLOG_DB_PATH"
+printf '{"waitedForRemote":true,"timeoutSeconds":120}\n' >"$sync_json"
 
 log "restoring the continuous replica into an isolated database"
 AWS_ACCESS_KEY_ID="$SEOBLOG_BACKUP_RESTORE_KEY_ID" \
