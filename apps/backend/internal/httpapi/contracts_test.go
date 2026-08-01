@@ -61,16 +61,9 @@ func TestAdminFrontendServiceContractsAreImplemented(t *testing.T) {
 		{http.MethodPost, "/api/v1/projects/{projectID}/webhooks", "201"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/webhooks/{endpointID}/revoke", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/delivery/status", "200"},
-		{http.MethodGet, "/api/v1/projects/{projectID}/sources", "200"},
-		{http.MethodHead, "/api/v1/projects/{projectID}/sources", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/sources", "201"},
-		{http.MethodPatch, "/api/v1/projects/{projectID}/sources/{sourceID}", "200"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "200"},
 		{http.MethodHead, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "201"},
-		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "200"},
-		{http.MethodHead, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "201"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/webhook-attempts", "200"},
 		{http.MethodHead, "/api/v1/projects/{projectID}/webhook-attempts", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/webhook-attempts/{attemptID}/replay", "202"},
@@ -117,8 +110,6 @@ func TestCoreArticleAdministrationContractsAreImplemented(t *testing.T) {
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/copy-to-project", "201"},
 		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "200"},
 		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/disclosures", "201"},
-		{http.MethodGet, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "200"},
-		{http.MethodPost, "/api/v1/projects/{projectID}/articles/{articleID}/corrections", "201"},
 	}
 
 	for _, route := range routes {

@@ -105,14 +105,8 @@ func (s *Server) registerAdminRoutes() {
 	api.Patch("/projects/:projectID/media/:assetID", s.requireAdminSession, s.requireAdminCSRF, s.updateMediaAsset)
 	api.Delete("/projects/:projectID/media/:assetID", s.requireAdminSession, s.requireAdminCSRF, s.deleteMediaAsset)
 
-	api.Get("/projects/:projectID/sources", s.requireAdminSession, s.listSources)
-	api.Post("/projects/:projectID/sources", s.requireAdminSession, s.requireAdminCSRF, s.createSource)
-	api.Patch("/projects/:projectID/sources/:sourceID", s.requireAdminSession, s.requireAdminCSRF, s.updateSource)
-
 	api.Get("/projects/:projectID/articles/:articleID/disclosures", s.requireAdminSession, s.listDisclosures)
 	api.Post("/projects/:projectID/articles/:articleID/disclosures", s.requireAdminSession, s.requireAdminCSRF, s.createDisclosure)
-	api.Get("/projects/:projectID/articles/:articleID/corrections", s.requireAdminSession, s.listCorrections)
-	api.Post("/projects/:projectID/articles/:articleID/corrections", s.requireAdminSession, s.requireAdminCSRF, s.createCorrection)
 
 	api.Get("/projects/:projectID/voice-profile", s.requireAdminSession, s.getVoiceProfile)
 	api.Post("/projects/:projectID/voice-profile", s.requireAdminSession, s.requireAdminCSRF, s.createVoiceProfile)
@@ -345,42 +339,10 @@ type authorPatchRequest struct {
 	Status           *string   `json:"status"`
 }
 
-type sourceRequest struct {
-	Title                 string `json:"title"`
-	Publisher             string `json:"publisher"`
-	Author                string `json:"author"`
-	URL                   string `json:"url"`
-	PublicationDate       string `json:"publicationDate"`
-	AccessedAt            string `json:"accessedAt"`
-	SourceType            string `json:"sourceType"`
-	IsPrimary             bool   `json:"isPrimary"`
-	ArchivedCopyReference string `json:"archivedCopyReference"`
-	Notes                 string `json:"notes"`
-}
-
-type sourcePatchRequest struct {
-	Title                 *string `json:"title"`
-	Publisher             *string `json:"publisher"`
-	Author                *string `json:"author"`
-	URL                   *string `json:"url"`
-	PublicationDate       *string `json:"publicationDate"`
-	AccessedAt            *string `json:"accessedAt"`
-	SourceType            *string `json:"sourceType"`
-	IsPrimary             *bool   `json:"isPrimary"`
-	ArchivedCopyReference *string `json:"archivedCopyReference"`
-	Notes                 *string `json:"notes"`
-}
-
 type disclosureRequest struct {
 	RevisionID     string `json:"revisionId"`
 	DisclosureType string `json:"disclosureType"`
 	PublicText     string `json:"publicText"`
-}
-
-type correctionRequest struct {
-	AffectedRevisionID string `json:"affectedRevisionId"`
-	PublicNote         string `json:"publicNote"`
-	SupersedesNoticeID string `json:"supersedesNoticeId"`
 }
 
 func (s *Server) login(c fiber.Ctx) error {
@@ -1410,59 +1372,6 @@ func (s *Server) deleteAuthor(c fiber.Ctx) error {
 	return writeJSON(c, fiber.StatusOK, Envelope[store.Author]{Data: author})
 }
 
-func (s *Server) listSources(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	limit := boundedLimit(c.Query("limit", "50"), 100)
-	sources, err := s.store.ListSources(c.Context(), user.ID, c.Params("projectID"), c.Query("cursor"), limit+1)
-	if err != nil {
-		return s.adminReadError(c, err, "Project not found", "Could not list sources")
-	}
-	nextCursor := ""
-	if len(sources) > limit {
-		sources = sources[:limit]
-		nextCursor = sources[len(sources)-1].ID
-	}
-	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.Source]{
-		Data: sources,
-		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: limit, NextCursor: nextCursor},
-	})
-}
-
-func (s *Server) createSource(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input sourceRequest
-	if err := decodeRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-	}
-	source, err := s.store.CreateSource(c.Context(), user.ID, c.Params("projectID"), input.toStoreInput())
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not create source")
-	}
-	return writeJSON(c, fiber.StatusCreated, Envelope[store.Source]{Data: source})
-}
-
-func (s *Server) updateSource(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input sourcePatchRequest
-	if err := decodeRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-	}
-	source, err := s.store.UpdateSource(c.Context(), user.ID, c.Params("projectID"), c.Params("sourceID"), input.toStorePatch())
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not update source")
-	}
-	return writeJSON(c, fiber.StatusOK, Envelope[store.Source]{Data: source})
-}
-
 func (s *Server) listDisclosures(c fiber.Ctx) error {
 	user, ok := adminUser(c)
 	if !ok {
@@ -1492,37 +1401,6 @@ func (s *Server) createDisclosure(c fiber.Ctx) error {
 		return s.adminMutationError(c, err, "Could not create disclosure")
 	}
 	return writeJSON(c, fiber.StatusCreated, Envelope[store.Disclosure]{Data: disclosure})
-}
-
-func (s *Server) listCorrections(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	corrections, err := s.store.ListCorrections(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"))
-	if err != nil {
-		return s.adminReadError(c, err, "Article not found", "Could not list corrections")
-	}
-	return writeJSON(c, fiber.StatusOK, ListEnvelope[store.CorrectionNotice]{
-		Data: corrections,
-		Meta: PageMeta{ProjectID: c.Params("projectID"), Limit: len(corrections)},
-	})
-}
-
-func (s *Server) createCorrection(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
-	var input correctionRequest
-	if err := decodeRequestBody(c, &input); err != nil {
-		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
-	}
-	correction, err := s.store.CreateCorrection(c.Context(), user.ID, c.Params("projectID"), c.Params("articleID"), input.toStoreInput())
-	if err != nil {
-		return s.adminMutationError(c, err, "Could not create correction")
-	}
-	return writeJSON(c, fiber.StatusCreated, Envelope[store.CorrectionNotice]{Data: correction})
 }
 
 func (s *Server) requireAdminSession(c fiber.Ctx) error {
@@ -1949,49 +1827,11 @@ func (input authorPatchRequest) toStorePatch() store.AuthorPatch {
 	}
 }
 
-func (input sourceRequest) toStoreInput() store.SourceInput {
-	return store.SourceInput{
-		Title:                 input.Title,
-		Publisher:             input.Publisher,
-		Author:                input.Author,
-		URL:                   input.URL,
-		PublicationDate:       input.PublicationDate,
-		AccessedAt:            input.AccessedAt,
-		SourceType:            input.SourceType,
-		IsPrimary:             input.IsPrimary,
-		ArchivedCopyReference: input.ArchivedCopyReference,
-		Notes:                 input.Notes,
-	}
-}
-
-func (input sourcePatchRequest) toStorePatch() store.SourcePatch {
-	return store.SourcePatch{
-		Title:                 input.Title,
-		Publisher:             input.Publisher,
-		Author:                input.Author,
-		URL:                   input.URL,
-		PublicationDate:       input.PublicationDate,
-		AccessedAt:            input.AccessedAt,
-		SourceType:            input.SourceType,
-		IsPrimary:             input.IsPrimary,
-		ArchivedCopyReference: input.ArchivedCopyReference,
-		Notes:                 input.Notes,
-	}
-}
-
 func (input disclosureRequest) toStoreInput() store.DisclosureInput {
 	return store.DisclosureInput{
 		RevisionID:     input.RevisionID,
 		DisclosureType: input.DisclosureType,
 		PublicText:     input.PublicText,
-	}
-}
-
-func (input correctionRequest) toStoreInput() store.CorrectionInput {
-	return store.CorrectionInput{
-		AffectedRevisionID: input.AffectedRevisionID,
-		PublicNote:         input.PublicNote,
-		SupersedesNoticeID: input.SupersedesNoticeID,
 	}
 }
 

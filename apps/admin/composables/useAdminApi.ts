@@ -416,22 +416,6 @@ export type EvidencePacket = {
   createdAt: string
 }
 
-export type AdminSource = {
-  id: string
-  projectId: string
-  title: string
-  publisher?: string
-  author?: string
-  url?: string
-  publicationDate?: string
-  accessedAt?: string
-  sourceType: string
-  isPrimary: boolean
-  archivedCopyReference?: string
-  notes?: string
-  createdAt: string
-}
-
 export type AdminDisclosure = {
   id: string
   projectId: string
@@ -441,17 +425,6 @@ export type AdminDisclosure = {
   publicText: string
   createdBy: string
   createdAt: string
-}
-
-export type AdminCorrection = {
-  id: string
-  projectId: string
-  articleId: string
-  affectedRevisionId?: string
-  publicNote: string
-  correctedBy: string
-  correctedAt: string
-  supersedesNoticeId?: string
 }
 
 export type ProjectCreatePayload = {
@@ -1031,35 +1004,6 @@ export function useAdminApi() {
     }))
   }
 
-  async function listSources(projectID: string) {
-    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminSource>>(`/api/v1/projects/${projectID}/sources?limit=100`))
-  }
-
-  async function createSource(projectID: string, payload: {
-    title: string
-    publisher?: string
-    author?: string
-    url?: string
-    publicationDate?: string
-    accessedAt?: string
-    sourceType: string
-    isPrimary: boolean
-    archivedCopyReference?: string
-    notes?: string
-  }) {
-    return await request<APIEnvelope<AdminSource>>(`/api/v1/projects/${projectID}/sources`, await withCSRF({
-      method: 'POST',
-      body: payload
-    }))
-  }
-
-  async function updateSource(projectID: string, sourceID: string, payload: Partial<AdminSource>) {
-    return await request<APIEnvelope<AdminSource>>(`/api/v1/projects/${projectID}/sources/${sourceID}`, await withCSRF({
-      method: 'PATCH',
-      body: payload
-    }))
-  }
-
   async function listDisclosures(projectID: string, articleID: string) {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminDisclosure>>(`/api/v1/projects/${projectID}/articles/${articleID}/disclosures`))
   }
@@ -1070,21 +1014,6 @@ export function useAdminApi() {
     publicText: string
   }) {
     return await request<APIEnvelope<AdminDisclosure>>(`/api/v1/projects/${projectID}/articles/${articleID}/disclosures`, await withCSRF({
-      method: 'POST',
-      body: payload
-    }))
-  }
-
-  async function listCorrections(projectID: string, articleID: string) {
-    return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminCorrection>>(`/api/v1/projects/${projectID}/articles/${articleID}/corrections`))
-  }
-
-  async function createCorrection(projectID: string, articleID: string, payload: {
-    affectedRevisionId?: string
-    publicNote: string
-    supersedesNoticeId?: string
-  }) {
-    return await request<APIEnvelope<AdminCorrection>>(`/api/v1/projects/${projectID}/articles/${articleID}/corrections`, await withCSRF({
       method: 'POST',
       body: payload
     }))
@@ -1153,13 +1082,8 @@ export function useAdminApi() {
     listEvidencePackets,
     createEvidencePacket,
     approveEvidencePacket,
-    listSources,
-    createSource,
-    updateSource,
     listDisclosures,
-    createDisclosure,
-    listCorrections,
-    createCorrection
+    createDisclosure
   }
 }
 

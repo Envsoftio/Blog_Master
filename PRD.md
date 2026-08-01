@@ -178,7 +178,7 @@ Optional fields belong under clearly labeled expandable sections.
 
 ## 7. Projects
 
-Each project owns its content, taxonomy, authors, media, sources, keys, integrations, and settings.
+Each project owns its content, taxonomy, authors, media, keys, integrations, and settings.
 
 Project settings include:
 
@@ -272,7 +272,7 @@ Responses include:
 - Author credits
 - SEO and social metadata
 - Publication timestamps
-- Public disclosures and correction notices when present
+- Public disclosures when present
 
 Drafts, scheduled content, archived content, autosaves, admin data, and AI data never appear in public routes.
 

@@ -145,15 +145,6 @@ func validateStructuredRevisionNode(node map[string]any) error {
 				return fmt.Errorf("%w: structured editorial blocks must use a supported kind", ErrValidation)
 			}
 		}
-	case "citation":
-		attrs, _ := node["attrs"].(map[string]any)
-		sourceID, _ := attrs["sourceId"].(string)
-		if !safeReferenceIDPattern.MatchString(sourceID) {
-			return fmt.Errorf("%w: structured citations require a valid project source reference", ErrValidation)
-		}
-		if href, _ := attrs["href"].(string); href != "" && !safeRevisionURL(href, true) {
-			return fmt.Errorf("%w: structured citation URLs must use HTTPS or a root-relative URL", ErrValidation)
-		}
 	case "relatedreference":
 		attrs, _ := node["attrs"].(map[string]any)
 		articleID, _ := attrs["articleId"].(string)
@@ -276,10 +267,6 @@ func sanitizeRevisionElement(node *html.Node) error {
 			} else if name == "data-related-reference" && strings.EqualFold(value, "true") {
 				attributes = append(attributes, html.Attribute{Key: name, Val: "true"})
 			} else if name == "data-related-article-id" && safeReferenceIDPattern.MatchString(value) {
-				attributes = append(attributes, html.Attribute{Key: name, Val: value})
-			}
-		case "cite":
-			if name == "data-source-id" && safeReferenceIDPattern.MatchString(value) {
 				attributes = append(attributes, html.Attribute{Key: name, Val: value})
 			}
 		case "div":

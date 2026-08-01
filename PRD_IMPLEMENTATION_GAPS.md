@@ -23,11 +23,6 @@ Status definitions used below:
 
 ## 2. Not-started development
 
-### 2.1 Dedicated editorial templates
-
-- Dedicated briefs, recommended structures and checklists for `standard`, `guide`, `tutorial` and `comparison`.
-- Article-type-specific AI prompts and evidence requirements.
-
 ### 2.3 Advanced taxonomy and discovery
 
 - SQLite FTS5-backed project-scoped editorial search.
@@ -37,24 +32,15 @@ Status definitions used below:
 ### 2.4 Consumer integration data and external integrations
 
 - Link checking for broken links, redirect chains and loops.
-- A guarded, audited domain-configuration migration workflow.
 - Reference landing integration and contract tests for HTML, JSON-LD, feed, sitemap and redirect rendering.
 
 ### 2.5 Content lifecycle automation
 
-- Review-due and content-expiry reminders.
-- Stale-content reporting and advanced correction review.
 - Defined retention periods and guarded hard deletion.
-- Provider-side editorial analytics and landing diagnostics.
 
 ### 2.6 HTTP mutation idempotency
 
 - `Idempotency-Key` handling for publish and other retryable admin mutations.
-- Documented API compatibility and deprecation policy.
-
-### 2.7 Backup, disaster recovery and operations
-
-- Declarative infrastructure for networking, Redis, B2, monitoring, backup services and secret references.
 
 ## 3. Fully implemented tasks
 
@@ -63,19 +49,16 @@ Status definitions used below:
 - Fiber v3 and Huma are the active backend HTTP stack.
 - OpenAPI generation and the server-only TypeScript content client are checked in and validated by the repository build flow.
 
-### 3.2 Password and exact-revision approval security
+### 3.2 Password security
 
 - Password creation/reset paths enforce the PRD 15-character minimum.
-- Non-owners cannot approve a revision they created.
-- Project owners can self-approve only through explicit owner-controlled solo-owner mode.
-- Approval decisions and audit events preserve self-approval state and the approved exact-revision content hash.
 
 ### 3.3 Native article/revision attribution slice
 
 - Article creation and revision editing expose one reusable multi-role contributor editor for primary authors, ordered co-authors, editors, expert reviewers, photographers and other credits.
 - Revision contributor inputs remain project-scoped, ordered and immutable after snapshotting; unchanged revision attribution is inherited without refreshing historical profiles.
 - Approval now rejects an exact revision unless it contains exactly one accountable primary-author record with a complete immutable public snapshot.
-- Public Content API bylines/contributor credits and author filtering use the approved revision snapshots.
+- Public Content API bylines/contributor credits and author filtering use immutable revision snapshots.
 - Cross-project copies require an explicit, complete mapping from every credited source author to an active destination-project author; roles and positions are retained while new immutable destination snapshots are created.
 
 ### 3.4 Article autosave and conflict-recovery slice
@@ -133,25 +116,19 @@ Status definitions used below:
 
 Implemented: project CRUD, globally unique project slugs, status changes, dependency checks, project settings, memberships and project selection.
 
-Remaining: guarded primary/alias/staging domain configuration changes, complete publisher/default-media settings and safe domain migration.
+Remaining: guarded primary/alias/staging domain configuration changes and complete publisher/default-media settings.
 
 ### 4.2 Authors and contributors
 
-Implemented: public author profile CRUD, optional login-account links, ordered project-scoped contributor inputs, a reusable multi-role contributor editor on article creation and revision editing, immutable inherited revision snapshots, public byline/contributor population, author filtering, approval-hash binding, and approval-time enforcement of exactly one accountable primary author.
+Implemented: public author profile CRUD, optional login-account links, ordered project-scoped contributor inputs, a reusable multi-role contributor editor on article creation and revision editing, immutable inherited revision snapshots, public byline/contributor population, author filtering, content-hash binding, and publication-time enforcement of exactly one accountable primary author.
 
 Remaining: none in this bounded attribution slice.
 
 ### 4.3 Structured editing and autosave
 
-Implemented: a shared TipTap visual surface, common semantic blocks and formatting, structured `tiptap-v1` JSON plus HTML emission, allowlist sanitization, derived HTML/Markdown/plain text/table of contents, persistent heading IDs during normal edits, collision-checked explicit anchor editing, project-scoped ready-image and citation pickers, callout/takeaway/steps/pros-and-cons/CTA/FAQ blocks, task lists, attributed quotes, comparison tables, galleries, transcripts, related references, allowlisted embed references, accessible revision comparison, version-migrated local recovery, versioned server autosave, stale-base detection and explicit another-tab conflict recovery.
+Implemented: a shared TipTap visual surface, common semantic blocks and formatting, structured `tiptap-v1` JSON plus HTML emission, allowlist sanitization, derived HTML/Markdown/plain text/table of contents, persistent heading IDs during normal edits, collision-checked explicit anchor editing, project-scoped ready-image pickers, callout/takeaway/steps/pros-and-cons/CTA/FAQ blocks, task lists, attributed quotes, comparison tables, galleries, transcripts, related references, allowlisted embed references, accessible revision comparison, version-migrated local recovery, versioned server autosave, stale-base detection and explicit another-tab conflict recovery.
 
 Remaining: none in this bounded structured-editor and autosave slice.
-
-### 4.4 Review and approval
-
-Implemented: submission, change requests, comments, assignments, notifications, exact-revision decisions, quality gates, publishing, scheduling and rollback. Exact-revision creator checks now prohibit self-approval for non-owners, require explicit owner-only solo-owner opt-in for owner self-approval, and persist the self-approval flag and approved content hash in decision and audit records.
-
-Remaining: cover every public field in approval, record complete approver/publisher/change-note data, mentions and end-to-end propagation status.
 
 ### 4.5 Taxonomy and series
 
@@ -161,9 +138,9 @@ Remaining: secondary categories/tags in article editing, ordered series membersh
 
 ### 4.6 Sources and trust
 
-Implemented: source CRUD, revision claims, verification, disclosures, corrections, approval blocking, immutable source/claim snapshots and public JSON exposure.
+Implemented: public disclosures.
 
-Remaining: inline citation/footnote editing, source-health checks, archived evidence handling, automated claim extraction and richer correction tooling.
+Remaining: none; additional source-trust workflow expansion is outside the committed scope.
 
 ### 4.7 Media and B2
 
@@ -175,7 +152,7 @@ Remaining: metadata/focal-point editing, article and hero attachment, transcript
 
 Implemented: voice profiles, evidence packets, immutable input snapshots, outline/draft/quality jobs, worker retries, cancellation, provenance and token/cost recording.
 
-Remaining: rewrite/critique/metadata tasks, multiple-provider routing and fallback, quotas and enforced budgets, evaluation/canary workflows, automatic source extraction and safe proposal-to-draft application.
+Remaining: rewrite/critique/metadata tasks, multiple-provider routing and fallback, quotas and enforced budgets, evaluation/canary workflows and safe proposal-to-draft application.
 
 ### 4.9 Consumer metadata inputs and Content API
 
@@ -203,18 +180,15 @@ Remaining: reboot rehearsals, database-compatible rollback evidence and failure-
 
 ## 5. Implementation order
 
-1. **Approval and password security**
-   - Enforce creator/self-approval restrictions.
-   - Add an explicit owner-only solo-owner approval setting.
-   - Persist and audit self-approval decisions.
+1. **Password security**
    - Enforce the 15-character password minimum.
 2. **Author attribution**
-   - Completed: ordered contributor inputs, immutable snapshots, native article/revision editing, public bylines and approval-time primary-author enforcement.
+   - Completed: ordered contributor inputs, immutable snapshots, native article/revision editing, public bylines and publication-time primary-author enforcement.
    - Completed: explicit cross-project copy contributor remapping with destination-owned snapshots.
 3. **Structured editor and autosave**
    - Completed: replace body HTML textareas with the shared TipTap visual-editor foundation.
    - Completed: server-backed structured drafts, browser fallback and optimistic conflict recovery.
-   - Completed: callout, takeaway, steps, pros/cons, CTA and FAQ blocks; explicit collision-checked anchor controls; project media and citation pickers.
+   - Completed: callout, takeaway, steps, pros/cons, CTA and FAQ blocks; explicit collision-checked anchor controls and project media pickers.
    - Completed: task lists, attributed quotes, comparison tables, galleries, transcripts, related references, allowlisted embeds and accessible structured diff.
 4. **Consumer-owned SEO contract**
    - Completed: preserve optional SEO/social inputs without rendering crawler-facing output.
@@ -223,20 +197,16 @@ Remaining: reboot rehearsals, database-compatible rollback evidence and failure-
    - Completed: make verified recovery points and restore automation production gates.
 6. **Observability and runbooks**
    - Completed: delivery metrics, managed alert/dashboard definitions and operational recovery documentation.
-7. **Dedicated editorial templates**
-   - Remaining: add dedicated briefs, recommended structures, checklists, AI prompts and evidence requirements for `standard`, `guide`, `tutorial` and `comparison`.
-
 ## 6. Current implementation progress
 
 - [x] Gap review recorded in a standalone PRD implementation document.
-- [x] Approval and solo-owner enforcement.
 - [x] Password-policy alignment.
-- [x] Native article/revision author attribution, multi-role editor, public bylines and approval gate.
+- [x] Native article/revision author attribution, multi-role editor, public bylines and publication gate.
 - [x] Server-backed article autosave, browser fallback and conflict recovery.
 - [x] TipTap visual-editor foundation with structured draft preservation and stable IDs during normal heading edits.
 - [x] Optional SEO/social inputs with immutable bylines and publisher cache invalidation; no provider-generated JSON-LD.
 - [x] Cross-project copy contributor remapping.
-- [x] Callout/takeaway/steps/pros-cons/CTA/FAQ blocks, explicit anchor controls and project media/citation pickers.
+- [x] Callout/takeaway/steps/pros-cons/CTA/FAQ blocks, explicit anchor controls and project media pickers.
 - [x] Remaining specialized semantic blocks and accessible structured diff.
 - [x] Consumer-owned SEO boundary reflected in the published contract.
 - [x] Backup and restore automation.

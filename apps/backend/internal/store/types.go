@@ -14,10 +14,7 @@ type PublishedPost struct {
 	Authors            []Author               `json:"authors"`
 	Contributors       []Contributor          `json:"contributors"`
 	Media              PublishedMedia         `json:"media"`
-	Sources            any                    `json:"sources"`
-	Claims             any                    `json:"claims"`
 	Disclosures        any                    `json:"disclosures"`
-	Corrections        any                    `json:"corrections"`
 	SEO                PublishedSEOInputs     `json:"seo"`
 	RelatedArticles    []PublishedArticleLink `json:"relatedArticles"`
 	TopicRelationships []PublishedArticleLink `json:"topicRelationships"`

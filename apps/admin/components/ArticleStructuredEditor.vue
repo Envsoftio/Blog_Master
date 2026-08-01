@@ -64,7 +64,7 @@
         <div class="structured-editor__menu-panel structured-editor__menu-panel--right">
           <p class="structured-editor__menu-label">Special blocks</p>
           <button type="button" @click="insertFromMenu(insertTaskList, moreMenu)"><ListTodo :size="17" /><span><strong>Task list</strong><small>Checklist items</small></span></button>
-          <button type="button" @click="insertFromMenu(insertAttributedQuote, moreMenu)"><Quote :size="17" /><span><strong>Quote with citation</strong><small>Attributed quotation</small></span></button>
+          <button type="button" @click="insertFromMenu(insertAttributedQuote, moreMenu)"><Quote :size="17" /><span><strong>Attributed quote</strong><small>Quoted passage</small></span></button>
           <button type="button" @click="insertFromMenu(insertComparisonTable, moreMenu)"><Columns3 :size="17" /><span><strong>Comparison</strong><small>Compare options in a table</small></span></button>
           <button type="button" @click="insertFromMenu(insertGallery, moreMenu)"><GalleryHorizontalEnd :size="17" /><span><strong>Gallery</strong><small>Multiple project images</small></span></button>
           <button type="button" @click="insertFromMenu(insertTranscript, moreMenu)"><Captions :size="17" /><span><strong>Transcript</strong><small>Timestamped dialogue</small></span></button>
@@ -80,7 +80,7 @@
       </span>
     </div>
 
-    <div v-if="editor && (mediaAssets.length || sources.length || editor.isActive('heading') || editor.isActive('table'))" class="structured-editor__context-bar">
+    <div v-if="editor && (mediaAssets.length || editor.isActive('heading') || editor.isActive('table'))" class="structured-editor__context-bar">
       <span v-if="mediaAssets.length" class="structured-editor__picker">
         <ImageIcon :size="16" />
         <select v-model="selectedMediaID" class="structured-editor__select" aria-label="Project image" :disabled="disabled">
@@ -88,14 +88,6 @@
           <option v-for="asset in insertableMedia" :key="asset.id" :value="asset.id">{{ mediaLabel(asset) }}</option>
         </select>
         <button type="button" class="structured-editor__text-button" :disabled="disabled || !selectedMediaID" @click="insertSelectedMedia">Insert</button>
-      </span>
-      <span v-if="sources.length" class="structured-editor__picker">
-        <BookOpen :size="16" />
-        <select v-model="selectedSourceID" class="structured-editor__select" aria-label="Project source" :disabled="disabled">
-          <option value="">Choose citation…</option>
-          <option v-for="source in sources" :key="source.id" :value="source.id">{{ source.title }}</option>
-        </select>
-        <button type="button" class="structured-editor__text-button" :disabled="disabled || !selectedSourceID" @click="insertSelectedCitation">Cite</button>
       </span>
       <span v-if="editor.isActive('heading')" class="structured-editor__picker structured-editor__picker--context">
         <Anchor :size="16" />
@@ -210,7 +202,7 @@ import {
   Unlink2,
   X
 } from 'lucide-vue-next'
-import type { AdminMediaAsset, AdminSource } from '~/composables/useAdminApi'
+import type { AdminMediaAsset } from '~/composables/useAdminApi'
 
 const props = withDefaults(defineProps<{
   html: string
@@ -218,13 +210,11 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   label?: string
   mediaAssets?: AdminMediaAsset[]
-  sources?: AdminSource[]
 }>(), {
   bodyDocument: undefined,
   disabled: false,
   label: 'Article body',
-  mediaAssets: () => [],
-  sources: () => []
+  mediaAssets: () => []
 })
 
 const emit = defineEmits<{
@@ -235,7 +225,6 @@ const emit = defineEmits<{
 const editor = shallowRef<Editor | null>(null)
 const editorError = ref('')
 const selectedMediaID = ref('')
-const selectedSourceID = ref('')
 const insertMenu = ref<HTMLDetailsElement | null>(null)
 const moreMenu = ref<HTMLDetailsElement | null>(null)
 type EditorDialog = 'link' | 'image' | 'anchor' | 'related' | 'embed'
@@ -455,33 +444,6 @@ const EmbedReference = Node.create({
   renderHTML: ({ HTMLAttributes }) => ['figure', mergeAttributes(HTMLAttributes), 0]
 })
 
-const Citation = Node.create({
-  name: 'citation',
-  group: 'inline',
-  inline: true,
-  content: 'text*',
-  atom: true,
-  addAttributes() {
-    return {
-      sourceId: {
-        default: null,
-        parseHTML: element => element.getAttribute('data-source-id'),
-        renderHTML: attributes => safeReferenceID(attributes.sourceId) ? { 'data-source-id': attributes.sourceId } : {}
-      },
-      href: {
-        default: null,
-        parseHTML: element => element.querySelector('a')?.getAttribute('href') || null,
-        rendered: false
-      }
-    }
-  },
-  parseHTML: () => [{ tag: 'cite[data-source-id]' }],
-  renderHTML: ({ node, HTMLAttributes }) => {
-    const href = isSafeEditorialURL(node.attrs.href || '', true) ? node.attrs.href : ''
-    return ['cite', mergeAttributes(HTMLAttributes), href ? ['a', { href }, 0] : 0]
-  }
-})
-
 function semanticMark(name: string, tag: string) {
   return Mark.create({
     name,
@@ -545,7 +507,6 @@ onMounted(() => {
       Transcript,
       RelatedReference,
       EmbedReference,
-      Citation,
       Superscript,
       Subscript,
       SemanticTable,
@@ -873,19 +834,6 @@ function insertSelectedMedia() {
   selectedMediaID.value = ''
 }
 
-function insertSelectedCitation() {
-  const source = props.sources.find(candidate => candidate.id === selectedSourceID.value)
-  if (!editor.value || !source || !safeReferenceID(source.id)) return
-  editorError.value = ''
-  const href = source.url && isSafeEditorialURL(source.url, true) ? source.url : null
-  editor.value.chain().focus().insertContent({
-    type: 'citation',
-    attrs: { sourceId: source.id, href },
-    content: [{ type: 'text', text: source.title }]
-  }).run()
-  selectedSourceID.value = ''
-}
-
 function mediaLabel(asset: AdminMediaAsset) {
   const dimensions = asset.width && asset.height ? ` · ${asset.width}×${asset.height}` : ''
   return `${asset.filename}${dimensions}`
@@ -1070,7 +1018,6 @@ function providerLabel(provider: string) {
 :deep(.tiptap code) { padding: 1px 3px; border-radius: 3px; background: var(--surface-subtle, #f2f5f3); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 :deep(.tiptap pre code) { padding: 0; background: transparent; }
 :deep(.tiptap a) { color: var(--primary, #165a4a); text-decoration: underline; }
-:deep(.tiptap cite[data-source-id]) { padding: 1px 4px; border-radius: 3px; background: var(--primary-soft, #e6f2ec); color: var(--primary, #165a4a); font-style: normal; }
 :deep(.tiptap img) { max-width: 100%; height: auto; border-radius: 6px; }
 :deep(.tiptap figure) { padding: 8px; border: 1px solid var(--border, #d7ded8); border-radius: 6px; }
 :deep(.tiptap figcaption) { margin-top: 6px; color: var(--text-faint, #667169); font-size: 12px; }

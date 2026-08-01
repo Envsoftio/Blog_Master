@@ -154,7 +154,7 @@
           <div v-for="packet in evidencePackets" :key="packet.id" class="evidence-row">
             <div>
               <strong>{{ articleTitle(packet.contentId) }}</strong>
-              <span>Version {{ packet.version }} - {{ packetSourceCount(packet) }} sources</span>
+              <span>Version {{ packet.version }}</span>
               <small>{{ packet.packet.thesis }}</small>
             </div>
             <span class="status-pill" :class="packet.approvedAt ? 'status-pill--success' : 'status-pill--warning'">
@@ -209,14 +209,6 @@
             <span>Original thesis</span>
             <textarea v-model.trim="evidenceForm.thesis" required></textarea>
           </label>
-          <fieldset class="source-picker">
-            <legend>Sources</legend>
-            <label v-for="source in sources" :key="source.id">
-              <input v-model="evidenceForm.sourceIds" type="checkbox" :value="source.id">
-              <span>{{ source.title }}</span>
-            </label>
-            <p v-if="!sources.length">No project sources</p>
-          </fieldset>
           <label class="field">
             <span>Product facts</span>
             <textarea v-model="evidenceForm.productFacts" placeholder="One fact per line"></textarea>
@@ -500,7 +492,6 @@ import {
   ARTICLE_TYPES,
   type AdminArticle,
   type AdminProject,
-  type AdminSource,
   type AIJob,
   type AIRun,
   type EvidencePacket,
@@ -519,7 +510,6 @@ const runs = ref<AIRun[]>([])
 const qualityResults = ref<QualityCheckResult[]>([])
 const project = ref<AdminProject | null>(null)
 const articles = ref<AdminArticle[]>([])
-const sources = ref<AdminSource[]>([])
 const evidencePackets = ref<EvidencePacket[]>([])
 const voiceProfile = ref<VoiceProfile | null>(null)
 const jobsPending = ref(true)
@@ -576,7 +566,6 @@ const evidenceForm = reactive({
   humanBrief: '',
   searchIntent: '',
   thesis: '',
-  sourceIds: [] as string[],
   productFacts: '',
   subjectMatterNotes: '',
   firsthandObservations: '',
@@ -638,11 +627,8 @@ const canCreateEvidence = computed(() =>
   evidenceForm.thesis.length >= 20 &&
   evidenceForm.callToAction.length >= 5 &&
   evidenceForm.publicationRecommendation.length > 0 &&
-  (evidenceForm.publicationRecommendation !== 'ready' || hasUniqueEvidence.value) &&
-  (
-    evidenceForm.sourceIds.length > 0 ||
-    hasUniqueEvidence.value
-  )
+  hasUniqueEvidence.value &&
+  (evidenceForm.publicationRecommendation !== 'ready' || hasUniqueEvidence.value)
 )
 const runsByJob = computed(() => {
   const mapped = new Map<string, AIRun>()
@@ -679,7 +665,6 @@ async function loadWorkspace() {
     const [
       projectResponse,
       articleResponse,
-      sourceResponse,
       evidenceResponse,
       jobResponse,
       runResponse,
@@ -688,7 +673,6 @@ async function loadWorkspace() {
     ] = await Promise.all([
       api.getProject(projectID.value),
       api.listArticles(projectID.value),
-      api.listSources(projectID.value),
       api.listEvidencePackets(projectID.value),
       api.listAIJobs(projectID.value),
       api.listAIRuns(projectID.value),
@@ -697,7 +681,6 @@ async function loadWorkspace() {
     ])
     project.value = projectResponse.data
     articles.value = articleResponse.data
-    sources.value = sourceResponse.data
     evidencePackets.value = evidenceResponse.data
     jobs.value = jobResponse.data
     runs.value = runResponse.data
@@ -805,11 +788,11 @@ async function createPacket() {
       thesis: evidenceForm.thesis,
       productFacts: lineItems(evidenceForm.productFacts).map(statement => ({
         statement,
-        sourceIds: [...evidenceForm.sourceIds]
+        sourceIds: []
       })),
       subjectMatterNotes: lineItems(evidenceForm.subjectMatterNotes),
       firsthandObservations: lineItems(evidenceForm.firsthandObservations),
-      sourceIds: [...evidenceForm.sourceIds],
+      sourceIds: [],
       customerEvidence: lineItems(evidenceForm.customerEvidence),
       measurements: lineItems(evidenceForm.measurements),
       allowedClaims: lineItems(evidenceForm.allowedClaims),
@@ -876,7 +859,6 @@ function resetEvidenceForm() {
   evidenceForm.humanBrief = ''
   evidenceForm.searchIntent = ''
   evidenceForm.thesis = ''
-  evidenceForm.sourceIds = []
   evidenceForm.productFacts = ''
   evidenceForm.subjectMatterNotes = ''
   evidenceForm.firsthandObservations = ''
@@ -911,14 +893,6 @@ function mapItems(value: Record<string, string>) {
 function articleTitle(contentID?: string) {
   if (!contentID) return 'Project evidence'
   return articles.value.find(article => article.id === contentID)?.title || contentID
-}
-
-function packetSourceCount(packet: EvidencePacket) {
-  const sourceIDs = new Set(packet.packet.sourceIds)
-  for (const fact of packet.packet.productFacts) {
-    for (const sourceID of fact.sourceIds) sourceIDs.add(sourceID)
-  }
-  return sourceIDs.size
 }
 
 function evidenceStatus(packet: EvidencePacket) {
@@ -1012,12 +986,8 @@ function relativeDate(value?: string) {
 .evidence-row strong, .evidence-row span, .evidence-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .evidence-row strong { font-size: 13px; }
 .evidence-row div > span, .evidence-row small { color: var(--text-soft); font-size: 12px; }
-.source-picker, .voice-examples { min-width: 0; margin: 0; padding: 0; border: 0; }
-.source-picker legend, .voice-examples legend { margin-bottom: 8px; color: var(--text); font-size: 12px; font-weight: 650; }
-.source-picker { display: grid; gap: 7px; }
-.source-picker label { display: flex; min-width: 0; align-items: center; gap: 8px; font-size: 12px; }
-.source-picker label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.source-picker p { margin: 0; color: var(--text-soft); font-size: 12px; }
+.voice-examples { min-width: 0; margin: 0; padding: 0; border: 0; }
+.voice-examples legend { margin-bottom: 8px; color: var(--text); font-size: 12px; font-weight: 650; }
 .voice-examples { display: grid; gap: 14px; }
 .voice-examples > div { display: grid; grid-template-columns: minmax(180px, .4fr) minmax(0, 1fr) 32px; gap: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 .voice-example__remove { margin-top: 18px; }

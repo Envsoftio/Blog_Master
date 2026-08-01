@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -2065,161 +2064,6 @@ func TestPublicationRequiresAccountablePrimaryAuthor(t *testing.T) {
 	}
 }
 
-func TestSourcesClaimsAndDirectPublication(t *testing.T) {
-	server, db := newAdminTestServer(t)
-	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct password")
-	ownerBLogin := seedAndLogin(t, server, db, "owner-b@example.test", "owner b correct password")
-	writerLogin := seedAndLogin(t, server, db, "writer@example.test", "writer correct password")
-	project := createTestProject(t, server, ownerLogin, `{"slug":"trust","name":"Trust Project"}`)
-	projectB := createTestProject(t, server, ownerBLogin, `{"slug":"trust-b","name":"Trust Project B"}`)
-	category := createTestCategory(t, server, ownerLogin, project.ID, `{"slug":"guides","name":"Guides"}`)
-	if _, err := db.Exec(`
-		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
-		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
-	`, project.ID, writerLogin.userID); err != nil {
-		t.Fatal(err)
-	}
-
-	sourceRequest := newMemberMutationRequest(
-		http.MethodPost,
-		"/api/v1/projects/"+project.ID+"/sources",
-		`{"title":"Primary benchmark","url":"https://example.test/benchmark","sourceType":"report","isPrimary":true}`,
-		ownerLogin,
-	)
-	sourceResponse := mustTest(t, server, sourceRequest)
-	if sourceResponse.StatusCode != http.StatusCreated {
-		t.Fatalf("expected source create 201, got %d: %s", sourceResponse.StatusCode, readBody(t, sourceResponse))
-	}
-	var sourcePayload Envelope[store.Source]
-	decodeJSONResponse(t, sourceResponse, &sourcePayload)
-	source := sourcePayload.Data
-	if source.ID == "" || !source.IsPrimary || source.SourceType != "report" {
-		t.Fatalf("unexpected source payload %#v", source)
-	}
-
-	updateSourceRequest := newMemberMutationRequest(
-		http.MethodPatch,
-		"/api/v1/projects/"+project.ID+"/sources/"+source.ID,
-		`{"title":"Primary benchmark update","notes":"Reviewed for Q3."}`,
-		ownerLogin,
-	)
-	updateSourceResponse := mustTest(t, server, updateSourceRequest)
-	if updateSourceResponse.StatusCode != http.StatusOK {
-		t.Fatalf("expected source update 200, got %d: %s", updateSourceResponse.StatusCode, readBody(t, updateSourceResponse))
-	}
-	var updatedSourcePayload Envelope[store.Source]
-	decodeJSONResponse(t, updateSourceResponse, &updatedSourcePayload)
-	if updatedSourcePayload.Data.Title != "Primary benchmark update" || updatedSourcePayload.Data.Notes != "Reviewed for Q3." {
-		t.Fatalf("unexpected updated source %#v", updatedSourcePayload.Data)
-	}
-
-	listSourceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/sources", nil)
-	addCookies(listSourceRequest, ownerLogin.cookies)
-	listSourceResponse := mustTest(t, server, listSourceRequest)
-	if listSourceResponse.StatusCode != http.StatusOK {
-		t.Fatalf("expected source list 200, got %d: %s", listSourceResponse.StatusCode, readBody(t, listSourceResponse))
-	}
-	var listedSources ListEnvelope[store.Source]
-	decodeJSONResponse(t, listSourceResponse, &listedSources)
-	foundSource := false
-	for _, listed := range listedSources.Data {
-		if listed.ID == source.ID && listed.Title == "Primary benchmark update" {
-			foundSource = true
-		}
-	}
-	if !foundSource {
-		t.Fatalf("expected updated source in list, got %#v", listedSources.Data)
-	}
-
-	projectBSourceRequest := newMemberMutationRequest(
-		http.MethodPost,
-		"/api/v1/projects/"+projectB.ID+"/sources",
-		`{"title":"Project B source","url":"https://example.test/project-b","sourceType":"web"}`,
-		ownerBLogin,
-	)
-	projectBSourceResponse := mustTest(t, server, projectBSourceRequest)
-	if projectBSourceResponse.StatusCode != http.StatusCreated {
-		t.Fatalf("expected project B source create 201, got %d: %s", projectBSourceResponse.StatusCode, readBody(t, projectBSourceResponse))
-	}
-	var projectBSourcePayload Envelope[store.Source]
-	decodeJSONResponse(t, projectBSourceResponse, &projectBSourcePayload)
-
-	article := createTestArticle(
-		t,
-		server,
-		ownerLogin,
-		project.ID,
-		`{"articleType":"guide","title":"Claimed Guide","slug":"claimed-guide","primaryCategoryId":"`+category.ID+`","html":"<p>Benchmarked result.</p>"}`,
-	)
-	revisionID := article.LatestRevision.ID
-
-	if _, err := server.store.CreateRevisionClaim(context.Background(), ownerLogin.userID, project.ID, revisionID, store.ClaimInput{
-		ClaimText: "Cross-project source should fail.", Importance: "material", SourceIDs: []string{projectBSourcePayload.Data.ID},
-	}); !errors.Is(err, store.ErrValidation) {
-		t.Fatalf("expected cross-project source claim to fail validation, got %v", err)
-	}
-
-	claim, err := server.store.CreateRevisionClaim(context.Background(), ownerLogin.userID, project.ID, revisionID, store.ClaimInput{
-		ClaimText: "The benchmark improved conversion by 12%.", Importance: "material", SourceIDs: []string{source.ID},
-	})
-	if err != nil {
-		t.Fatalf("expected internal claim fixture: %v", err)
-	}
-	if claim.VerificationState != "unverified" || len(claim.SourceIDs) != 1 || claim.SourceIDs[0] != source.ID {
-		t.Fatalf("unexpected claim payload %#v", claim)
-	}
-
-	listedClaims, err := server.store.ListRevisionClaims(context.Background(), ownerLogin.userID, project.ID, revisionID)
-	if err != nil || len(listedClaims) != 1 || listedClaims[0].ID != claim.ID {
-		t.Fatalf("expected created internal claim, got claims=%#v err=%v", listedClaims, err)
-	}
-
-	if _, err := server.store.VerifyClaim(context.Background(), writerLogin.userID, project.ID, claim.ID, store.ClaimVerificationInput{
-		VerificationState: "supported",
-	}); !errors.Is(err, store.ErrForbidden) {
-		t.Fatalf("expected writer claim verification denial, got %v", err)
-	}
-
-	verified, err := server.store.VerifyClaim(context.Background(), ownerLogin.userID, project.ID, claim.ID, store.ClaimVerificationInput{
-		VerificationState: "supported",
-	})
-	if err != nil || verified.VerificationState != "supported" || verified.VerifiedBy != ownerLogin.userID {
-		t.Fatalf("unexpected verified claim %#v err=%v", verified, err)
-	}
-
-	published := publishTestArticle(t, server, ownerLogin, project.ID, article.ID, "claimed-guide")
-	if published.PublicationState != "published" {
-		t.Fatalf("expected direct publication to finalize the revision, got %#v", published)
-	}
-	detail := getTestRevisionDetail(t, db, project.ID, article.ID, revisionID)
-	if !jsonContainsID(detail.SourceSnapshot, source.ID) {
-		t.Fatalf("expected source snapshot to include %q, got %#v", source.ID, detail.SourceSnapshot)
-	}
-	if !jsonContainsID(detail.ClaimSnapshot, claim.ID) {
-		t.Fatalf("expected claim snapshot to include %q, got %#v", claim.ID, detail.ClaimSnapshot)
-	}
-
-	if _, err := server.store.CreateRevisionClaim(context.Background(), ownerLogin.userID, project.ID, revisionID, store.ClaimInput{
-		ClaimText: "Late change", Importance: "normal",
-	}); !errors.Is(err, store.ErrInvalidWorkflow) {
-		t.Fatalf("expected finalized revision claim mutation to fail, got %v", err)
-	}
-
-	var claimAuditCount int
-	if err := db.QueryRow(`
-		SELECT COUNT(1)
-		FROM audit_events
-		WHERE project_id = ?
-		  AND target_id = ?
-		  AND action IN ('claim.create', 'claim.verify')
-	`, project.ID, claim.ID).Scan(&claimAuditCount); err != nil {
-		t.Fatal(err)
-	}
-	if claimAuditCount != 2 {
-		t.Fatalf("expected claim create and verify audit events, got %d", claimAuditCount)
-	}
-}
-
 func TestEditorCanPublishOwnDraftWithoutApproval(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerLogin := seedAndLogin(t, server, db, "publish-owner@example.test", "owner correct horse password")
@@ -2372,34 +2216,6 @@ func TestDisclosuresAndCorrectionsReachPublishedJSON(t *testing.T) {
 		t.Fatalf("expected created disclosure in list, got %#v", listedDisclosures.Data)
 	}
 
-	correctionRequest := newMemberMutationRequest(
-		http.MethodPost,
-		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/corrections",
-		`{"affectedRevisionId":"`+revisionID+`","publicNote":"Corrected an outdated benchmark date."}`,
-		ownerLogin,
-	)
-	correctionResponse := mustTest(t, server, correctionRequest)
-	if correctionResponse.StatusCode != http.StatusCreated {
-		t.Fatalf("expected correction create 201, got %d: %s", correctionResponse.StatusCode, readBody(t, correctionResponse))
-	}
-	var correctionPayload Envelope[store.CorrectionNotice]
-	decodeJSONResponse(t, correctionResponse, &correctionPayload)
-	if correctionPayload.Data.AffectedRevisionID != revisionID {
-		t.Fatalf("expected revision-bound correction, got %#v", correctionPayload.Data)
-	}
-
-	listCorrectionsRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/corrections", nil)
-	addCookies(listCorrectionsRequest, ownerLogin.cookies)
-	listCorrectionsResponse := mustTest(t, server, listCorrectionsRequest)
-	if listCorrectionsResponse.StatusCode != http.StatusOK {
-		t.Fatalf("expected correction list 200, got %d: %s", listCorrectionsResponse.StatusCode, readBody(t, listCorrectionsResponse))
-	}
-	var listedCorrections ListEnvelope[store.CorrectionNotice]
-	decodeJSONResponse(t, listCorrectionsResponse, &listedCorrections)
-	if len(listedCorrections.Data) != 1 || listedCorrections.Data[0].ID != correctionPayload.Data.ID {
-		t.Fatalf("expected created correction in list, got %#v", listedCorrections.Data)
-	}
-
 	publishedRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts/trust-update", nil)
 	publishedRequest.Header.Set("X-Dev-Project-ID", project.ID)
 	publishedResponse := mustTest(t, server, publishedRequest)
@@ -2411,10 +2227,6 @@ func TestDisclosuresAndCorrectionsReachPublishedJSON(t *testing.T) {
 	if !jsonContainsID(published.Data.Disclosures, disclosurePayload.Data.ID) {
 		t.Fatalf("expected published JSON to include disclosure %q, got %#v", disclosurePayload.Data.ID, published.Data.Disclosures)
 	}
-	if !jsonContainsID(published.Data.Corrections, correctionPayload.Data.ID) {
-		t.Fatalf("expected published JSON to include correction %q, got %#v", correctionPayload.Data.ID, published.Data.Corrections)
-	}
-
 	changesRequest := httptest.NewRequest(http.MethodGet, "/content/v1/changes", nil)
 	changesRequest.Header.Set("X-Dev-Project-ID", project.ID)
 	changesResponse := mustTest(t, server, changesRequest)
@@ -2429,16 +2241,16 @@ func TestDisclosuresAndCorrectionsReachPublishedJSON(t *testing.T) {
 			contentUpdates++
 		}
 	}
-	if contentUpdates < 2 {
-		t.Fatalf("expected disclosure and correction content.updated events, got %#v", changes.Data)
+	if contentUpdates < 1 {
+		t.Fatalf("expected disclosure content.updated event, got %#v", changes.Data)
 	}
 
 	var contentGeneration int64
 	if err := db.QueryRow(`SELECT content_generation FROM projects WHERE id = ?`, project.ID).Scan(&contentGeneration); err != nil {
 		t.Fatal(err)
 	}
-	if contentGeneration < 5 {
-		t.Fatalf("expected public trust writes to advance content generation, got %d", contentGeneration)
+	if contentGeneration < 4 {
+		t.Fatalf("expected disclosure write to advance content generation, got %d", contentGeneration)
 	}
 }
 

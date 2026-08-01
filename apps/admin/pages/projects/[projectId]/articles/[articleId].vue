@@ -213,7 +213,6 @@
                 v-model:body-document="articleBodyDocument"
                 label="Article body"
                 :media-assets="mediaAssets"
-                :sources="sources"
               />
               <div class="article-compose__summaries">
                 <label class="block space-y-2">
@@ -505,7 +504,7 @@ import {
   UploadCloud,
   XCircle
 } from 'lucide-vue-next'
-import type { AdminAuthor, AdminMediaAsset, AdminSource, ArticleContributorInput } from '~/composables/useAdminApi'
+import type { AdminAuthor, AdminMediaAsset, ArticleContributorInput } from '~/composables/useAdminApi'
 import { articleBodyDocumentFromHTML, hasValidArticleContributors, htmlToPlainText } from '~/composables/useAdminApi'
 
 type APIEnvelope<T> = {
@@ -646,7 +645,6 @@ const categories = ref<TaxonomyTerm[]>([])
 const tags = ref<TaxonomyTerm[]>([])
 const authors = ref<AdminAuthor[]>([])
 const mediaAssets = ref<AdminMediaAsset[]>([])
-const sources = ref<AdminSource[]>([])
 const copyDestinationCategories = ref<TaxonomyTerm[]>([])
 const copyDestinationAuthors = ref<AdminAuthor[]>([])
 const copyContributorMappings = reactive<Record<string, string>>({})
@@ -800,7 +798,7 @@ async function refresh() {
   pending.value = true
   errorMessage.value = ''
   try {
-    const [projectResponse, projectListResponse, categoryResponse, tagResponse, authorResponse, articleResponse, autosaveResponse, mediaResponse, sourceResponse] = await Promise.all([
+    const [projectResponse, projectListResponse, categoryResponse, tagResponse, authorResponse, articleResponse, autosaveResponse, mediaResponse] = await Promise.all([
       $fetch<APIEnvelope<AdminProject>>(`/api/v1/projects/${projectID.value}`, { credentials: 'include' }),
       fetchAllCopyProjects(),
       fetchAllCategories(projectID.value),
@@ -808,8 +806,7 @@ async function refresh() {
       $fetch<APIListEnvelope<AdminAuthor>>(`/api/v1/projects/${projectID.value}/authors`, { credentials: 'include' }),
       $fetch<APIEnvelope<AdminArticle>>(`/api/v1/projects/${projectID.value}/articles/${articleID.value}`, { credentials: 'include' }),
       fetchArticleAutosave(),
-      $fetch<APIListEnvelope<AdminMediaAsset>>(`/api/v1/projects/${projectID.value}/media`, { credentials: 'include' }),
-      $fetch<APIListEnvelope<AdminSource>>(`/api/v1/projects/${projectID.value}/sources`, { credentials: 'include', query: { limit: 100 } })
+      $fetch<APIListEnvelope<AdminMediaAsset>>(`/api/v1/projects/${projectID.value}/media`, { credentials: 'include' })
     ])
     project.value = projectResponse.data
     if (!canWriteArticles.value && workspaceTab.value === 'write') workspaceTab.value = 'overview'
@@ -818,7 +815,6 @@ async function refresh() {
     tags.value = tagResponse.sort((left, right) => left.name.localeCompare(right.name))
     authors.value = apiListData(authorResponse).sort((left, right) => left.displayName.localeCompare(right.displayName))
     mediaAssets.value = apiListData(mediaResponse)
-    sources.value = apiListData(sourceResponse)
     loadedServerAutosave.value = autosaveResponse
     serverAutosaveVersion.value = autosaveResponse?.version || 0
     setArticle(articleResponse.data)

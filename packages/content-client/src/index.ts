@@ -171,10 +171,7 @@ export type PublishedPost = {
   authors: Author[]
   contributors: Contributor[]
   media: PublishedMedia
-  sources: unknown
-  claims: unknown
   disclosures: unknown
-  corrections: unknown
   seo: PublishedSEOInputs
   relatedArticles: PublishedArticleLink[]
   topicRelationships: PublishedArticleLink[]

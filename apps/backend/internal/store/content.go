@@ -39,35 +39,13 @@ const publishedDisclosureJSON = `
 	), cr.disclosure_snapshot_json)
 `
 
-const publishedCorrectionsJSON = `
-	COALESCE((
-		SELECT json_group_array(json_object(
-			'id', correction.id,
-			'projectId', correction.project_id,
-			'articleId', correction.content_id,
-			'affectedRevisionId', COALESCE(correction.affected_revision_id, ''),
-			'publicNote', correction.public_note,
-			'correctedBy', correction.corrected_by,
-			'correctedAt', correction.corrected_at,
-			'supersedesNoticeId', COALESCE(correction.supersedes_notice_id, '')
-		))
-		FROM (
-			SELECT *
-			FROM correction_notices
-			WHERE project_id = pp.project_id
-			  AND content_id = pp.content_id
-			ORDER BY corrected_at, id
-		) correction
-	), cr.correction_summary_json)
-`
-
 const publishedPostColumns = `
 	ci.id, ci.article_type, pp.slug, cr.revision_number, cr.title,
 	COALESCE(cr.deck, ''), COALESCE(cr.excerpt, ''), COALESCE(cr.short_answer, ''),
 	cr.body_document_json, cr.sanitized_html, cr.table_of_contents_json,
 	cr.seo_snapshot_json, cr.taxonomy_snapshot_json, cr.author_snapshot_json,
 	cr.contributor_snapshot_json, cr.source_snapshot_json, cr.claim_snapshot_json,
-	cr.media_snapshot_json, ` + publishedDisclosureJSON + `, ` + publishedCorrectionsJSON + `,
+	cr.media_snapshot_json, ` + publishedDisclosureJSON + `,
 	pp.canonical_url, pp.robots_directive, cr.content_hash,
 	COALESCE(pp.first_published_at, ''), COALESCE(pp.materially_modified_at, ''),
 	COALESCE(pp.first_published_at, pp.created_at),
@@ -293,13 +271,13 @@ type rowScanner interface {
 func scanPost(row rowScanner, relationshipOrigin *string) (PublishedPost, error) {
 	var post PublishedPost
 	var bodyJSON, tocJSON, seoJSON, taxonomyJSON, authorsJSON, contributorsJSON string
-	var sourcesJSON, claimsJSON, mediaJSON, disclosuresJSON, correctionsJSON string
+	var sourceSnapshotJSON, claimSnapshotJSON, mediaJSON, disclosuresJSON string
 	dest := []any{
 		&post.ID, &post.ArticleType, &post.Slug, &post.Revision,
 		&post.Title, &post.Deck, &post.Excerpt, &post.ShortAnswer,
 		&bodyJSON, &post.Content.HTML, &tocJSON,
 		&seoJSON, &taxonomyJSON, &authorsJSON, &contributorsJSON,
-		&sourcesJSON, &claimsJSON, &mediaJSON, &disclosuresJSON, &correctionsJSON,
+		&sourceSnapshotJSON, &claimSnapshotJSON, &mediaJSON, &disclosuresJSON,
 		&post.SEO.CanonicalURL, &post.SEO.Robots, &post.ContentHash,
 		&post.PublishedAt, &post.ModifiedAt, &post.PaginationKey,
 		&post.PublisherName, &post.PublisherURL,
@@ -331,11 +309,8 @@ func scanPost(row rowScanner, relationshipOrigin *string) (PublishedPost, error)
 	decodeInto(authorsJSON, &post.Authors)
 	post.Contributors = []Contributor{}
 	decodeInto(contributorsJSON, &post.Contributors)
-	post.Sources = decodeJSON(sourcesJSON, []any{})
-	post.Claims = decodeJSON(claimsJSON, []any{})
 	post.Media = publishedMediaFromSnapshot(mediaJSON)
 	post.Disclosures = decodeJSON(disclosuresJSON, []any{})
-	post.Corrections = decodeJSON(correctionsJSON, []any{})
 	post.RelatedArticles = []PublishedArticleLink{}
 	post.TopicRelationships = []PublishedArticleLink{}
 	return post, nil
