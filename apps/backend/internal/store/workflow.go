@@ -1688,7 +1688,9 @@ func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectI
 		return AdminArticle{}, err
 	}
 	if revision.EditorialState != "approved" {
-		return AdminArticle{}, fmt.Errorf("%w: revision must be approved before publication", ErrInvalidWorkflow)
+		if err := finalizeRevisionForPublication(ctx, tx, actorUserID, projectID, revision); err != nil {
+			return AdminArticle{}, err
+		}
 	}
 	if err := ensurePublishableTaxonomy(ctx, tx, projectID, articleID); err != nil {
 		return AdminArticle{}, err
@@ -1740,6 +1742,57 @@ func (s *Store) setArticlePublication(ctx context.Context, actorUserID, projectI
 		return AdminArticle{}, err
 	}
 	return s.GetArticleForUser(ctx, actorUserID, projectID, articleID)
+}
+
+// finalizeRevisionForPublication keeps the public trust snapshot immutable while
+// allowing users with publish permission to move a revision live without a
+// separate review/approval transition. Review approval remains available for
+// teams that want it, but it is no longer a prerequisite for publication.
+func finalizeRevisionForPublication(
+	ctx context.Context,
+	tx *sql.Tx,
+	actorUserID, projectID string,
+	revision AdminRevision,
+) error {
+	if err := ensureRevisionPrimaryAuthor(ctx, tx, projectID, revision.ID); err != nil {
+		return err
+	}
+	if err := ensureRevisionClaimsApproved(ctx, tx, projectID, revision.ID); err != nil {
+		return err
+	}
+	if err := ensureRevisionQualityApproved(ctx, tx, projectID, revision.ID); err != nil {
+		return err
+	}
+	sourceSnapshotJSON, claimSnapshotJSON, err := buildRevisionTrustSnapshots(ctx, tx, projectID, revision.ID)
+	if err != nil {
+		return err
+	}
+	contentHash, err := approvalContentHash(revision.ContentHash, sourceSnapshotJSON, claimSnapshotJSON)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE content_revisions
+		SET editorial_state = 'approved',
+		    source_snapshot_json = ?,
+		    claim_snapshot_json = ?,
+		    content_hash = ?
+		WHERE project_id = ? AND id = ? AND editorial_state <> 'approved'
+	`, sourceSnapshotJSON, claimSnapshotJSON, contentHash, projectID, revision.ID)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return fmt.Errorf("%w: revision could not be finalized for publication", ErrInvalidWorkflow)
+	}
+	return insertAuditEventTx(ctx, tx, projectID, "user", actorUserID, "revision.finalize_for_publication", "revision", revision.ID, "success", map[string]any{
+		"content_hash":   contentHash,
+		"previous_state": revision.EditorialState,
+	})
 }
 
 func (s *Store) setRevisionState(ctx context.Context, actorUserID, projectID, revisionID, state, action string) (AdminRevision, error) {

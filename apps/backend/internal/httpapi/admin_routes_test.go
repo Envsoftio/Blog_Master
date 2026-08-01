@@ -2403,6 +2403,56 @@ func TestRevisionSelfApprovalRequiresExplicitSoloOwnerMode(t *testing.T) {
 	}
 }
 
+func TestEditorCanPublishOwnDraftWithoutApproval(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "publish-owner@example.test", "owner correct horse password")
+	editorLogin := seedAndLogin(t, server, db, "publishing-editor@example.test", "editor correct horse password")
+	project := createTestProject(
+		t,
+		server,
+		ownerLogin,
+		`{"slug":"direct-editor-publish","name":"Direct Editor Publish","primaryDomain":"example.test","soloOwnerApprovalEnabled":false}`,
+	)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'editor', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, editorLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+	category := createTestCategory(t, server, editorLogin, project.ID, `{"slug":"guides","name":"Guides"}`)
+	article := createTestArticle(
+		t,
+		server,
+		editorLogin,
+		project.ID,
+		`{"articleType":"guide","title":"Editor Draft","slug":"editor-draft","primaryCategoryId":"`+category.ID+`","html":"<p>Publish directly.</p>"}`,
+	)
+
+	published := publishTestArticle(t, server, editorLogin, project.ID, article.ID, article.LatestRevision.ID, "editor-draft")
+	if published.EditorialState != "approved" || published.PublicationState != "published" {
+		t.Fatalf("expected direct publish to finalize the draft, got editorial=%q publication=%q", published.EditorialState, published.PublicationState)
+	}
+	var decisions int
+	if err := db.QueryRow(`
+		SELECT COUNT(1) FROM approval_decisions WHERE project_id = ? AND revision_id = ?
+	`, project.ID, article.LatestRevision.ID).Scan(&decisions); err != nil {
+		t.Fatal(err)
+	}
+	if decisions != 0 {
+		t.Fatalf("expected direct publication not to create an approval decision, got %d", decisions)
+	}
+	var finalizeEvents int
+	if err := db.QueryRow(`
+		SELECT COUNT(1) FROM audit_events
+		WHERE project_id = ? AND action = 'revision.finalize_for_publication' AND target_id = ?
+	`, project.ID, article.LatestRevision.ID).Scan(&finalizeEvents); err != nil {
+		t.Fatal(err)
+	}
+	if finalizeEvents != 1 {
+		t.Fatalf("expected one direct-publication finalization audit event, got %d", finalizeEvents)
+	}
+}
+
 func TestDisclosuresAndCorrectionsReachPublishedJSON(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "owner correct password")
@@ -2957,39 +3007,22 @@ func TestScheduledPublishFlow(t *testing.T) {
 	article := createTestArticle(t, server, login, project.ID, articleRequest)
 	revisionID := article.LatestRevision.ID
 
-	scheduleBeforeApproval := httptest.NewRequest(
+	scheduleDraft := httptest.NewRequest(
 		http.MethodPost,
 		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/schedule",
 		strings.NewReader(`{"revisionId":"`+revisionID+`","slug":"scheduled-post","scheduledForUtc":"`+time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)+`"}`),
 	)
-	scheduleBeforeApproval.Header.Set("Content-Type", "application/json")
-	scheduleBeforeApproval.Header.Set("X-CSRF-Token", login.csrfToken)
-	addCookies(scheduleBeforeApproval, login.cookies)
-	scheduleBeforeApprovalResponse := mustTest(t, server, scheduleBeforeApproval)
-	if scheduleBeforeApprovalResponse.StatusCode != http.StatusConflict {
-		t.Fatalf("expected scheduling an unapproved revision to fail with 409, got %d", scheduleBeforeApprovalResponse.StatusCode)
-	}
-
-	approveRequest := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+project.ID+"/revisions/"+revisionID+"/approve", strings.NewReader(`{}`))
-	approveRequest.Header.Set("Content-Type", "application/json")
-	approveRequest.Header.Set("X-CSRF-Token", login.csrfToken)
-	addCookies(approveRequest, login.cookies)
-	approveResponse := mustTest(t, server, approveRequest)
-	if approveResponse.StatusCode != http.StatusOK {
-		t.Fatalf("expected approve revision 200, got %d: %s", approveResponse.StatusCode, readBody(t, approveResponse))
-	}
-
-	scheduleRequest := httptest.NewRequest(
-		http.MethodPost,
-		"/api/v1/projects/"+project.ID+"/articles/"+article.ID+"/schedule",
-		strings.NewReader(`{"revisionId":"`+revisionID+`","slug":"scheduled-post","scheduledForUtc":"`+time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)+`"}`),
-	)
-	scheduleRequest.Header.Set("Content-Type", "application/json")
-	scheduleRequest.Header.Set("X-CSRF-Token", login.csrfToken)
-	addCookies(scheduleRequest, login.cookies)
-	scheduleResponse := mustTest(t, server, scheduleRequest)
+	scheduleDraft.Header.Set("Content-Type", "application/json")
+	scheduleDraft.Header.Set("X-CSRF-Token", login.csrfToken)
+	addCookies(scheduleDraft, login.cookies)
+	scheduleResponse := mustTest(t, server, scheduleDraft)
 	if scheduleResponse.StatusCode != http.StatusOK {
-		t.Fatalf("expected schedule article 200, got %d: %s", scheduleResponse.StatusCode, readBody(t, scheduleResponse))
+		t.Fatalf("expected an editor to schedule a draft without separate approval, got %d: %s", scheduleResponse.StatusCode, readBody(t, scheduleResponse))
+	}
+	var scheduledPayload Envelope[store.AdminArticle]
+	decodeJSONResponse(t, scheduleResponse, &scheduledPayload)
+	if scheduledPayload.Data.EditorialState != "approved" || scheduledPayload.Data.PublicationState != "scheduled" {
+		t.Fatalf("expected scheduling to finalize the revision, got editorial=%q publication=%q", scheduledPayload.Data.EditorialState, scheduledPayload.Data.PublicationState)
 	}
 
 	beforePublishRequest := httptest.NewRequest(http.MethodGet, "/content/v1/posts/scheduled-post", nil)

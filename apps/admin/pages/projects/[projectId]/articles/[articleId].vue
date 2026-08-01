@@ -65,6 +65,15 @@
             <div class="article-workspace__status">
               <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="editorialClass(article.editorialState)">{{ labelize(article.editorialState) }}</span>
               <span class="rounded-full px-2.5 py-1 text-xs font-medium" :class="publicationClass(article.publicationState)">{{ labelize(article.publicationState) }}</span>
+              <button
+                v-if="canPublishArticles"
+                class="article-workspace__publish-shortcut"
+                type="button"
+                @click="workspaceTab = 'publish'"
+              >
+                <UploadCloud :size="15" />
+                {{ article.publicationState === 'published' ? 'Publish changes' : 'Publish' }}
+              </button>
             </div>
           </header>
 
@@ -827,34 +836,51 @@
               </button>
             </form>
 
-            <form v-if="canPublishArticles" v-show="workspaceTab === 'publish'" class="article-publish__primary space-y-4 rounded-lg border border-[#cfd8d1] bg-white p-5 shadow-sm dark:border-[#3f4843] dark:bg-[#202522]" @submit.prevent="publishArticle">
-              <div class="flex items-start gap-3">
-                <UploadCloud class="mt-1 h-4 w-4 text-[#165a4a]" />
-                <div>
-                  <p class="text-sm text-[#5d6a61] dark:text-[#aeb8b0]">Publication</p>
-                  <h2 class="mt-1 text-lg font-semibold tracking-normal">Publish pointer</h2>
+            <form v-if="canPublishArticles" v-show="workspaceTab === 'publish'" class="article-publish__primary rounded-lg border border-[#b9dcc9] bg-white p-5 shadow-sm dark:border-[#2d644a] dark:bg-[#202522]" @submit.prevent="publishArticle">
+              <div class="article-publish__lead">
+                <div class="article-publish__icon"><UploadCloud :size="22" /></div>
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm font-medium text-[#165a4a] dark:text-[#aee4d0]">Ready when you are</p>
+                  <h2 class="mt-1 text-xl font-semibold tracking-normal">
+                    {{ article.publicationState === 'published' ? 'Publish the latest changes' : 'Publish this article' }}
+                  </h2>
+                  <p class="mt-2 max-w-2xl text-sm text-[#5d6a61] dark:text-[#aeb8b0]">
+                    The latest revision will go live immediately. Editors do not need a separate approval step.
+                  </p>
                 </div>
+                <span class="article-publish__revision">Revision #{{ article.latestRevision?.revisionNumber }}</span>
               </div>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Slug</span>
-                <input v-model.trim="publicationForm.slug" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
-              </label>
-              <label class="block space-y-2">
-                <span class="text-sm font-medium">Canonical URL</span>
-                <input v-model.trim="publicationForm.canonicalUrl" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" type="url" />
-              </label>
-              <div class="grid gap-2">
+
+              <details class="article-publish__details">
+                <summary>
+                  <span><strong>URL settings</strong><small>Slug and optional canonical URL</small></span>
+                  <ChevronDown :size="17" />
+                </summary>
+                <div class="grid gap-4 p-4 md:grid-cols-2">
+                  <label class="block space-y-2">
+                    <span class="text-sm font-medium">Slug</span>
+                    <input v-model.trim="publicationForm.slug" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" required />
+                  </label>
+                  <label class="block space-y-2">
+                    <span class="text-sm font-medium">Canonical URL <small class="font-normal text-[#667169] dark:text-[#aeb8b0]">Optional</small></span>
+                    <input v-model.trim="publicationForm.canonicalUrl" class="w-full rounded-md border border-[#bfcac3] px-3 py-2 dark:border-[#4b5650] dark:bg-[#171b18]" type="url" placeholder="Generated automatically" />
+                  </label>
+                </div>
+              </details>
+
+              <div class="mt-5 flex flex-wrap items-center gap-3">
                 <button
-                  class="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[#165a4a] px-4 text-sm font-medium text-white hover:bg-[#10463a] disabled:opacity-60"
+                  class="inline-flex h-11 min-w-44 items-center justify-center gap-2 rounded-md bg-[#165a4a] px-5 text-sm font-semibold text-white shadow-sm hover:bg-[#10463a] disabled:opacity-60"
                   type="submit"
-                  :disabled="actionPending === 'publish' || article.editorialState !== 'approved'"
+                  :disabled="actionPending === 'publish' || !publicationForm.slug"
                 >
-                  <UploadCloud class="h-4 w-4" />
-                  Publish
+                  <LoaderCircle v-if="actionPending === 'publish'" class="h-4 w-4 animate-spin" />
+                  <UploadCloud v-else class="h-4 w-4" />
+                  {{ article.publicationState === 'published' ? 'Publish latest changes' : 'Publish now' }}
                 </button>
                 <button
                   v-if="article.publicationState !== 'unpublished'"
-                  class="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-[#d9b7aa] px-4 text-sm font-medium text-[#9b2d23] hover:bg-[#fff4f2] disabled:opacity-60 dark:border-[#6d352f] dark:text-[#ffc4bd] dark:hover:bg-[#2a1c1a]"
+                  class="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-[#d9b7aa] px-4 text-sm font-medium text-[#9b2d23] hover:bg-[#fff4f2] disabled:opacity-60 dark:border-[#6d352f] dark:text-[#ffc4bd] dark:hover:bg-[#2a1c1a]"
                   type="button"
                   :disabled="actionPending === 'unpublish'"
                   @click="unpublishArticle"
@@ -882,7 +908,7 @@
               <button
                 class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#c9d4cc] px-4 text-sm font-medium hover:bg-[#eef5f1] disabled:opacity-60 dark:border-[#414a45] dark:hover:bg-[#2a302d]"
                 type="submit"
-                :disabled="actionPending === 'schedule' || article.editorialState !== 'approved' || !scheduleDraft"
+                :disabled="actionPending === 'schedule' || !scheduleDraft"
               >
                 <CalendarClock class="h-4 w-4" />
                 Schedule
@@ -3246,6 +3272,26 @@ function apiErrorStatus(error: unknown) {
   padding-top: 2px;
 }
 
+.article-workspace__publish-shortcut {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  margin-left: 4px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--primary);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+.article-workspace__publish-shortcut:hover {
+  filter: brightness(.92);
+}
+
 .article-workspace__tabs {
   position: sticky;
   z-index: 20;
@@ -3388,6 +3434,59 @@ function apiErrorStatus(error: unknown) {
 
 .article-publish__primary,
 .article-publish__danger { grid-column: 1 / -1; }
+
+.article-publish__lead {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.article-publish__icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary-soft) 84%, var(--surface));
+  color: var(--primary);
+}
+
+.article-publish__revision {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.article-publish__details {
+  margin-top: 20px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.article-publish__details > summary {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.article-publish__details > summary::-webkit-details-marker { display: none; }
+.article-publish__details > summary:hover { background: var(--surface-subtle); }
+.article-publish__details > summary > span { display: grid; gap: 2px; }
+.article-publish__details > summary strong { font-size: 13px; }
+.article-publish__details > summary small { color: var(--text-faint); font-size: 11px; font-weight: 400; }
+.article-publish__details[open] > summary { border-bottom: 1px solid var(--border); }
+.article-publish__details[open] > summary svg { transform: rotate(180deg); }
 
 .article-detail > header {
   display: none;
@@ -3658,6 +3757,14 @@ function apiErrorStatus(error: unknown) {
   .article-workspace__tabs {
     top: 76px;
   }
+
+  .article-publish__lead {
+    flex-wrap: wrap;
+  }
+
+  .article-publish__revision {
+    margin-left: 58px;
+  }
 }
 
 @media (max-width: 560px) {
@@ -3679,6 +3786,10 @@ function apiErrorStatus(error: unknown) {
 
   .article-compose {
     padding: 16px !important;
+  }
+
+  .article-publish__primary > .mt-5 button {
+    width: 100%;
   }
 }
 </style>

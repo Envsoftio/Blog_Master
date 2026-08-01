@@ -139,6 +139,10 @@
                 <ArchiveRestore :size="15" />
                 Restore
               </button>
+              <button v-else-if="canPublishArticles" class="button button--primary button--compact" type="button" @click="publishArticle(article)">
+                <UploadCloud :size="15" />
+                {{ article.publicationState === 'published' ? 'Publish changes' : 'Publish' }}
+              </button>
               <button v-else-if="canWriteArticles && ['draft', 'changes_requested'].includes(article.editorialState)" class="button button--compact" type="button" @click="submitRevision(article)">
                 <Send :size="15" />
                 Submit
@@ -146,10 +150,6 @@
               <button v-else-if="canReviewArticles && article.editorialState === 'in_review'" class="button button--primary button--compact" type="button" @click="approveRevision(article)">
                 <CheckCircle2 :size="15" />
                 Approve
-              </button>
-              <button v-else-if="canPublishArticles && article.editorialState === 'approved'" class="button button--primary button--compact" type="button" @click="publishArticle(article)">
-                <UploadCloud :size="15" />
-                {{ article.publicationState === 'published' ? 'Republish' : 'Publish' }}
               </button>
 
               <details v-if="articleMenuVisible(article)" class="article-menu">
@@ -175,7 +175,7 @@
           </div>
         </div>
 
-        <form v-if="!article.archivedAt && canPublishArticles && article.editorialState === 'approved'" class="schedule-row" @submit.prevent="scheduleArticle(article)">
+        <form v-if="!article.archivedAt && canPublishArticles" class="schedule-row" @submit.prevent="scheduleArticle(article)">
           <span><CalendarClock :size="15" />Schedule publication</span>
           <label>
             <span class="sr-only">Schedule {{ article.title }}</span>
