@@ -99,7 +99,7 @@ func (s *Server) registerAdminRoutes() {
 
 	api.Get("/projects/:projectID/media", s.requireAdminSession, s.listMediaAssets)
 	api.Post("/projects/:projectID/media/uploads", s.requireAdminSession, s.requireAdminCSRF, s.createMediaAsset)
-	api.Get("/projects/:projectID/media/:assetID/file", s.requireAdminSession, s.serveMediaAssetFile)
+	api.Get("/projects/:projectID/media/:assetID/file", s.requireAdminSessionOrContentKey, s.serveMediaAssetFile)
 	api.Get("/projects/:projectID/media/:assetID", s.requireAdminSession, s.getMediaAsset)
 	api.Post("/projects/:projectID/media/:assetID/complete", s.requireAdminSession, s.requireAdminCSRF, s.completeMediaUpload)
 	api.Patch("/projects/:projectID/media/:assetID", s.requireAdminSession, s.requireAdminCSRF, s.updateMediaAsset)
@@ -1417,6 +1417,25 @@ func (s *Server) requireAdminSession(c fiber.Ctx) error {
 	c.Locals(adminSessionContextKey, session)
 	c.Locals(sessionHashContextKey, sessionHash)
 	return c.Next()
+}
+
+func (s *Server) requireAdminSessionOrContentKey(c fiber.Ctx) error {
+	rawSession := c.Cookies(sessionCookieName)
+	if rawSession != "" {
+		sessionHash := security.TokenHash(rawSession)
+		user, session, err := s.store.GetSessionUser(c.Context(), sessionHash)
+		if err == nil {
+			c.Locals(adminUserContextKey, user)
+			c.Locals(adminSessionContextKey, session)
+			c.Locals(sessionHashContextKey, sessionHash)
+			return c.Next()
+		}
+	}
+	auth := c.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return s.requireContentKey(c)
+	}
+	return problem(c, fiber.StatusUnauthorized, "Missing session", "Sign in or provide a valid API key to access media files")
 }
 
 func (s *Server) requireAdminCSRF(c fiber.Ctx) error {

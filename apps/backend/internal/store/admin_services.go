@@ -395,6 +395,10 @@ func (s *Store) GetMediaAsset(ctx context.Context, userID, projectID, assetID st
 	return s.getMediaAsset(ctx, projectID, assetID)
 }
 
+func (s *Store) GetPublicMediaAsset(ctx context.Context, projectID, assetID string) (AdminMediaAsset, error) {
+	return s.getMediaAsset(ctx, projectID, assetID)
+}
+
 func (s *Store) getMediaAsset(ctx context.Context, projectID, assetID string) (AdminMediaAsset, error) {
 	asset, err := scanAdminMediaAsset(s.db.QueryRowContext(ctx, `SELECT `+adminMediaAssetSelectColumns+`
 		FROM assets

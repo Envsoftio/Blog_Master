@@ -201,16 +201,23 @@ func (s *Server) deleteMediaAsset(c fiber.Ctx) error {
 }
 
 func (s *Server) serveMediaAssetFile(c fiber.Ctx) error {
-	user, ok := adminUser(c)
-	if !ok {
-		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
-	}
 	if s.mediaStorage == nil {
 		return problem(c, fiber.StatusConflict, "Media storage is not configured", "Configure Backblaze B2 media storage before loading media files")
 	}
 	projectID := c.Params("projectID")
 	assetID := c.Params("assetID")
-	asset, err := s.store.GetMediaAsset(c.Context(), user.ID, projectID, assetID)
+
+	var asset store.AdminMediaAsset
+	var err error
+
+	if user, ok := adminUser(c); ok {
+		asset, err = s.store.GetMediaAsset(c.Context(), user.ID, projectID, assetID)
+	} else if project, ok := contentProject(c); ok && project.ProjectID == projectID {
+		asset, err = s.store.GetPublicMediaAsset(c.Context(), projectID, assetID)
+	} else {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+
 	if err != nil {
 		return s.adminReadError(c, err, "Media asset not found", "Could not load media")
 	}

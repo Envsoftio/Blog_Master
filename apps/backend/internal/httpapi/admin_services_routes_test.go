@@ -200,6 +200,21 @@ func TestAdminMediaUploadCompletionScansAndCreatesVariants(t *testing.T) {
 	if !bytes.Equal(previewBody, mediaStorage.puts[ready.Variants[0].ObjectKey]) {
 		t.Fatal("expected preview response to stream the first generated variant")
 	}
+
+	apiKey := createTestAPIKey(t, server, login, project.ID, `{"name":"Media Key","scopes":["content:published:read"]}`)
+	apiKeyRequest := httptest.NewRequest(http.MethodGet, ready.URL, nil)
+	apiKeyRequest.Header.Set("Authorization", "Bearer "+apiKey.Data.Secret)
+	apiKeyResponse := mustTest(t, server, apiKeyRequest)
+	if apiKeyResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected API key media 200, got %d: %s", apiKeyResponse.StatusCode, readBody(t, apiKeyResponse))
+	}
+	apiKeyBody, err := io.ReadAll(apiKeyResponse.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(apiKeyBody, previewBody) {
+		t.Fatal("expected API key media response to match preview response")
+	}
 	if ready.ObjectKey != ready.Variants[0].ObjectKey {
 		t.Fatalf("expected ready asset object key to be promoted to first variant, got %q want %q", ready.ObjectKey, ready.Variants[0].ObjectKey)
 	}
