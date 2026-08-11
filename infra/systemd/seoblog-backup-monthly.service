@@ -1,7 +1,7 @@
 [Unit]
 Description=Create and verify a long-retention SEO Blog SQLite recovery point
-After=network-online.target seoblog-litestream.service
-Requires=seoblog-litestream.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
@@ -13,4 +13,3 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/srv/seoblog/shared
-

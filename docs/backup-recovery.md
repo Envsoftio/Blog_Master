@@ -4,10 +4,10 @@ This runbook covers the production SQLite database. Redis is disposable cache st
 
 ## Recovery contract
 
-- Recovery point objective: five minutes. Litestream continuously ships committed SQLite changes to `continuous/<environment>/seoblog`.
+- Recovery point objective: the latest successful daily or pre-release `.db` snapshot.
 - Initial recovery time objective: four hours. The target becomes one hour after two successful clean-host drills.
 - A verified immutable snapshot is created daily and before every migration-bearing deployment. Monthly snapshots have a separately reviewed long retention.
-- Continuous LTX objects and immutable database snapshots use different prefixes. Litestream has no remote-delete permission; reviewed B2 lifecycle rules own continuous-chain retention.
+- Only immutable SQLite `.db` snapshots are copied to the backup bucket.
 - The normal API, worker and media credentials have no access to either backup prefix.
 
 The operations owner or incident commander may authorize a production restore. Every restore requires an incident/change ID and the authorizer's identity. Two people must review a compliance-mode Object Lock change, lifecycle reduction, or primary replacement.
@@ -16,28 +16,25 @@ The operations owner or incident commander may authorize a production restore. E
 
 Create a private, environment-specific B2 backup bucket before uploading any object. Enable default SSE-B2 encryption and Object Lock, then test the retention mode and duration in a non-production bucket. Object Lock configuration is difficult to reverse; do not infer these values from this repository.
 
-Create three bucket- or prefix-scoped application keys:
+Create two bucket- or prefix-scoped application keys:
 
-- continuous writer: list/write for only the continuous prefix, with no delete capability;
 - snapshot writer: write plus retention-setting capability for only the snapshot prefix;
-- restore reader: list/read plus retention-read capability for both prefixes, with no write or delete capability.
+- restore reader: list/read plus retention-read capability for the snapshot prefix, with no write or delete capability.
 
-Pin Litestream v0.5.11, AWS CLI v2 and SQLite CLI on the host. Install the automation without starting it:
+Install AWS CLI v2 and SQLite CLI on the host. Install the automation without starting it:
 
 ```bash
 ./scripts/setup-vps-cicd.sh --host HOST --user USER --configure-backups
 ```
 
-Edit `/srv/seoblog/shared/backup.env`, preserving mode `0600`. Use the exact regional B2 endpoint and set `SEOBLOG_BACKUP_MONTHLY_RETENTION_DAYS` only to the approved legal/business retention period; it intentionally has no default because locked retention cannot be shortened casually. The checked-in configuration deliberately leaves remote retention enforcement to B2 and exposes Litestream metrics only on loopback.
+Edit `/srv/seoblog/shared/backup.env`, preserving mode `0600`. Use the exact regional B2 endpoint and set `SEOBLOG_BACKUP_MONTHLY_RETENTION_DAYS` only to the approved legal/business retention period; it intentionally has no default because locked retention cannot be shortened casually.
 
 Validate access and create the first verified recovery point:
 
 ```bash
-sudo -u seoblog bash -c 'set -a; . /srv/seoblog/shared/backup.env; set +a; litestream databases -config /srv/seoblog/backup/litestream.yml'
-sudo systemctl enable --now seoblog-litestream.service
 sudo systemctl start seoblog-backup-verify.service
 sudo systemctl enable --now seoblog-backup-verify.timer seoblog-backup-monthly.timer
-sudo systemctl status seoblog-litestream.service seoblog-backup-verify.timer
+sudo systemctl status seoblog-backup-verify.timer
 sudo tail -n 1 /srv/seoblog/shared/backup-evidence/recovery-points.jsonl
 ```
 
@@ -53,9 +50,9 @@ The deployment stops before migrations if that command fails. A required backup 
 
 ## Daily evidence and alerts
 
-The daily timer forces Litestream to synchronously reach the current transaction, restores to an isolated file with the read-only credential, validates SQLite, uploads a separately locked snapshot, downloads it with the restore credential and validates it again. Evidence is appended to `backup-evidence/recovery-points.jsonl` without credentials.
+The daily timer creates an isolated SQLite `.db` backup from the live database, validates SQLite, uploads a separately locked snapshot, downloads it with the restore credential and validates it again. Evidence is appended to `backup-evidence/recovery-points.jsonl` without credentials.
 
-Alert when the timer fails, Litestream is inactive, the last verified record is older than five minutes beyond its scheduled window, the replica sync transaction lags the primary, or disk space threatens SQLite/Litestream operation. The checked-in collector, dashboard and rules are provisioned through [observability operations](observability.md).
+Alert when the timer fails, the last verified record is older than its scheduled window, or disk space threatens SQLite operation. The checked-in collector, dashboard and rules are provisioned through [observability operations](observability.md).
 
 ## Isolated restore test
 
@@ -65,7 +62,7 @@ At least quarterly, provision a clean host with no database and separate restore
 export SEOBLOG_RESTORE_SERVICES_STOPPED=true
 export SEOBLOG_RESTORE_CONFIRM=/srv/seoblog/shared/isolated-drill.db
 /srv/seoblog/backup/restore-primary.sh \
-  --continuous \
+  --snapshot-key snapshots/production/daily/seoblog-YYYYMMDDTHHMMSSZ-none-SHA.db \
   --target /srv/seoblog/shared/isolated-drill.db \
   --authorized-by 'Operations owner' \
   --change-id DRILL-YYYY-QN
@@ -76,22 +73,22 @@ Run migrations from the intended release, start API/admin/worker against isolate
 ## Primary recovery
 
 1. Declare the incident, name an authorizer and record the change ID. Keep landing CDN content online where possible; put the CMS origin in maintenance mode and pause webhook/email egress.
-2. Stop `seoblog-api`, `seoblog-worker` and `seoblog-litestream`. Confirm no process has the SQLite file open.
-3. Select either the latest/point-in-time continuous restore or an immutable snapshot key. First restore to an isolated target and inspect it.
+2. Stop `seoblog-api` and `seoblog-worker`. Confirm no process has the SQLite file open.
+3. Select an immutable `.db` snapshot key. First restore to an isolated target and inspect it.
 4. Set the two explicit guards and replace the primary. Existing database/WAL/SHM files are moved to a timestamped, recoverable `pre-restore-*` directory; they are never deleted by the script.
 
 ```bash
 export SEOBLOG_RESTORE_SERVICES_STOPPED=true
 export SEOBLOG_RESTORE_CONFIRM=/srv/seoblog/shared/seoblog.db
 /srv/seoblog/backup/restore-primary.sh \
-  --continuous --timestamp 2026-08-01T12:00:00Z \
+  --snapshot-key snapshots/production/daily/seoblog-YYYYMMDDTHHMMSSZ-none-SHA.db \
   --target /srv/seoblog/shared/seoblog.db \
   --authorized-by 'Incident commander' \
   --change-id INC-1234 \
   --replace
 ```
 
-5. Apply only forward-compatible migrations from the selected release. Start Litestream first, then API/admin, and keep the worker/webhook/email paths paused while reviewing restored outbox and scheduled work.
+5. Apply only forward-compatible migrations from the selected release. Start API/admin, and keep the worker/webhook/email paths paused while reviewing restored outbox and scheduled work.
 6. Verify `/readyz`, `/healthz`, admin SSR, representative Content API reads, audit history, media availability and queue counts. Resume outbound delivery deliberately, then record actual RPO/RTO and the final decision in `backup-evidence/restores.jsonl` and the incident system.
 
-Never copy a live `.db` file directly, run a destructive down migration, overwrite the primary without the recoverable move, expose backup credentials to application processes, or shorten locked retention during an incident.
+Never upload an unverified `.db` file, run a destructive down migration, overwrite the primary without the recoverable move, expose backup credentials to application processes, or shorten locked retention during an incident.

@@ -1,6 +1,6 @@
 # Observability operations
 
-This runbook installs the bounded production-observability slice: structured Go service/request logs, private Prometheus-compatible application metrics, durable delivery gauges, host/Redis/Litestream collection, PM2/backup/release evidence, a managed dashboard and alert rules. It deliberately does not expose a public metrics route or deploy a self-hosted monitoring stack.
+This runbook installs the bounded production-observability slice: structured Go service/request logs, private Prometheus-compatible application metrics, durable delivery gauges, host/Redis collection, PM2/backup/release evidence, a managed dashboard and alert rules. It deliberately does not expose a public metrics route or deploy a self-hosted monitoring stack.
 
 ## Telemetry boundaries
 
@@ -45,7 +45,7 @@ sudo systemctl status seoblog-alloy.service seoblog-observability-export.timer
 sudo journalctl -u seoblog-alloy.service --since '-10 minutes'
 ```
 
-The setup uses Alloy's embedded Unix and Redis exporters. Application, worker and Litestream targets remain loopback-only. Alloy remote-write credentials stay in the protected environment file, and its local WAL is held under the systemd-managed `/var/lib/seoblog-alloy` state directory.
+The setup uses Alloy's embedded Unix and Redis exporters. Application and worker targets remain loopback-only. Alloy remote-write credentials stay in the protected environment file, and its local WAL is held under the systemd-managed `/var/lib/seoblog-alloy` state directory.
 
 ## Metric contract
 
@@ -77,4 +77,3 @@ Use [the incident runbook](operations-runbook.md) for response and recovery.
 - [Grafana Alloy Redis exporter](https://grafana.com/docs/alloy/latest/reference/components/prometheus/prometheus.exporter.redis/)
 - [Grafana Alloy journal source](https://grafana.com/docs/alloy/latest/reference/components/loki/loki.source.journal/)
 - [Prometheus rule validation](https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/)
-

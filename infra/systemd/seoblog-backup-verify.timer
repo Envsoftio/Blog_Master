@@ -1,12 +1,13 @@
 [Unit]
-Description=Daily verified SEO Blog recovery point
+Description=Verified SEO Blog recovery point (every 6 hours)
 
 [Timer]
-OnCalendar=*-*-* 02:20:00 UTC
+OnCalendar=*-*-* 00/6:00:00 UTC
 Persistent=true
-RandomizedDelaySec=20m
+RandomizedDelaySec=5m
 Unit=seoblog-backup-verify.service
 
 [Install]
 WantedBy=timers.target
+
 

@@ -49,7 +49,7 @@ This is the operator-facing response contract for SEO Blog. Commands assume the 
 ## SQLite busy, corruption, disk-full or host loss
 
 - Stop new worker claims first. For contention, capture connection/wait metrics and long operations; do not increase connection count or busy timeout during the incident without review.
-- For disk pressure, preserve database/WAL/backup evidence and remove only known recoverable artifacts such as expired release bundles or rotated logs. Never delete the live DB, WAL or Litestream chain.
+- For disk pressure, preserve database/WAL/backup evidence and remove only known recoverable artifacts such as expired release bundles or rotated logs. Never delete the live DB, WAL or verified snapshot evidence.
 - Run integrity checks only on an isolated restored/copy-safe database. Do not copy the live `.db` file alone or run repair commands against the primary.
 - For corruption or host loss, follow [backup and recovery](backup-recovery.md). Keep webhook/email egress paused until restored pending work is reviewed.
 
@@ -65,7 +65,7 @@ This is the operator-facing response contract for SEO Blog. Commands assume the 
 - Run `pm2 status` and `pm2 prettylist` as the dedicated application user; check `$PM2_HOME`, `dump.pm2`, startup unit ownership and `seoblog_pm2_saved_process_present`.
 - Restore from the current ecosystem declaration with the exact `--only` list, verify all three processes, then `pm2 save` as that same user.
 - For a restart loop, stop only the affected named process and diagnose logs, exit code, memory, configuration and dependencies before restart.
-- After reboot, verify Nginx, Redis and Litestream under systemd, the PM2 startup service under the correct user, all loopback endpoints and a worker cycle.
+- After reboot, verify Nginx and Redis under systemd, the PM2 startup service under the correct user, all loopback endpoints and a worker cycle.
 
 ## Graceful-shutdown timeout
 
@@ -82,7 +82,7 @@ This is the operator-facing response contract for SEO Blog. Commands assume the 
 
 ## Backup or primary-host recovery
 
-- Page immediately when backup freshness exceeds RPO or latest verification is false. Check both backup timers, Litestream activity/metrics and the last evidence line before retrying the verified job.
+- Page immediately when backup freshness exceeds RPO or latest verification is false. Check both backup timers and the last evidence line before retrying the verified job.
 - Do not claim recovery readiness from upload success alone; the downloaded snapshot checksum and SQLite checks must pass.
 - For restoration or host replacement, follow [backup and recovery](backup-recovery.md), including authorization, isolated restore, egress pause, pending-delivery review and recorded RPO/RTO.
 
@@ -113,4 +113,3 @@ This is the operator-facing response contract for SEO Blog. Commands assume the 
 - Temporary credentials/configuration were rotated or removed.
 - Incident timeline, evidence, approvals, actual RPO/RTO and corrective actions were recorded.
 - A regression, alert or rehearsal update is filed when detection or recovery was insufficient.
-

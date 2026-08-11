@@ -100,7 +100,7 @@ AI execution is disabled unless the base URL, API key, and model are all set. Th
 
 `task deploy:prod RELEASE=<immutable-release-id>` calls the VPS deploy script with `/tmp/seoblog-release-<release-id>.tar.gz` unless `ARCHIVE=<path>` is supplied. The archive must contain `release.json`, and the deploy script verifies every listed checksum before installing it.
 
-For an existing SQLite database, the default `SEOBLOG_DEPLOY_BACKUP_COMMAND` forces the Litestream replica current, creates an immutable B2 snapshot, downloads it and verifies SQLite before returning success. `SEOBLOG_DEPLOY_REQUIRE_BACKUP=true` is the default and makes this a hard production gate; the deploy script rejects the skip flag while the gate is required. Provision credentials, timers and restore access using [the backup and recovery runbook](backup-recovery.md) before the next deployment of an existing database.
+For an existing SQLite database, the default `SEOBLOG_DEPLOY_BACKUP_COMMAND` creates an isolated SQLite `.db` backup, uploads it as an immutable B2 snapshot, downloads it and verifies SQLite before returning success. `SEOBLOG_DEPLOY_REQUIRE_BACKUP=true` is the default and makes this a hard production gate; the deploy script rejects the skip flag while the gate is required. Provision credentials, timers and restore access using [the backup and recovery runbook](backup-recovery.md) before the next deployment of an existing database.
 
 The deploy script stops the worker before migrations, runs the new release's `backend/admincli migrate` before switching `/srv/seoblog/current`, restarts only `seoblog-admin`, `seoblog-api` and `seoblog-worker`, checks API readiness, API health and Nuxt SSR, then records the result in `/srv/seoblog/shared/deployments.jsonl`.
 

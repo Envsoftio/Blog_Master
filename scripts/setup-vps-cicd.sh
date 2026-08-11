@@ -229,11 +229,9 @@ scp "${SCP_OPTS[@]}" "infra/deploy/deploy-release.sh" "$SSH_TARGET:/tmp/${APP_NA
 if [ "$CONFIGURE_BACKUPS" = "1" ]; then
   log "uploading backup and restore automation"
   for asset in \
-    infra/backup/litestream.yml \
     infra/backup/backup.env.example \
     infra/backup/create-recovery-point.sh \
     infra/backup/restore-primary.sh \
-    infra/systemd/seoblog-litestream.service \
     infra/systemd/seoblog-backup-verify.service \
     infra/systemd/seoblog-backup-verify.timer \
     infra/systemd/seoblog-backup-monthly.service \
@@ -291,15 +289,13 @@ done
 
 if [ "$CONFIGURE_BACKUPS" = "1" ]; then
   missing_backup_runtime=0
-  for cmd in aws flock litestream openssl sha256sum sqlite3; do
+  for cmd in aws flock openssl sha256sum sqlite3; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       echo "$cmd is required before --configure-backups can install services" >&2
       missing_backup_runtime=1
     fi
   done
   [ "$missing_backup_runtime" -eq 0 ] || exit 1
-  litestream version | grep -q 'v0.5.11' || { echo "Litestream v0.5.11 is required" >&2; exit 1; }
-  LITESTREAM_BIN="$(command -v litestream)"
 fi
 
 if [ "$CONFIGURE_OBSERVABILITY" = "1" ]; then
@@ -411,9 +407,6 @@ if [ "$CONFIGURE_BACKUPS" = "1" ]; then
   $SUDO chmod 700 "$DEPLOY_PATH/shared/backup-evidence"
   $SUDO install -o "$REMOTE_DEPLOY_USER" -g "$REMOTE_DEPLOY_GROUP" -m 755 "/tmp/${APP_NAME}-create-recovery-point.sh" "$BACKUP_DIR/create-recovery-point.sh"
   $SUDO install -o "$REMOTE_DEPLOY_USER" -g "$REMOTE_DEPLOY_GROUP" -m 755 "/tmp/${APP_NAME}-restore-primary.sh" "$BACKUP_DIR/restore-primary.sh"
-  sed "s#/srv/seoblog#${DEPLOY_PATH//&/\\&}#g" "/tmp/${APP_NAME}-litestream.yml" | $SUDO tee "$BACKUP_DIR/litestream.yml" >/dev/null
-  $SUDO chown "$REMOTE_DEPLOY_USER:$REMOTE_DEPLOY_GROUP" "$BACKUP_DIR/litestream.yml"
-  $SUDO chmod 640 "$BACKUP_DIR/litestream.yml"
 
   BACKUP_ENV="$DEPLOY_PATH/shared/backup.env"
   if [ ! -f "$BACKUP_ENV" ]; then
@@ -424,10 +417,9 @@ if [ "$CONFIGURE_BACKUPS" = "1" ]; then
     log "$BACKUP_ENV already exists; leaving it unchanged"
   fi
 
-  for unit_name in seoblog-litestream.service seoblog-backup-verify.service seoblog-backup-verify.timer seoblog-backup-monthly.service seoblog-backup-monthly.timer; do
+  for unit_name in seoblog-backup-verify.service seoblog-backup-verify.timer seoblog-backup-monthly.service seoblog-backup-monthly.timer; do
     sed -e "s#User=seoblog#User=${REMOTE_DEPLOY_USER//&/\\&}#" \
       -e "s#Group=seoblog#Group=${REMOTE_DEPLOY_GROUP//&/\\&}#" \
-      -e "s#/usr/local/bin/litestream#${LITESTREAM_BIN//&/\\&}#g" \
       -e "s#/srv/seoblog#${DEPLOY_PATH//&/\\&}#g" \
       "/tmp/${APP_NAME}-${unit_name}" | $SUDO tee "/etc/systemd/system/${unit_name}" >/dev/null
     $SUDO chmod 644 "/etc/systemd/system/${unit_name}"

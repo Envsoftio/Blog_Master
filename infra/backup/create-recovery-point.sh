@@ -20,11 +20,11 @@ if [ -r "$backup_env_file" ]; then
   set +a
 fi
 
-for command_name in aws date flock litestream node openssl sha256sum sqlite3; do
+for command_name in aws date flock node openssl sha256sum sqlite3; do
   require_command "$command_name"
 done
 for variable_name in \
-  SEOBLOG_DB_PATH SEOBLOG_LITESTREAM_CONFIG SEOBLOG_LITESTREAM_SOCKET \
+  SEOBLOG_DB_PATH \
   SEOBLOG_BACKUP_ENDPOINT SEOBLOG_BACKUP_REGION SEOBLOG_BACKUP_BUCKET \
   SEOBLOG_BACKUP_SNAPSHOT_PREFIX SEOBLOG_BACKUP_EVIDENCE_DIR \
   SEOBLOG_BACKUP_SNAPSHOT_KEY_ID SEOBLOG_BACKUP_SNAPSHOT_APPLICATION_KEY \
@@ -35,7 +35,6 @@ done
 [[ "$SEOBLOG_BACKUP_ENDPOINT" == https://* ]] || fail "SEOBLOG_BACKUP_ENDPOINT must use HTTPS"
 [[ "$SEOBLOG_BACKUP_BUCKET" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{4,61}[A-Za-z0-9]$ ]] || fail "invalid backup bucket name"
 [ -s "$SEOBLOG_DB_PATH" ] || fail "SQLite database is missing or empty: $SEOBLOG_DB_PATH"
-[ -r "$SEOBLOG_LITESTREAM_CONFIG" ] || fail "Litestream config is not readable: $SEOBLOG_LITESTREAM_CONFIG"
 
 case "$KIND" in
   daily) retention_days="${SEOBLOG_BACKUP_DAILY_RETENTION_DAYS:-31}" ;;
@@ -60,14 +59,9 @@ restored_db="$temp_dir/restored.db"
 downloaded_db="$temp_dir/downloaded.db"
 sync_json="$temp_dir/sync.json"
 
-log "forcing the continuous replica through the latest committed transaction"
-litestream sync -socket "$SEOBLOG_LITESTREAM_SOCKET" -wait -timeout 120 "$SEOBLOG_DB_PATH"
-printf '{"waitedForRemote":true,"timeoutSeconds":120}\n' >"$sync_json"
-
-log "restoring the continuous replica into an isolated database"
-AWS_ACCESS_KEY_ID="$SEOBLOG_BACKUP_RESTORE_KEY_ID" \
-AWS_SECRET_ACCESS_KEY="$SEOBLOG_BACKUP_RESTORE_APPLICATION_KEY" \
-  litestream restore -config "$SEOBLOG_LITESTREAM_CONFIG" -o "$restored_db" "$SEOBLOG_DB_PATH"
+log "creating an isolated SQLite backup from the live database"
+sqlite3 -batch -cmd 'PRAGMA busy_timeout=10000;' "$SEOBLOG_DB_PATH" ".backup ${restored_db}"
+printf '{"source":"sqlite-backup","path":"%s"}\n' "$SEOBLOG_DB_PATH" >"$sync_json"
 
 check_database() {
   local database="$1" quick foreign_keys
