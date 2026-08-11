@@ -60,7 +60,7 @@ downloaded_db="$temp_dir/downloaded.db"
 sync_json="$temp_dir/sync.json"
 
 log "creating an isolated SQLite backup from the live database"
-sqlite3 -batch -cmd 'PRAGMA busy_timeout=10000;' "$SEOBLOG_DB_PATH" ".backup ${restored_db}"
+sqlite3 -batch -cmd 'PRAGMA busy_timeout=10000;' "$SEOBLOG_DB_PATH" ".backup ${restored_db}" >/dev/null
 printf '{"source":"sqlite-backup","path":"%s"}\n' "$SEOBLOG_DB_PATH" >"$sync_json"
 
 check_database() {
