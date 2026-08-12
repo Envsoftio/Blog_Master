@@ -41,7 +41,7 @@ case "$KIND" in
   monthly) retention_days="${SEOBLOG_BACKUP_MONTHLY_RETENTION_DAYS:-}" ;;
   pre-release) retention_days="${SEOBLOG_BACKUP_PRE_RELEASE_RETENTION_DAYS:-31}" ;;
 esac
-[[ "$retention_days" =~ ^[0-9]+$ ]] && [ "$retention_days" -ge 30 ] || fail "snapshot retention must be at least 30 days"
+[[ "$retention_days" =~ ^[0-9]+$ ]] && [ "$retention_days" -ge 5 ] || fail "snapshot retention must be at least 5 days"
 
 lock_mode="${SEOBLOG_BACKUP_OBJECT_LOCK_MODE:-GOVERNANCE}"
 case "$lock_mode" in GOVERNANCE|COMPLIANCE) ;; *) fail "Object Lock mode must be GOVERNANCE or COMPLIANCE" ;; esac
