@@ -314,6 +314,46 @@ func TestPasswordResetOpenAPIContracts(t *testing.T) {
 	}
 }
 
+func TestMemberPasswordResetOpenAPIContract(t *testing.T) {
+	server, _ := newAdminTestServer(t)
+	item := server.openAPI.Paths["/api/v1/projects/{projectID}/members/{userID}/reset-password"]
+	if item == nil || item.Post == nil {
+		t.Fatal("expected documented member password-reset operation")
+	}
+	operation := item.Post
+	if operation.OperationID != "resetProjectMemberPassword" {
+		t.Fatalf("expected operation ID resetProjectMemberPassword, got %q", operation.OperationID)
+	}
+	if operation.RequestBody == nil || !operation.RequestBody.Required {
+		t.Fatal("expected required request body")
+	}
+	mediaType := operation.RequestBody.Content["application/json"]
+	if mediaType == nil || mediaType.Schema == nil {
+		t.Fatal("expected JSON request schema")
+	}
+	requestSchema := resolveContractSchema(t, server, mediaType.Schema)
+	passwordSchema := contractProperty(t, requestSchema, "password")
+	if !containsString(requestSchema.Required, "password") {
+		t.Fatal("expected required password property")
+	}
+	if passwordSchema.MinLength == nil || *passwordSchema.MinLength != passwordMinLength {
+		t.Fatalf("expected password minimum length %d, got %#v", passwordMinLength, passwordSchema.MinLength)
+	}
+	if passwordSchema.MaxLength == nil || *passwordSchema.MaxLength != passwordMaxLength {
+		t.Fatalf("expected password maximum length %d, got %#v", passwordMaxLength, passwordSchema.MaxLength)
+	}
+	if _, ok := operation.Responses["200"]; !ok {
+		t.Fatal("expected success status 200")
+	}
+	if _, ok := operation.Responses["501"]; ok {
+		t.Fatal("implemented operation must not advertise 501")
+	}
+	if len(operation.Security) != 1 {
+		t.Fatalf("expected admin session security, got %#v", operation.Security)
+	}
+	assertProblemResponseMediaTypes(t, server, operation, "400", "401", "403", "404", "409", "500")
+}
+
 func TestRemovedEditorialWorkflowRoutesAreNotDocumented(t *testing.T) {
 	server, _ := newAdminTestServer(t)
 	for _, path := range []string{

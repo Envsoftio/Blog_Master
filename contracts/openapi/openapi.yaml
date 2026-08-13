@@ -136,6 +136,40 @@ components:
         - canonicalPolicy
         - createdAt
       type: object
+    AdminProjectMember:
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+        invitedAt:
+          type: string
+        invitedBy:
+          type: string
+        joinedAt:
+          type: string
+        projectId:
+          type: string
+        removedAt:
+          type: string
+        role:
+          type: string
+        status:
+          type: string
+        updatedAt:
+          type: string
+        userId:
+          type: string
+        userStatus:
+          type: string
+      required:
+        - projectId
+        - userId
+        - email
+        - role
+        - status
+        - userStatus
+        - updatedAt
+      type: object
     AdminRevision:
       additionalProperties: false
       properties:
@@ -479,6 +513,23 @@ components:
       required:
         - data
       type: object
+    EnvelopeAdminProjectMember:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EnvelopeAdminProjectMember.json
+          format: uri
+          readOnly: true
+          type: string
+        data:
+          $ref: "#/components/schemas/AdminProjectMember"
+        meta:
+          $ref: "#/components/schemas/MetaData"
+      required:
+        - data
+      type: object
     EnvelopeArticleAutosave:
       additionalProperties: false
       properties:
@@ -635,6 +686,23 @@ components:
       required:
         - data
         - meta
+      type: object
+    MemberPasswordResetRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/MemberPasswordResetRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        password:
+          maxLength: 128
+          minLength: 15
+          type: string
+      required:
+        - password
       type: object
     MetaData:
       additionalProperties: false
@@ -3411,6 +3479,84 @@ paths:
         "500":
           description: Internal server error
       summary: POST /api/v1/projects/{projectID}/members/{userID}/enable-login
+      tags:
+        - Administration
+  /api/v1/projects/{projectID}/members/{userID}/reset-password:
+    post:
+      description: Changes an active member's password immediately after recent human reauthentication, invalidates pending reset links and revokes the member's active sessions.
+      operationId: resetProjectMemberPassword
+      parameters:
+        - description: Project identifier
+          in: path
+          name: projectID
+          required: true
+          schema:
+            type: string
+        - description: Member user identifier
+          in: path
+          name: userID
+          required: true
+          schema:
+            type: string
+        - description: Administrative session CSRF token
+          in: header
+          name: X-CSRF-Token
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberPasswordResetRequest"
+        description: Replacement password selected by the administrator.
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeAdminProjectMember"
+          description: Member password reset
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Invalid request or password
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Authentication required
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Management permission or recent reauthentication required
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Project or member not found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Member state does not allow this operation
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+          description: Internal server error
+      security:
+        - adminSession: []
+      summary: Reset a project member password
       tags:
         - Administration
   /api/v1/projects/{projectID}/quality-checks:

@@ -134,6 +134,7 @@ var implementedAdminRouteStatuses = map[string]string{
 // contract stays complete and available at /openapi.json and /openapi.yaml.
 func documentFiberRoutes(api huma.API, app *fiber.App) {
 	documentPasswordResetRoutes(api)
+	documentMemberPasswordResetRoute(api)
 	documentAPIKeyRoutes(api)
 	documentArticleManagementRoutes(api)
 	documentCopyArticleRoute(api)
@@ -542,6 +543,59 @@ func documentArticleManagementRoutes(api huma.API) {
 
 func intPointer(value int) *int {
 	return &value
+}
+
+func documentMemberPasswordResetRoute(api huma.API) {
+	openAPI := api.OpenAPI()
+	documentAdminSessionSecurity(openAPI)
+	registry := openAPI.Components.Schemas
+	requestSchema := registry.Schema(reflect.TypeOf(memberPasswordResetRequest{}), true, "MemberPasswordResetRequest")
+	responseSchema := registry.Schema(reflect.TypeOf(Envelope[store.AdminProjectMember]{}), true, "ProjectMemberResponse")
+	problemSchema := registry.Schema(reflect.TypeOf(Problem{}), true, "Problem")
+	resolvedRequestSchema := requestSchema
+	if requestSchema.Ref != "" {
+		resolvedRequestSchema = registry.SchemaFromRef(requestSchema.Ref)
+	}
+	resolvedRequestSchema.Required = []string{"password"}
+	if password := resolvedRequestSchema.Properties["password"]; password != nil {
+		password.MinLength = intPointer(passwordMinLength)
+		password.MaxLength = intPointer(passwordMaxLength)
+	}
+	problemResponse := func(description string) *huma.Response {
+		return &huma.Response{Description: description, Content: map[string]*huma.MediaType{
+			problemMediaType: {Schema: problemSchema},
+		}}
+	}
+	openAPI.AddOperation(&huma.Operation{
+		Method:      http.MethodPost,
+		Path:        "/api/v1/projects/{projectID}/members/{userID}/reset-password",
+		OperationID: "resetProjectMemberPassword",
+		Summary:     "Reset a project member password",
+		Description: "Changes an active member's password immediately after recent human reauthentication, invalidates pending reset links and revokes the member's active sessions.",
+		Tags:        []string{"Administration"},
+		Parameters: []*huma.Param{
+			{Name: "projectID", In: "path", Description: "Project identifier", Required: true, Schema: &huma.Schema{Type: "string"}},
+			{Name: "userID", In: "path", Description: "Member user identifier", Required: true, Schema: &huma.Schema{Type: "string"}},
+			{Name: "X-CSRF-Token", In: "header", Description: "Administrative session CSRF token", Required: true, Schema: &huma.Schema{Type: "string"}},
+		},
+		Security: adminSessionSecurityRequirement(),
+		RequestBody: &huma.RequestBody{
+			Description: "Replacement password selected by the administrator.",
+			Required:    true,
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: requestSchema},
+			},
+		},
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Member password reset", Content: map[string]*huma.MediaType{"application/json": {Schema: responseSchema}}},
+			"400": problemResponse("Invalid request or password"),
+			"401": problemResponse("Authentication required"),
+			"403": problemResponse("Management permission or recent reauthentication required"),
+			"404": problemResponse("Project or member not found"),
+			"409": problemResponse("Member state does not allow this operation"),
+			"500": problemResponse("Internal server error"),
+		},
+	})
 }
 
 func documentPasswordResetRoutes(api huma.API) {
