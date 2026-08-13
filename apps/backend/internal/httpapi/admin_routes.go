@@ -28,7 +28,7 @@ const (
 	adminUserContextKey     = "adminUser"
 	adminSessionContextKey  = "adminSession"
 	sessionHashContextKey   = "adminSessionHash"
-	sessionCookieMaxAge     = 30 * 24 * time.Hour
+	sessionCookieMaxAge     = store.SessionIdleTTL
 	reauthenticationWindow  = 5 * time.Minute
 	defaultProjectListLimit = 50
 	maxProjectListLimit     = 100
@@ -62,6 +62,7 @@ func (s *Server) registerAdminRoutes() {
 	api.Post("/projects/:projectID/invitations", invitationCreationSourceRateLimiter(), s.requireAdminSession, s.requireAdminCSRF, invitationRecipientRateLimiter(), s.inviteProjectMember)
 	api.Patch("/projects/:projectID/members/:userID", s.requireAdminSession, s.requireAdminCSRF, s.updateProjectMemberRole)
 	api.Delete("/projects/:projectID/members/:userID", s.requireAdminSession, s.requireAdminCSRF, s.removeProjectMember)
+	api.Post("/projects/:projectID/members/:userID/reset-password", s.requireAdminSession, s.requireAdminCSRF, s.requireRecentReauthentication, s.resetProjectMemberPassword)
 	api.Post("/projects/:projectID/members/:userID/disable-login", s.requireAdminSession, s.requireAdminCSRF, s.requireRecentReauthentication, s.disableProjectMemberLogin)
 	api.Post("/projects/:projectID/members/:userID/enable-login", s.requireAdminSession, s.requireAdminCSRF, s.requireRecentReauthentication, s.enableProjectMemberLogin)
 
@@ -202,6 +203,10 @@ type memberInvitationRequest struct {
 
 type memberPatchRequest struct {
 	Role string `json:"role"`
+}
+
+type memberPasswordResetRequest struct {
+	Password string `json:"password" minLength:"15" maxLength:"128"`
 }
 
 type articleRequest struct {
@@ -773,6 +778,37 @@ func (s *Server) removeProjectMember(c fiber.Ctx) error {
 		return s.adminMutationError(c, err, "Could not remove project member")
 	}
 	return c.SendStatus(fiber.StatusNoContent)
+}
+
+func (s *Server) resetProjectMemberPassword(c fiber.Ctx) error {
+	user, ok := adminUser(c)
+	if !ok {
+		return problem(c, fiber.StatusUnauthorized, "Missing session", "")
+	}
+	var input memberPasswordResetRequest
+	if err := decodeStrictRequestBody(c, &input); err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid request body", "")
+	}
+	passwordLength := utf8.RuneCountInString(input.Password)
+	if passwordLength < passwordMinLength || passwordLength > passwordMaxLength {
+		return problem(c, fiber.StatusBadRequest, "Invalid password", "Password must be between 15 and 128 characters")
+	}
+	passwordHash, err := security.HashPassword(input.Password)
+	if err != nil {
+		return problem(c, fiber.StatusBadRequest, "Invalid password", "")
+	}
+	member, err := s.store.ResetProjectMemberPassword(
+		c.Context(),
+		user.ID,
+		c.Params("projectID"),
+		c.Params("userID"),
+		passwordHash,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return s.adminMutationError(c, err, "Could not reset member password")
+	}
+	return writeJSON(c, fiber.StatusOK, Envelope[store.AdminProjectMember]{Data: member})
 }
 
 func (s *Server) disableProjectMemberLogin(c fiber.Ctx) error {
@@ -1416,6 +1452,7 @@ func (s *Server) requireAdminSession(c fiber.Ctx) error {
 	c.Locals(adminUserContextKey, user)
 	c.Locals(adminSessionContextKey, session)
 	c.Locals(sessionHashContextKey, sessionHash)
+	s.refreshAuthCookies(c, rawSession)
 	return c.Next()
 }
 
@@ -1428,6 +1465,7 @@ func (s *Server) requireAdminSessionOrContentKey(c fiber.Ctx) error {
 			c.Locals(adminUserContextKey, user)
 			c.Locals(adminSessionContextKey, session)
 			c.Locals(sessionHashContextKey, sessionHash)
+			s.refreshAuthCookies(c, rawSession)
 			return c.Next()
 		}
 	}
@@ -1545,6 +1583,13 @@ func (s *Server) setCSRFCookie(c fiber.Ctx, value string) {
 		Secure:   s.secureCookies(),
 		SameSite: fiber.CookieSameSiteStrictMode,
 	})
+}
+
+func (s *Server) refreshAuthCookies(c fiber.Ctx, rawSession string) {
+	s.setSessionCookie(c, rawSession)
+	if csrfToken := c.Cookies(csrfCookieName); csrfToken != "" {
+		s.setCSRFCookie(c, csrfToken)
+	}
 }
 
 func (s *Server) clearAuthCookies(c fiber.Ctx) {

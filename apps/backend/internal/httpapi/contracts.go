@@ -44,6 +44,7 @@ var implementedAdminRouteStatuses = map[string]string{
 	"POST /api/v1/projects/{projectID}/invitations":                         "201",
 	"PATCH /api/v1/projects/{projectID}/members/{userID}":                   "200",
 	"DELETE /api/v1/projects/{projectID}/members/{userID}":                  "204",
+	"POST /api/v1/projects/{projectID}/members/{userID}/reset-password":     "200",
 	"POST /api/v1/projects/{projectID}/members/{userID}/disable-login":      "200",
 	"POST /api/v1/projects/{projectID}/members/{userID}/enable-login":       "200",
 	"GET /api/v1/projects/{projectID}/api-keys":                             "200",

@@ -144,6 +144,10 @@
                   <UserX v-else :size="15" />
                   {{ member.userStatus === 'disabled' ? 'Enable login' : 'Disable login' }}
                 </button>
+                <button v-if="canResetPassword(member)" class="button button--compact member-reset-action" type="button" :disabled="Boolean(actionPending[member.userId])" @click="openPasswordReset(member)">
+                  <LoaderCircle v-if="actionPending[member.userId] === 'reset'" class="spin" :size="15" />
+                  <KeyRound v-else :size="15" />Reset password
+                </button>
               </div>
             </div>
           </article>
@@ -232,6 +236,34 @@
         </div>
       </form>
     </div>
+
+    <div v-if="passwordResetOpen" class="member-dialog-backdrop" @click.self="cancelPasswordReset">
+      <form class="member-dialog surface" role="dialog" aria-modal="true" aria-labelledby="member-password-reset-title" @submit.prevent="submitPasswordReset">
+        <div class="member-panel__header">
+          <span class="member-panel__icon member-panel__icon--blue"><KeyRound :size="18" /></span>
+          <div>
+            <span>Account access</span>
+            <h2 id="member-password-reset-title">Reset password</h2>
+          </div>
+        </div>
+        <p>{{ passwordResetMember?.email }}</p>
+        <p v-if="passwordResetError" class="ui-alert ui-alert--danger" role="alert">{{ passwordResetError }}</p>
+        <label class="field">
+          <span>New password</span>
+          <input ref="passwordResetInput" v-model="passwordResetForm.password" type="password" autocomplete="new-password" required minlength="15" maxlength="128">
+        </label>
+        <label class="field">
+          <span>Confirm password</span>
+          <input v-model="passwordResetForm.confirmation" type="password" autocomplete="new-password" required minlength="15" maxlength="128">
+        </label>
+        <div class="member-dialog__actions">
+          <button class="button" type="button" :disabled="Boolean(passwordResetMember && actionPending[passwordResetMember.userId] === 'reset')" @click="cancelPasswordReset">Cancel</button>
+          <button class="button button--primary" type="submit" :disabled="!canSubmitPasswordReset || Boolean(passwordResetMember && actionPending[passwordResetMember.userId] === 'reset')">
+            <LoaderCircle v-if="passwordResetMember && actionPending[passwordResetMember.userId] === 'reset'" class="spin" :size="16" />Reset password
+          </button>
+        </div>
+      </form>
+    </div>
   </div>
 </template>
 
@@ -296,12 +328,18 @@ const reauthenticationError = ref('')
 const reauthenticating = ref(false)
 const reauthenticationInput = ref<HTMLInputElement | null>(null)
 const pendingProtectedAction = ref<PendingProtectedAction | null>(null)
+const passwordResetOpen = ref(false)
+const passwordResetMember = ref<AdminProjectMember | null>(null)
+const passwordResetInput = ref<HTMLInputElement | null>(null)
+const passwordResetError = ref('')
+const passwordResetForm = reactive({ password: '', confirmation: '' })
 const form = reactive({ email: '', role: 'writer', expiresAt: '' })
 
 const canManageMembers = computed(() => project.value?.status === 'active' && ['project_owner', 'project_admin'].includes(project.value?.role || ''))
 const canManageOwnership = computed(() => project.value?.role === 'project_owner')
 const canInvite = computed(() => canManageMembers.value && Boolean(form.email.trim() && form.role) && (form.role !== 'project_owner' || canManageOwnership.value))
 const invitationURL = computed(() => invitationToken.value && import.meta.client ? `${window.location.origin}/invitations/${encodeURIComponent(invitationToken.value.token)}` : '')
+const canSubmitPasswordReset = computed(() => passwordResetForm.password.length >= 15 && passwordResetForm.password.length <= 128 && passwordResetForm.password === passwordResetForm.confirmation)
 const filteredMembers = computed(() => {
   const term = search.value.toLowerCase()
   return members.value.filter(member => {
@@ -325,6 +363,12 @@ watch(reauthenticationOpen, async (open) => {
   if (!open) return
   await nextTick()
   reauthenticationInput.value?.focus()
+})
+
+watch(passwordResetOpen, async (open) => {
+  if (!open) return
+  await nextTick()
+  passwordResetInput.value?.focus()
 })
 
 async function refresh() {
@@ -439,6 +483,55 @@ async function performRemoveMember(member: AdminProjectMember) {
 
 function canShowLoginAction(member: AdminProjectMember) {
   return canManageOwnership.value && member.status === 'active' && member.userId !== currentUserID.value && ['active', 'disabled'].includes(member.userStatus)
+}
+
+function canResetPassword(member: AdminProjectMember) {
+  return canManageOwnership.value && member.status === 'active' && member.userId !== currentUserID.value && member.userStatus === 'active'
+}
+
+function openPasswordReset(member: AdminProjectMember) {
+  if (!canResetPassword(member)) return
+  passwordResetMember.value = member
+  passwordResetForm.password = ''
+  passwordResetForm.confirmation = ''
+  passwordResetError.value = ''
+  passwordResetOpen.value = true
+}
+
+async function submitPasswordReset() {
+  if (!passwordResetMember.value) return
+  if (!canSubmitPasswordReset.value) {
+    passwordResetError.value = passwordResetForm.password !== passwordResetForm.confirmation ? 'Passwords do not match.' : 'Password must be between 15 and 128 characters.'
+    return
+  }
+  await performPasswordReset(passwordResetMember.value)
+}
+
+async function performPasswordReset(member: AdminProjectMember) {
+  actionPending[member.userId] = 'reset'
+  clearMessages()
+  passwordResetError.value = ''
+  try {
+    const response = await api.resetMemberPassword(projectID.value, member.userId, passwordResetForm.password)
+    upsertMember(response.data)
+    successMessage.value = `Password reset for ${member.email}. Their active sessions were revoked.`
+    delete actionPending[member.userId]
+    cancelPasswordReset()
+  } catch (error) {
+    if (queueReauthentication(error, `reset the password for ${member.email}`, () => performPasswordReset(member))) return
+    passwordResetError.value = normalizeAPIError(error, 'Could not reset password.')
+  } finally {
+    delete actionPending[member.userId]
+  }
+}
+
+function cancelPasswordReset() {
+  if (passwordResetMember.value && actionPending[passwordResetMember.value.userId] === 'reset') return
+  passwordResetOpen.value = false
+  passwordResetMember.value = null
+  passwordResetForm.password = ''
+  passwordResetForm.confirmation = ''
+  passwordResetError.value = ''
 }
 
 async function toggleMemberLogin(member: AdminProjectMember) {
@@ -629,6 +722,8 @@ function apiProblem(error: unknown) {
 .member-row__actions select { min-width: 170px; }
 .member-row__actions .button { min-height: 36px; font-size: 13px; }
 .member-login-action { margin-left: auto; }
+.member-reset-action { border-color: color-mix(in srgb, var(--blue) 32%, var(--border)); color: var(--blue); }
+.member-reset-action:hover { border-color: var(--blue); background: var(--blue-soft); }
 .member-action--danger { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); color: var(--danger); }
 .member-action--danger:hover { border-color: var(--danger); background: var(--danger-soft); }
 .member-action--success { border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); color: var(--primary); }

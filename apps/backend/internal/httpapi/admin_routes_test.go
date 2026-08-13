@@ -715,6 +715,70 @@ func TestProjectMemberLoginDisableRevokesSessionsAndCanBeReenabled(t *testing.T)
 	}
 }
 
+func TestProjectOwnerCanResetMemberPasswordDirectly(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	memberPassword := "member correct horse password"
+	memberLogin := seedAndLogin(t, server, db, "member@example.test", memberPassword)
+	project := createTestProject(t, server, ownerLogin, `{"slug":"member-reset","name":"Member Reset"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, memberLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	resetRequest := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/members/"+memberLogin.userID+"/reset-password",
+		`{"password":"member newer correct password"}`,
+		ownerLogin,
+	)
+	resetResponse := mustTest(t, server, resetRequest)
+	if resetResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected member password reset 200, got %d: %s", resetResponse.StatusCode, readBody(t, resetResponse))
+	}
+	var resetMember Envelope[store.AdminProjectMember]
+	decodeJSONResponse(t, resetResponse, &resetMember)
+	if resetMember.Data.UserID != memberLogin.userID || resetMember.Data.UserStatus != "active" {
+		t.Fatalf("expected active reset member response, got %#v", resetMember.Data)
+	}
+
+	memberSessionRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	addCookies(memberSessionRequest, memberLogin.cookies)
+	memberSessionResponse := mustTest(t, server, memberSessionRequest)
+	if memberSessionResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected reset to revoke member session, got %d: %s", memberSessionResponse.StatusCode, readBody(t, memberSessionResponse))
+	}
+
+	oldLoginBody, err := json.Marshal(loginRequest{Email: "member@example.test", Password: memberPassword})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldLoginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(oldLoginBody))
+	oldLoginRequest.Header.Set("Content-Type", "application/json")
+	oldLoginResponse := mustTest(t, server, oldLoginRequest)
+	if oldLoginResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected old password to fail after direct reset, got %d: %s", oldLoginResponse.StatusCode, readBody(t, oldLoginResponse))
+	}
+	_ = adminLogin(t, server, "member@example.test", "member newer correct password")
+
+	var auditCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM audit_events
+		WHERE project_id = ?
+		  AND actor_id = ?
+		  AND target_id = ?
+		  AND action = 'user.password_reset'
+	`, project.ID, ownerLogin.userID, memberLogin.userID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("expected password reset audit event, got %d", auditCount)
+	}
+}
+
 func TestProjectMemberLoginDisableGuardrails(t *testing.T) {
 	server, db := newAdminTestServer(t)
 	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
@@ -766,6 +830,59 @@ func TestProjectMemberLoginDisableGuardrails(t *testing.T) {
 	soloOwnerDisableResponse := mustTest(t, server, soloOwnerDisable)
 	if soloOwnerDisableResponse.StatusCode != http.StatusOK {
 		t.Fatalf("expected shared owners to prevent project %s from being left ownerless, got %d: %s", memberOwnedProject.ID, soloOwnerDisableResponse.StatusCode, readBody(t, soloOwnerDisableResponse))
+	}
+}
+
+func TestProjectMemberPasswordResetGuardrails(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	ownerLogin := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	adminLogin := seedAndLogin(t, server, db, "admin@example.test", "admin correct horse password")
+	memberLogin := seedAndLogin(t, server, db, "member@example.test", "member correct horse password")
+	project := createTestProject(t, server, ownerLogin, `{"slug":"reset-guardrails","name":"Reset Guardrails"}`)
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'project_admin', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, adminLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO project_memberships(project_id, user_id, role, status, joined_at)
+		VALUES (?, ?, 'writer', 'active', CURRENT_TIMESTAMP)
+	`, project.ID, memberLogin.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	adminReset := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/members/"+memberLogin.userID+"/reset-password",
+		`{"password":"member newer correct password"}`,
+		adminLogin,
+	)
+	adminResetResponse := mustTest(t, server, adminReset)
+	if adminResetResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected project admin reset denial, got %d: %s", adminResetResponse.StatusCode, readBody(t, adminResetResponse))
+	}
+
+	selfReset := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/members/"+ownerLogin.userID+"/reset-password",
+		`{"password":"owner newer correct password"}`,
+		ownerLogin,
+	)
+	selfResetResponse := mustTest(t, server, selfReset)
+	if selfResetResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected self reset conflict, got %d: %s", selfResetResponse.StatusCode, readBody(t, selfResetResponse))
+	}
+
+	shortPasswordReset := newMemberMutationRequest(
+		http.MethodPost,
+		"/api/v1/projects/"+project.ID+"/members/"+memberLogin.userID+"/reset-password",
+		`{"password":"too short"}`,
+		ownerLogin,
+	)
+	shortPasswordResetResponse := mustTest(t, server, shortPasswordReset)
+	if shortPasswordResetResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected short password reset denial, got %d: %s", shortPasswordResetResponse.StatusCode, readBody(t, shortPasswordResetResponse))
 	}
 }
 
@@ -996,6 +1113,44 @@ func TestAdminLogoutRevokesSession(t *testing.T) {
 	meResponse := mustTest(t, server, meRequest)
 	if meResponse.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected revoked session to fail with 401, got %d", meResponse.StatusCode)
+	}
+}
+
+func TestAdminSessionIdleExpirySlidesForOneWeek(t *testing.T) {
+	server, db := newAdminTestServer(t)
+	loginStartedAt := time.Now().UTC()
+	login := seedAndLogin(t, server, db, "owner@example.test", "correct horse battery staple")
+	initialSessionCookie := findCookie(t, login.cookies, sessionCookieName)
+	if initialSessionCookie.Expires.Before(loginStartedAt.Add(store.SessionIdleTTL-time.Minute)) ||
+		initialSessionCookie.Expires.After(time.Now().UTC().Add(store.SessionIdleTTL+time.Minute)) {
+		t.Fatalf("expected initial session cookie expiry about one week from login, got %s", initialSessionCookie.Expires.Format(time.RFC3339))
+	}
+	sessionHash := security.TokenHash(sessionCookieValue(t, login.cookies, sessionCookieName))
+
+	initialIdleExpiry := sessionExpiry(t, db, sessionHash, "idle_expires_at")
+	if initialIdleExpiry.Before(loginStartedAt.Add(store.SessionIdleTTL-time.Minute)) ||
+		initialIdleExpiry.After(time.Now().UTC().Add(store.SessionIdleTTL+time.Minute)) {
+		t.Fatalf("expected initial idle expiry about one week from login, got %s", initialIdleExpiry.Format(time.RFC3339))
+	}
+
+	shortExpiry := time.Now().UTC().Add(time.Hour).Format("2006-01-02 15:04:05")
+	if _, err := db.Exec(`UPDATE sessions SET idle_expires_at = ? WHERE token_hash = ?`, shortExpiry, sessionHash); err != nil {
+		t.Fatal(err)
+	}
+	meRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	addCookies(meRequest, login.cookies)
+	meResponse := mustTest(t, server, meRequest)
+	if meResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected active session to refresh, got %d: %s", meResponse.StatusCode, readBody(t, meResponse))
+	}
+	refreshedSessionCookie := findCookie(t, meResponse.Cookies(), sessionCookieName)
+	if refreshedSessionCookie.Expires.Before(time.Now().UTC().Add(store.SessionIdleTTL - time.Minute)) {
+		t.Fatalf("expected response to refresh session cookie for about one week, got %s", refreshedSessionCookie.Expires.Format(time.RFC3339))
+	}
+
+	refreshedIdleExpiry := sessionExpiry(t, db, sessionHash, "idle_expires_at")
+	if refreshedIdleExpiry.Before(time.Now().UTC().Add(store.SessionIdleTTL - time.Minute)) {
+		t.Fatalf("expected refreshed idle expiry about one week from request, got %s", refreshedIdleExpiry.Format(time.RFC3339))
 	}
 }
 
@@ -4757,6 +4912,35 @@ func addCookies(request *http.Request, cookies []*http.Cookie) {
 	for _, cookie := range cookies {
 		request.AddCookie(cookie)
 	}
+}
+
+func sessionCookieValue(t *testing.T, cookies []*http.Cookie, name string) string {
+	t.Helper()
+	return findCookie(t, cookies, name).Value
+}
+
+func findCookie(t *testing.T, cookies []*http.Cookie, name string) *http.Cookie {
+	t.Helper()
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	t.Fatalf("expected cookie %q", name)
+	return nil
+}
+
+func sessionExpiry(t *testing.T, db *sql.DB, sessionHash, column string) time.Time {
+	t.Helper()
+	var raw string
+	if err := db.QueryRow(`SELECT `+column+` FROM sessions WHERE token_hash = ?`, sessionHash).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := time.ParseInLocation("2006-01-02 15:04:05", raw, time.UTC)
+	if err != nil {
+		t.Fatalf("parse session expiry %q: %v", raw, err)
+	}
+	return parsed
 }
 
 func decodeJSONResponse(t *testing.T, response *http.Response, destination any) {

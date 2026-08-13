@@ -697,6 +697,13 @@ export function useAdminApi() {
     )
   }
 
+  async function resetMemberPassword(projectID: string, userID: string, password: string) {
+    return await request<APIEnvelope<AdminProjectMember>>(
+      `/api/v1/projects/${projectID}/members/${userID}/reset-password`,
+      await withCSRF({ method: 'POST', body: { password } })
+    )
+  }
+
   async function listAPIKeys(projectID: string, cursor = '', limit = 100) {
     return normalizeAPIListEnvelope(await request<APIListEnvelope<AdminAPIKey>>(`/api/v1/projects/${projectID}/api-keys`, {
       query: { limit, ...(cursor ? { cursor } : {}) }
@@ -1039,6 +1046,7 @@ export function useAdminApi() {
     updateMember,
     removeMember,
     memberLoginAction,
+    resetMemberPassword,
     listAPIKeys,
     createAPIKey,
     rotateAPIKey,

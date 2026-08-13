@@ -14,6 +14,8 @@ import (
 )
 
 const timeFormat = "2006-01-02 15:04:05"
+const SessionIdleTTL = 7 * 24 * time.Hour
+const SessionAbsoluteTTL = 30 * 24 * time.Hour
 
 var (
 	ErrEmailAlreadyExists      = errors.New("email already exists")
@@ -332,8 +334,8 @@ func (s *Store) GetUser(ctx context.Context, userID string) (AdminUser, error) {
 }
 
 func (s *Store) CreateSession(ctx context.Context, userID, tokenHash, csrfTokenHash string, now time.Time) error {
-	idleExpiresAt := now.Add(8 * time.Hour).UTC().Format(timeFormat)
-	absoluteExpiresAt := now.Add(30 * 24 * time.Hour).UTC().Format(timeFormat)
+	idleExpiresAt := now.Add(SessionIdleTTL).UTC().Format(timeFormat)
+	absoluteExpiresAt := now.Add(SessionAbsoluteTTL).UTC().Format(timeFormat)
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO sessions(
 		  token_hash, csrf_token_hash, user_id, reauthenticated_at,
@@ -377,9 +379,9 @@ func (s *Store) GetSessionUser(ctx context.Context, tokenHash string) (AdminUser
 	_, _ = s.db.ExecContext(ctx, `
 		UPDATE sessions
 		SET last_seen_at = CURRENT_TIMESTAMP,
-		    idle_expires_at = datetime(CURRENT_TIMESTAMP, '+8 hours')
+		    idle_expires_at = ?
 		WHERE token_hash = ?
-	`, tokenHash)
+	`, time.Now().UTC().Add(SessionIdleTTL).Format(timeFormat), tokenHash)
 	return user, session, nil
 }
 
