@@ -1452,7 +1452,7 @@ func (s *Server) requireAdminSession(c fiber.Ctx) error {
 	c.Locals(adminUserContextKey, user)
 	c.Locals(adminSessionContextKey, session)
 	c.Locals(sessionHashContextKey, sessionHash)
-	s.refreshAuthCookies(c, rawSession)
+	s.refreshAuthCookies(c, rawSession, session)
 	return c.Next()
 }
 
@@ -1465,7 +1465,7 @@ func (s *Server) requireAdminSessionOrContentKey(c fiber.Ctx) error {
 			c.Locals(adminUserContextKey, user)
 			c.Locals(adminSessionContextKey, session)
 			c.Locals(sessionHashContextKey, sessionHash)
-			s.refreshAuthCookies(c, rawSession)
+			s.refreshAuthCookies(c, rawSession, session)
 			return c.Next()
 		}
 	}
@@ -1562,11 +1562,15 @@ func (s *Server) adminMutationError(c fiber.Ctx, err error, internalTitle string
 }
 
 func (s *Server) setSessionCookie(c fiber.Ctx, value string) {
+	s.setSessionCookieUntil(c, value, time.Now().Add(sessionCookieMaxAge))
+}
+
+func (s *Server) setSessionCookieUntil(c fiber.Ctx, value string, expires time.Time) {
 	c.Cookie(&fiber.Cookie{
 		Name:     sessionCookieName,
 		Value:    value,
 		Path:     "/",
-		Expires:  time.Now().Add(sessionCookieMaxAge),
+		Expires:  expires,
 		HTTPOnly: true,
 		Secure:   s.secureCookies(),
 		SameSite: fiber.CookieSameSiteStrictMode,
@@ -1574,21 +1578,29 @@ func (s *Server) setSessionCookie(c fiber.Ctx, value string) {
 }
 
 func (s *Server) setCSRFCookie(c fiber.Ctx, value string) {
+	s.setCSRFCookieUntil(c, value, time.Now().Add(sessionCookieMaxAge))
+}
+
+func (s *Server) setCSRFCookieUntil(c fiber.Ctx, value string, expires time.Time) {
 	c.Cookie(&fiber.Cookie{
 		Name:     csrfCookieName,
 		Value:    value,
 		Path:     "/",
-		Expires:  time.Now().Add(sessionCookieMaxAge),
+		Expires:  expires,
 		HTTPOnly: false,
 		Secure:   s.secureCookies(),
 		SameSite: fiber.CookieSameSiteStrictMode,
 	})
 }
 
-func (s *Server) refreshAuthCookies(c fiber.Ctx, rawSession string) {
-	s.setSessionCookie(c, rawSession)
+func (s *Server) refreshAuthCookies(c fiber.Ctx, rawSession string, session store.Session) {
+	expires := time.Now().Add(sessionCookieMaxAge)
+	if absoluteExpiresAt := parseDatabaseTime(session.AbsoluteExpiresAt); !absoluteExpiresAt.IsZero() && absoluteExpiresAt.Before(expires) {
+		expires = absoluteExpiresAt
+	}
+	s.setSessionCookieUntil(c, rawSession, expires)
 	if csrfToken := c.Cookies(csrfCookieName); csrfToken != "" {
-		s.setCSRFCookie(c, csrfToken)
+		s.setCSRFCookieUntil(c, csrfToken, expires)
 	}
 }
 

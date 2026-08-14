@@ -201,6 +201,8 @@ import {
 } from 'lucide-vue-next'
 import type { AdminProject } from '~/composables/useAdminApi'
 
+const authKeepAliveIntervalMillis = 30 * 60 * 1000
+
 type AdminUser = {
   id: string
   email: string
@@ -214,6 +216,7 @@ const mobileOpen = ref(false)
 const projects = useAdminProjectsState()
 const currentUser = useState<AdminUser | null>('admin-user', () => null)
 const selectedProjectID = ref('')
+let authKeepAliveTimer: number | null = null
 
 const routeProjectID = computed(() => String(route.params.projectId || ''))
 const activeProjectID = computed(() => routeProjectID.value || selectedProjectID.value || projects.value[0]?.id || '')
@@ -266,7 +269,12 @@ watch(() => route.fullPath, () => {
   mobileOpen.value = false
 })
 
-onMounted(loadShellData)
+onMounted(() => {
+  loadShellData()
+  startAuthKeepAlive()
+})
+
+onBeforeUnmount(stopAuthKeepAlive)
 
 async function loadShellData() {
   try {
@@ -280,6 +288,39 @@ async function loadShellData() {
   } catch (error) {
     const status = (error as { status?: number, statusCode?: number })?.status || (error as { statusCode?: number })?.statusCode
     if (status === 401) await navigateTo('/', { replace: true })
+  }
+}
+
+function startAuthKeepAlive() {
+  if (authKeepAliveTimer) return
+  authKeepAliveTimer = window.setInterval(refreshCurrentSession, authKeepAliveIntervalMillis)
+  document.addEventListener('visibilitychange', refreshCurrentSessionWhenVisible)
+}
+
+function stopAuthKeepAlive() {
+  if (authKeepAliveTimer) {
+    window.clearInterval(authKeepAliveTimer)
+    authKeepAliveTimer = null
+  }
+  document.removeEventListener('visibilitychange', refreshCurrentSessionWhenVisible)
+}
+
+function refreshCurrentSessionWhenVisible() {
+  if (document.visibilityState === 'visible') refreshCurrentSession()
+}
+
+async function refreshCurrentSession() {
+  if (document.visibilityState !== 'visible') return
+  try {
+    const response = await api.currentUser()
+    currentUser.value = response.data
+  } catch (error) {
+    const status = (error as { status?: number, statusCode?: number })?.status || (error as { statusCode?: number })?.statusCode
+    if (status === 401) {
+      stopAuthKeepAlive()
+      currentUser.value = null
+      await navigateTo('/', { replace: true })
+    }
   }
 }
 
