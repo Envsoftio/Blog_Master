@@ -823,7 +823,11 @@ function insertSelectedMedia() {
   editorError.value = ''
   const alt = (asset.altText || '').trim()
   if (!alt && !asset.decorative) {
-    editorError.value = 'This project image needs alt text in the media library before it can be inserted.'
+    openEditorDialog('image', {
+      url: asset.url,
+      caption: (asset.caption || '').trim()
+    })
+    selectedMediaID.value = ''
     return
   }
   const image = { type: 'image', attrs: { src: asset.url, alt, decorative: asset.decorative } }
