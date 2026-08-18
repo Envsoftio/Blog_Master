@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 )
 
@@ -319,6 +320,21 @@ func scanPost(row rowScanner, relationshipOrigin *string) (PublishedPost, error)
 func (s *Store) hydratePublishedRelationships(ctx context.Context, projectID string, post *PublishedPost) error {
 	if post == nil {
 		return nil
+	}
+	if post.Media.Hero == nil {
+		reference := firstPublishedHeroReference(post.Content.Document, projectID)
+		if reference.AssetID != "" {
+			asset, err := s.getMediaAsset(ctx, projectID, reference.AssetID)
+			switch {
+			case err == nil:
+				post.Media.Hero = publishedHeroFromAsset(asset, reference)
+			case errors.Is(err, sql.ErrNoRows):
+				// Keep the public media contract empty when an old body references
+				// an asset that no longer exists.
+			default:
+				return err
+			}
+		}
 	}
 	series, err := s.publishedSeriesMembership(ctx, projectID, post.ID)
 	if err != nil && err != sql.ErrNoRows {

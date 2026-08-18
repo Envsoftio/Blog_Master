@@ -63,3 +63,49 @@ func TestPublishedMediaSnapshotRequiresResponsiveDimensionsAndSafeURLs(t *testin
 		t.Fatalf("expected incomplete hero to be omitted, got %#v", invalid.Hero)
 	}
 }
+
+func TestFirstPublishedHeroReferenceUsesFirstProjectImage(t *testing.T) {
+	document := map[string]any{
+		"type": "doc",
+		"content": []any{
+			map[string]any{"type": "paragraph"},
+			map[string]any{
+				"type": "figure",
+				"content": []any{map[string]any{
+					"type": "image",
+					"attrs": map[string]any{
+						"src": "/api/v1/projects/project-a/media/asset-hero/file?variant=square_1x1",
+						"alt": "Project environment",
+					},
+				}},
+			},
+		},
+	}
+	reference := firstPublishedHeroReference(document, "project-a")
+	if reference.AssetID != "asset-hero" || reference.AltText != "Project environment" || reference.Decorative {
+		t.Fatalf("unexpected hero reference %#v", reference)
+	}
+	if crossProject := firstPublishedHeroReference(document, "project-b"); crossProject.AssetID != "" {
+		t.Fatalf("cross-project media must not become hero: %#v", crossProject)
+	}
+}
+
+func TestPublishedHeroFromAssetPrefersWidescreenVariant(t *testing.T) {
+	hero := publishedHeroFromAsset(AdminMediaAsset{
+		ID: "asset-hero", ProjectID: "project-a", Status: "ready",
+		ContentType: "image/png", Width: 736, Height: 736, AltText: "Library alt",
+		Variants: []AdminMediaVariant{
+			{Name: "square_1x1", ContentType: "image/jpeg", Width: 800, Height: 800},
+			{Name: "widescreen_16x9", ContentType: "image/jpeg", Width: 1600, Height: 900},
+		},
+	}, publishedHeroReference{AssetID: "asset-hero", AltText: "Article alt"})
+	if hero == nil {
+		t.Fatal("expected a published hero")
+	}
+	if hero.URL != "/api/v1/projects/project-a/media/asset-hero/file?variant=widescreen_16x9" || hero.Width != 1600 || hero.Height != 900 {
+		t.Fatalf("expected widescreen hero, got %#v", hero)
+	}
+	if hero.AltText != "Article alt" || len(hero.Variants) != 2 {
+		t.Fatalf("expected article accessibility metadata and variants, got %#v", hero)
+	}
+}
